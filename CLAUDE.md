@@ -12,11 +12,15 @@ verifiable citations.
 - Implementation plans, one per milestone: `docs/superpowers/plans/`
 - Spike measurements: `docs/spikes/`
 
-## Status
+## Commands
 
-M0 (foundation & packaging spike) is planned but not started. Execute
-`docs/superpowers/plans/2026-10-02-tamra-m0-foundation.md` with superpowers:executing-plans
-or superpowers:subagent-driven-development.
+```powershell
+uv sync                                   # install/refresh Python env (Python 3.12, managed by uv)
+uv run pytest                             # unit tests (skips tests marked `assets`)
+uv run pytest tests/test_paths.py::test_data_dir_uses_override_and_creates_it -v   # single test
+uv run pytest -m assets                   # tests needing downloaded models/binaries
+uv run ruff check; uv run ruff format     # lint, format
+```
 
 ## Architecture
 
