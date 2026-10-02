@@ -20,7 +20,12 @@ dependencies = [
 tamra = "tamra.__main__:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "pyinstaller>=6.10"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "pyinstaller>=6.10",
+    "httpx2>=2.13.1",
+]
 
 [build-system]
 requires = ["hatchling"]

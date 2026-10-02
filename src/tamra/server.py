@@ -14,7 +14,7 @@ def create_app(token: str, ui_dir: Path | None) -> FastAPI:
     @app.middleware("http")
     async def require_token(request: Request, call_next):
         if request.url.path.startswith("/api/") and not secrets.compare_digest(
-            request.headers.get("x-tamra-token", ""), token
+            request.headers.get("x-tamra-token", "").encode(), token.encode()
         ):
             return JSONResponse({"detail": "invalid token"}, status_code=401)
         return await call_next(request)

@@ -34,7 +34,11 @@ def run(dev: bool = False) -> None:
     port, token = (DEV_PORT, DEV_TOKEN) if dev else (free_port(), secrets.token_urlsafe(32))
     ui_dir = None if dev else resource_dir() / "ui" / "dist"
     config = uvicorn.Config(
-        create_app(token, ui_dir), host="127.0.0.1", port=port, log_level="warning"
+        create_app(token, ui_dir),
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        log_config=None,
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
