@@ -20,6 +20,10 @@ uv run pytest                             # unit tests (skips tests marked `asse
 uv run pytest tests/test_paths.py::test_data_dir_uses_override_and_creates_it -v   # single test
 uv run pytest -m assets                   # tests needing downloaded models/binaries
 uv run ruff check; uv run ruff format     # lint, format
+uv run tamra --dev                        # core API only on :8765, token "dev"
+npm --prefix ui run dev                   # UI with hot reload → http://localhost:5173/#token=dev
+npm --prefix ui test                      # UI unit tests (Vitest)
+npm --prefix ui run build                 # build UI into ui/dist (bundled by PyInstaller)
 ```
 
 ## Architecture
