@@ -10,6 +10,11 @@ Scope: the project owner declined the ~1.1 GB asset downloads (llama.cpp Vulkan 
 GGUF) on 2026-10-02. Only the sqlite check, the packaging, and the windowed-exe check were measured.
 Everything that needs the assets is marked pending.
 
+**M0 exit criterion (spec §13): NOT met yet.** Store and query a vector in the packaged exe: met.
+Embed text: pending. Generate tokens with a small GGUF: pending (assets not downloaded, owner's
+decision 2026-10-02). The plan's done condition — the full packaged selfcheck on the dev machine and
+a green CI `package` job — is also pending. Close it first in M1 (see risk 1).
+
 Build: PyInstaller 6.22.3 (contrib hooks 2026.8), CPython 3.12.15, pywebview 6.2.1, pythonnet
 3.2.0, onnxruntime 1.30.0, tokenizers 0.23.2, numpy 2.5.3, sqlite-vec 0.1.9. WebView2 runtime
 154.0.4258.48.
@@ -94,3 +99,32 @@ Build: PyInstaller 6.22.3 (contrib hooks 2026.8), CPython 3.12.15, pywebview 6.2
      is green, the real-llama bundle (`fetch_assets.py llama` into `vendor/llama`, then PyInstaller)
      is unproven. CI's selfcheck is sqlite only, so it never launches llama-server, but the job now
      fails if `dist\Tamra\_internal\vendor\llama\llama-server.exe` is missing (a wrong zip layout).
+
+## Deferred review findings by milestone
+
+Findings deferred during the M0 task reviews and the final review, triaged by target milestone.
+
+**M1 (before the app wires these modules together)**
+- Security: add `TrustedHostMiddleware` (127.0.0.1/localhost) against DNS rebinding — dev mode uses a fixed port and token; replace the `@app.middleware("http")` token gate with a pure ASGI gate that also covers WebSocket scopes and works with SSE cancellation; reject empty tokens; gate bare `/api`.
+- UI: read the token once at startup and drop it from the URL (`history.replaceState`); handle a malformed `#token=` escape; render LLM/document text as plain text and add a Content-Security-Policy.
+- llama-server ownership: run it in a Job Object (KILL_ON_JOB_CLOSE) so a killed Tamra.exe cannot orphan it; pass a per-launch `--api-key`; make `stop()` safe against an in-flight `start()` and double start; wrap log-open/mkdir failures as `LlamaServerError`; share one timeout budget across the GPU and CPU attempts.
+- App: detect server-thread death / port in use in `_wait_until_up`; graceful Ctrl+C and try/finally around the window; friendly error when `ui/dist` is missing; file log under `%LOCALAPPDATA%\Tamra\logs`.
+- Store: file-DB test pinning WAL, foreign keys and `check_same_thread`; close the connection if `connect()` fails; make `capabilities()` probe safe on a shared connection; move selfcheck's raw SQL onto store's vec API.
+- Embedder and selfcheck: make the embedder testable without assets (injectable session/tokenizer or a tiny generated model); multi-batch test; guard `tokenizer.json` in the fixture; validate `batch_size`; name the missing file in errors; stub-server test for `_check_llm`; define selfcheck metrics (`tokens` counts SSE chunks) before quoting asset numbers; avoid creating `data_dir()` eagerly in the CLI.
+- Paths: handle a missing `LOCALAPPDATA`, an empty override, and a relative `TAMRA_DATA_DIR`; test the frozen-exe branch of `resource_dir()`.
+- LLM client: tests for incremental streaming, cancel-by-close and Thai/Chinese content; remove the no-op `except LLMError: raise` and dead store.
+- Tests: clear `NO_PROXY` in the proxy-bypass tests; tighten the cp1252 selfcheck test to assert the printed JSON.
+- Packaging: add `multiprocessing.freeze_support()` to `packaging/entry.py` together with any process pool.
+- Asset run checklist: start llama-server with a model path containing Thai/Chinese characters (Windows user names appear in `%LOCALAPPDATA%`).
+
+**M2**
+- `gpu_used` only means the GPU-flag launch became healthy; parse llama-server's offload/device log lines before showing the spec §6 CPU-fallback notice.
+- OpenAI-compatible endpoints: normalise base URLs that end in `/v1`; support `max_completion_tokens`; revisit the fixed 120 s read timeout.
+- Downloads: case-insensitive sha256; resumable HTTP Range downloads with `.part` cleanup; tests for chunk boundaries and error paths; clear stale llama DLLs on re-extraction before the first pin bump.
+- Consider `truststore` for API mode and model downloads (corporate TLS-intercepting proxies).
+
+**M6 (release)**
+- Ship a consolidated third-party license notice in the bundle (release blocker).
+- Bundle only `llama-server.exe` and its DLLs (+ license), not every llama.cpp tool.
+- CI: restrict the `package` job to main, tags and `workflow_dispatch`, set artifact `retention-days`, add a concurrency group, avoid push+PR double runs.
+- `ui/package.json` metadata (version 1.0.0 vs core 0.1.0); decide the UI language (`lang="th"` on an English UI).

@@ -132,14 +132,14 @@ def test_invalid_json_data_raises_llm_error():
 
 def test_raw_unicode_separators_preserved():
     """Raw U+2028, U+2029, U+0085 in JSON content preserved intact."""
-    content = "Hello  \u0085World"
+    content = "Hello\u2028\u2029\u0085World"
     payload = {"choices": [{"delta": {"content": content}}]}
     # Use ensure_ascii=False to send raw separator bytes
     body = f"data: {json.dumps(payload, ensure_ascii=False)}\n\ndata: [DONE]\n\n".encode()
 
     # Verify raw bytes are present
-    assert " ".encode() in body
-    assert " ".encode() in body
+    assert "\u2028".encode() in body
+    assert "\u2029".encode() in body
     assert "\u0085".encode("utf-8") in body
 
     def handler(request):
@@ -152,12 +152,12 @@ def test_raw_unicode_separators_preserved():
 
 def test_multibyte_utf8_split_across_chunks():
     """Multibyte UTF-8 character split across network chunks decoded intact."""
-    content = "Hello♥World"  # ♥ is \xe2\x9d\xa5 in UTF-8
+    content = "Hello\u2665World"  # U+2665 is \xe2\x99\xa5 in UTF-8
     payload = {"choices": [{"delta": {"content": content}}]}
     body = f"data: {json.dumps(payload, ensure_ascii=False)}\n\ndata: [DONE]\n\n".encode()
 
     # Find the heart character and split right after the first byte of the multibyte sequence
-    heart_bytes = "♥".encode()  # 3 bytes
+    heart_bytes = "\u2665".encode()  # 3 bytes
     heart_index = body.index(heart_bytes)
     cut = heart_index + 1  # Split after first byte of multibyte char
 
