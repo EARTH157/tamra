@@ -83,7 +83,7 @@ def test_stream_ending_without_done_or_finish_reason_raises_llm_error():
         return httpx.Response(200, text=sse_no_done, headers={"content-type": "text/event-stream"})
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
-    with pytest.raises(LLMError, match="stream ended"):
+    with pytest.raises(LLMError, match="Stream ended"):
         list(llm.generate([{"role": "user", "content": "hi"}]))
 
 
@@ -126,38 +126,123 @@ def test_invalid_json_data_raises_llm_error():
         )
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
-    with pytest.raises(LLMError, match="invalid.*JSON"):
+    with pytest.raises(LLMError, match="JSONDecodeError"):
         list(llm.generate([{"role": "user", "content": "hi"}]))
 
 
-def test_unicode_separator_in_content():
-    """Raw U+2028 inside content should be yielded intact, not split."""
-    # U+2028 is encoded as \xe2\x80\xa8 in UTF-8
-    content_with_u2028 = "Hello World"
-    # Build SSE response with json.dumps to handle escaping properly
-    payload = {"choices": [{"delta": {"content": content_with_u2028}}]}
-    sse = f"data: {json.dumps(payload)}\n\ndata: [DONE]\n\n"
+def test_raw_unicode_separators_preserved():
+    """Raw U+2028, U+2029, U+0085 in JSON content preserved intact."""
+    content = "Hello  \u0085World"
+    payload = {"choices": [{"delta": {"content": content}}]}
+    # Use ensure_ascii=False to send raw separator bytes
+    body = f"data: {json.dumps(payload, ensure_ascii=False)}\n\ndata: [DONE]\n\n".encode()
+
+    # Verify raw bytes are present
+    assert " ".encode() in body
+    assert " ".encode() in body
+    assert "\u0085".encode("utf-8") in body
+
+    def handler(request):
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
+    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    assert tokens == [content]
+
+
+def test_multibyte_utf8_split_across_chunks():
+    """Multibyte UTF-8 character split across network chunks decoded intact."""
+    content = "Hello♥World"  # ♥ is \xe2\x9d\xa5 in UTF-8
+    payload = {"choices": [{"delta": {"content": content}}]}
+    body = f"data: {json.dumps(payload, ensure_ascii=False)}\n\ndata: [DONE]\n\n".encode()
+
+    # Find the heart character and split right after the first byte of the multibyte sequence
+    heart_bytes = "♥".encode()  # 3 bytes
+    heart_index = body.index(heart_bytes)
+    cut = heart_index + 1  # Split after first byte of multibyte char
+
+    def handler(request):
+        # Return response with content split across chunks
+        return httpx.Response(
+            200,
+            content=iter([body[:cut], body[cut:]]),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
+    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    assert tokens == [content]
+
+
+def test_string_valued_error_raises_llm_error():
+    """A string-valued error field should raise LLMError (not AttributeError)."""
+    sse = (
+        'data: {"choices":[{"delta":{"content":"token"}}]}\n\n'
+        'data: {"error":"model not loaded"}\n\n'
+    )
+
+    def handler(request):
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMError, match="model not loaded"):
+        list(llm.generate([{"role": "user", "content": "hi"}]))
+
+
+def test_non_dict_json_raises_llm_error():
+    """Valid JSON that is not a dict should raise LLMError."""
+    sse = "data: [1]\n\n"
+
+    def handler(request):
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMError):
+        list(llm.generate([{"role": "user", "content": "hi"}]))
+
+
+def test_final_done_without_newline():
+    """A final [DONE] without trailing newline returns tokens, no error."""
+    sse = 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]'  # No \n\n
 
     def handler(request):
         return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
     tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
-    assert tokens == [content_with_u2028]
+    assert tokens == ["Hello"]
 
 
-def test_multibyte_utf8_split_across_chunks():
-    """Multibyte UTF-8 character in content should be handled intact."""
-    # U+2665 HEAVY BLACK HEART = \xe2\x9d\xa5 in UTF-8
-    # Test that multibyte UTF-8 characters in content are preserved
-    sse_with_unicode = 'data: {"choices":[{"delta":{"content":"Hello♥World"}}]}\n\ndata: [DONE]\n\n'
+def test_empty_finish_reason_continues_reading():
+    """An empty finish_reason is not completion; stream continues until [DONE]."""
+    sse = (
+        'data: {"choices":[{"delta":{"content":"A"}}]}\n\n'
+        'data: {"choices":[{"finish_reason":""}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"B"}}]}\n\n'
+        "data: [DONE]\n\n"
+    )
 
     def handler(request):
-        return httpx.Response(
-            200, text=sse_with_unicode, headers={"content-type": "text/event-stream"}
-        )
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
 
-    transport = httpx.MockTransport(handler)
-    llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=transport)
+    llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
     tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
-    assert tokens == ["Hello♥World"]
+    assert tokens == ["A", "B"]
+
+
+def test_empty_data_and_null_delta():
+    """Empty data: lines and null delta values are skipped gracefully."""
+    sse = (
+        'data: {"choices":[{"delta":{"content":"A"}}]}\n\n'
+        "data: \n\n"  # Empty payload
+        'data: {"choices":[{"delta":null}]}\n\n'  # Null delta
+        'data: {"choices":[{"delta":{"content":"B"}}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+
+    def handler(request):
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
+    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    assert tokens == ["A", "B"]

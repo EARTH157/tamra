@@ -14,6 +14,25 @@ class LLMError(Exception):
     pass
 
 
+def _sse_lines(chunks: Iterator[bytes]) -> Iterator[str]:
+    """Parse Server-Sent Events from byte chunks.
+
+    Splits on LF only (handles CRLF), decodes UTF-8, yields each complete line.
+    After the last chunk, yields any non-empty unterminated tail.
+    """
+    incomplete = b""
+    for chunk in chunks:
+        incomplete += chunk
+        lines = incomplete.split(b"\n")
+        incomplete = lines[-1]  # Keep incomplete last line
+        for line_bytes in lines[:-1]:
+            line_bytes = line_bytes.removesuffix(b"\r")
+            yield line_bytes.decode("utf-8")
+    # Yield final unterminated line if non-empty
+    if incomplete:
+        yield incomplete.removesuffix(b"\r").decode("utf-8")
+
+
 class OpenAICompatibleLLM:
     """Streaming chat client for any OpenAI-compatible server (llama-server, Ollama, LM Studio)."""
 
@@ -45,99 +64,62 @@ class OpenAICompatibleLLM:
                     response.read()
                     raise LLMError(f"HTTP {response.status_code}: {response.text[:500]}")
 
-                stream_ended = False
-                incomplete_line = b""
+                found_completion = False  # [DONE] or truthy finish_reason
 
-                # Iterate over raw bytes to properly handle UTF-8 and SSE line splitting
-                for chunk in response.iter_bytes():
-                    incomplete_line += chunk
+                for line in _sse_lines(response.iter_bytes()):
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[len("data:") :].strip()
+                    if not data:
+                        continue
 
-                    # Split on LF only (handle CRLF by stripping CR afterward)
-                    lines = incomplete_line.split(b"\n")
-                    incomplete_line = lines[-1]  # Keep incomplete last line
+                    if data == "[DONE]":
+                        found_completion = True
+                        return
 
-                    # Process all complete lines
-                    for line_bytes in lines[:-1]:
-                        # Strip trailing CR if present (converts CRLF -> LF)
-                        line_bytes = line_bytes.rstrip(b"\r")
+                    try:
+                        payload = json.loads(data)
+                    except json.JSONDecodeError as e:
+                        raise LLMError(f"JSONDecodeError: {e}") from e
 
-                        try:
-                            line = line_bytes.decode("utf-8")
-                        except UnicodeDecodeError as e:
-                            raise LLMError("Invalid UTF-8 in stream") from e
+                    if not isinstance(payload, dict):
+                        raise LLMError(f"Expected dict, got {type(payload).__name__}")
 
-                        if not line.startswith("data:"):
-                            continue
-
-                        data = line[len("data:") :].strip()
-
-                        # Skip empty data: payloads
-                        if not data:
-                            continue
-
-                        if data == "[DONE]":
-                            stream_ended = True
-                            return
-
-                        try:
-                            payload = json.loads(data)
-                        except json.JSONDecodeError as e:
-                            raise LLMError("invalid JSON in stream") from e
-
-                        # Check for error key in payload
-                        if "error" in payload:
-                            error_msg = payload["error"].get("message", str(payload["error"]))
+                    # Check for error key
+                    if "error" in payload:
+                        error = payload["error"]
+                        if error is not None:  # null error is not an error
+                            if isinstance(error, dict):
+                                error_msg = error.get("message", str(error))
+                            else:
+                                error_msg = str(error)
                             raise LLMError(f"Stream error: {error_msg}")
 
-                        # Check for finish_reason to mark stream complete
-                        choices = payload.get("choices") or []
-                        if choices and choices[0].get("finish_reason") is not None:
-                            stream_ended = True
-                            # Yield any content from this final chunk
-                            delta = choices[0].get("delta")
-                            if delta and "content" in delta:
-                                content = delta.get("content")
-                                if content:
-                                    yield content
-                            return
+                    # Extract and yield content
+                    choices = payload.get("choices")
+                    if isinstance(choices, list) and choices:
+                        choice = choices[0]
+                        if isinstance(choice, dict):
+                            # Check for completion
+                            finish_reason = choice.get("finish_reason")
+                            if finish_reason:  # Truthy (non-empty string, not "")
+                                found_completion = True
 
-                        # Normal case: yield content from delta
-                        if choices:
-                            delta = choices[0].get("delta")
-                            if delta and "content" in delta:
+                            # Yield content if present
+                            delta = choice.get("delta")
+                            if isinstance(delta, dict):
                                 content = delta.get("content")
-                                if content:
+                                if isinstance(content, str) and content:
                                     yield content
 
-                # Process any remaining incomplete line at end of stream
-                if incomplete_line and incomplete_line.strip():
-                    line_bytes = incomplete_line.rstrip(b"\r")
-                    try:
-                        line = line_bytes.decode("utf-8")
-                    except UnicodeDecodeError as e:
-                        raise LLMError("Invalid UTF-8 in stream") from e
-
-                    if line.startswith("data:"):
-                        data = line[len("data:") :].strip()
-                        if data and data != "[DONE]":
-                            try:
-                                payload = json.loads(data)
-                                if "error" in payload:
-                                    error_msg = payload["error"].get(
-                                        "message", str(payload["error"])
-                                    )
-                                    raise LLMError(f"Stream error: {error_msg}")
-                            except json.JSONDecodeError as e:
-                                raise LLMError("invalid JSON in stream") from e
-
-                # If stream ended without [DONE] or finish_reason, raise error
-                if not stream_ended:
-                    raise LLMError("stream ended without [DONE] or finish_reason")
+                # Stream ended: verify we saw completion
+                if not found_completion:
+                    raise LLMError("Stream ended without [DONE] or finish_reason")
 
         except LLMError:
             raise
-        except httpx.HTTPError as e:
-            raise LLMError(f"HTTP error: {e}") from e
+        except (httpx.HTTPError, UnicodeDecodeError) as e:
+            raise LLMError(f"{type(e).__name__}: {e}") from e
 
     def close(self) -> None:
         self._client.close()
