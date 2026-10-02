@@ -4,10 +4,6 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-import sqlite_vec
-
-from tamra import store
-
 PASSAGE = "Tamra ตอบคำถามจากเอกสารพร้อมอ้างอิงแหล่งที่มา 它会引用来源。 " * 12
 
 
@@ -19,6 +15,10 @@ def _guard(check: Callable[[], dict]) -> dict:
 
 
 def _check_sqlite() -> dict:
+    import sqlite_vec
+
+    from tamra import store
+
     conn = store.connect(":memory:")
     caps = store.capabilities(conn)
     conn.execute("CREATE VIRTUAL TABLE v USING vec0(embedding float[2])")
@@ -29,10 +29,11 @@ def _check_sqlite() -> dict:
         "SELECT rowid FROM v WHERE embedding MATCH ? AND k = 1",
         (sqlite_vec.serialize_float32([1, 0]),),
     ).fetchone()
-    return {"ok": bool(caps["fts5_trigram"]) and hit == (1,), **caps}
+    return {"ok": bool(caps["fts5_trigram"]) and hit is not None and hit[0] == 1, **caps}
 
 
 def _check_embedding(model_dir: Path) -> dict:
+    from tamra import store
     from tamra.embedder import Embedder
 
     t0 = time.perf_counter()
@@ -63,13 +64,17 @@ def _check_llm(llama_exe: Path, model: Path, log_dir: Path) -> dict:
     with LlamaServer(llama_exe, model, log_dir / "llama-server.log") as srv:
         start_s = time.perf_counter() - t0
         llm = OpenAICompatibleLLM(srv.base_url, "local")
-        t1 = time.perf_counter()
-        first_token_s, tokens = None, 0
-        for _ in llm.generate([{"role": "user", "content": "Count from 1 to 20."}], max_tokens=64):
-            first_token_s = first_token_s or time.perf_counter() - t1
-            tokens += 1
-        gen_s = time.perf_counter() - t1
-        llm.close()
+        try:
+            t1 = time.perf_counter()
+            first_token_s, tokens = None, 0
+            for _ in llm.generate(
+                [{"role": "user", "content": "Count from 1 to 20."}], max_tokens=64
+            ):
+                first_token_s = first_token_s or time.perf_counter() - t1
+                tokens += 1
+            gen_s = time.perf_counter() - t1
+        finally:
+            llm.close()
         gpu_used = srv.gpu_used
     return {
         "ok": tokens > 0,

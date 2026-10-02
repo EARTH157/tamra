@@ -24,10 +24,15 @@ def main(argv: list[str] | None = None) -> int:
             resource_dir() / "vendor" / "llama" / "llama-server.exe",
             data_dir() / "logs",
         )
-        text = json.dumps(report, ensure_ascii=False, indent=2)
-        print(text)  # no-op in the windowed exe (stdout is None); use --report there
+        # Write report file first (with full Unicode, before stdout encoding can fail)
         if args.report:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            text = json.dumps(report, ensure_ascii=False, indent=2)
             args.report.write_text(text, encoding="utf-8")
+        # Print to stdout with safe encoding (no-op in windowed exe where stdout is None)
+        if sys.stdout is not None:
+            text = json.dumps(report, indent=2)  # default ensure_ascii=True
+            print(text)
         return 0 if report["ok"] else 1
 
     from tamra.app import run
