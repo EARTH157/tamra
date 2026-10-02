@@ -1,6 +1,7 @@
 import json
 from collections.abc import Iterator
 from typing import TypedDict
+from urllib.parse import urlparse
 
 import httpx
 
@@ -44,11 +45,16 @@ class OpenAICompatibleLLM:
         transport: httpx.BaseTransport | None = None,
     ):
         self._model = model
+        # Detect loopback hosts and bypass proxies
+        parsed = urlparse(base_url)
+        host = parsed.hostname or ""
+        trust_env = host not in ("127.0.0.1", "localhost", "::1")
         self._client = httpx.Client(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
             timeout=httpx.Timeout(10.0, read=120.0),
             transport=transport,
+            trust_env=trust_env,
         )
 
     def generate(self, messages: list[Message], max_tokens: int = 1024) -> Iterator[str]:

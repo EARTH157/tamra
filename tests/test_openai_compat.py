@@ -246,3 +246,39 @@ def test_empty_data_and_null_delta():
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
     tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
     assert tokens == ["A", "B"]
+
+
+def test_loopback_client_bypasses_proxy(monkeypatch):
+    """Loopback client ignores proxy env vars and succeeds."""
+    import http.server
+    import threading
+
+    # Set broken proxy env vars
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+
+    # Start a background server on loopback
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(SSE.encode())
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    host, port = server.server_address
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    try:
+        # Connect to the loopback server and generate
+        llm = OpenAICompatibleLLM(f"http://{host}:{port}", "local")
+        tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+        llm.close()
+        assert tokens == ["Hel", "lo"]
+    finally:
+        server.shutdown()

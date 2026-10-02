@@ -44,31 +44,43 @@ class LlamaServer:
     def start(self, timeout: float = 120.0) -> "LlamaServer":
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         for gpu in [True, False] if self.gpu else [False]:
-            self._log = self.log_file.open("ab")
-            self._proc = subprocess.Popen(
-                self.args(gpu),
-                stdout=self._log,
-                stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            if self._wait_healthy(timeout):
-                self.gpu_used = gpu
-                return self
-            self.stop()
+            try:
+                self._log = self.log_file.open("ab")
+                try:
+                    self._proc = subprocess.Popen(
+                        self.args(gpu),
+                        stdout=self._log,
+                        stderr=subprocess.STDOUT,
+                        stdin=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                except OSError as e:
+                    raise LlamaServerError(f"cannot launch {self.exe}: {e}") from e
+                if self._wait_healthy(timeout):
+                    self.gpu_used = gpu
+                    return self
+                self.stop()
+            except Exception:
+                self.stop()
+                raise
         raise LlamaServerError(f"llama-server failed to start; see {self.log_file}")
 
     def _wait_healthy(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self._proc is None or self._proc.poll() is not None:
-                return False
-            try:
-                if httpx.get(f"{self.base_url}/health", timeout=2.0).status_code == 200:
-                    return True
-            except httpx.TransportError:
-                pass
-            time.sleep(0.25)
-        return False
+        client = httpx.Client(trust_env=False, timeout=2.0)
+        try:
+            while time.monotonic() < deadline:
+                if self._proc is None or self._proc.poll() is not None:
+                    return False
+                try:
+                    if client.get(f"{self.base_url}/health").status_code == 200:
+                        return True
+                except httpx.TransportError:
+                    pass
+                time.sleep(0.25)
+            return False
+        finally:
+            client.close()
 
     def stop(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
