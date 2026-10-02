@@ -70,7 +70,11 @@ Build: PyInstaller 6.22.3 (contrib hooks 2026.8), CPython 3.12.15, pywebview 6.2
 - **Decisions or risks to carry into the M1 plan:**
   1. Assets were never fetched: the fetch path (HF redirects, zip extraction, llama zip layout), the
      embedder's ONNX output shape, and the `assets`-marked tests are unverified. Before M1, run
-     `uv run python scripts/fetch_assets.py` and `uv run pytest -m assets`, then fill in this report.
+     `uv run python scripts/fetch_assets.py` and `uv run pytest -m assets`, then rebuild with
+     `./scripts/build.ps1` (the current local `dist/Tamra` has no llama binaries) and run the full
+     selfcheck from the packaged exe (the second command of Task 10 Step 3 in
+     `docs/superpowers/plans/2026-10-02-tamra-m0-foundation.md`, which writes `selfcheck-full.json`).
+     Then fill in the pending rows and findings of this report.
   2. The pinned bge-m3 export is int8 (Xenova `model_int8.onnx`). If it uses dynamic activation
      quantisation, embeddings depend on batch composition and padding, so
      `test_padding_does_not_change_embedding` (atol 1e-3) may fail with a correct embedder. Consider
@@ -88,4 +92,5 @@ Build: PyInstaller 6.22.3 (contrib hooks 2026.8), CPython 3.12.15, pywebview 6.2
      prompt processing, and the real token count of the 648-character PASSAGE is unverified.
   8. The CI `package` job had not run when this was written (the repo was not pushed yet). Until it
      is green, the real-llama bundle (`fetch_assets.py llama` into `vendor/llama`, then PyInstaller)
-     is unproven; CI's selfcheck is sqlite only, so it also cannot catch a wrong llama zip layout.
+     is unproven. CI's selfcheck is sqlite only, so it never launches llama-server, but the job now
+     fails if `dist\Tamra\_internal\vendor\llama\llama-server.exe` is missing (a wrong zip layout).
