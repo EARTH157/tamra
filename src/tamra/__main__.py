@@ -29,10 +29,8 @@ def main(argv: list[str] | None = None) -> int:
             args.report.parent.mkdir(parents=True, exist_ok=True)
             text = json.dumps(report, ensure_ascii=False, indent=2)
             args.report.write_text(text, encoding="utf-8")
-        # Print to stdout with safe encoding (no-op in windowed exe where stdout is None)
-        if sys.stdout is not None:
-            text = json.dumps(report, indent=2)  # default ensure_ascii=True
-            print(text)
+        text = json.dumps(report, indent=2)  # default ensure_ascii=True
+        print(text)  # no-op in the windowed exe (stdout is None); use --report there
         return 0 if report["ok"] else 1
 
     from tamra.app import run

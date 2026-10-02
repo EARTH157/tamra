@@ -37,36 +37,26 @@ def test_full_selfcheck(bge_dir, qwen_gguf, llama_exe, tmp_path):
     assert report["checks"]["llm"]["tokens"] > 0
 
 
-def test_cp1252_stdout_with_non_ascii_error(tmp_path, monkeypatch):
-    # Regression: report is lost when stdout encoding can't handle Thai/Chinese text
-    # Use Thai text in directory name: เ = ะ
-    thai_dir = tmp_path / "เแโ"
-    thai_dir.mkdir(parents=True)
-    out = tmp_path / "report.json"
+def test_report_survives_non_cp1252_stdout(tmp_path, monkeypatch):
+    # Regression for Important 1: report is not lost when stdout encoding can't handle Thai text.
+    # Deterministic: monkeypatch run_selfcheck to return a failing report with Thai error text.
+    import tamra.selfcheck
 
-    # Monkeypatch stdout to cp1252 encoding (legacy Windows)
-    old_stdout = sys.stdout
-    try:
-        sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
-        # Should not crash; should return 1 (embedding fails); report should exist
-        result = main(
-            [
-                "selfcheck",
-                "--embed-model-dir",
-                str(thai_dir),
-                "--report",
-                str(out),
-            ]
-        )
-    finally:
-        sys.stdout = old_stdout
-
-    assert result == 1, "Expected exit code 1 for failed embedding check"
-    assert out.exists(), "Report file should be created even with cp1252 stdout"
-    report = json.loads(out.read_text(encoding="utf-8"))
-    assert report["ok"] is False
-    assert report["checks"]["embedding"]["ok"] is False
-    assert "error" in report["checks"]["embedding"]
+    # Thai characters: chr(0x0e40) = THAI CHARACTER SARA E, etc.
+    thai_chars = chr(0x0E40) + chr(0x0E41) + chr(0x0E42)
+    fake_report = {
+        "ok": False,
+        "checks": {"embedding": {"ok": False, "error": f"NoSuchFile: {thai_chars}/model.onnx"}},
+    }
+    monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(tamra.selfcheck, "run_selfcheck", lambda *a, **k: fake_report)
+    buf = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(buf, encoding="cp1252"))
+    out = tmp_path / "r.json"
+    assert main(["selfcheck", "--report", str(out)]) == 1
+    sys.stdout.flush()
+    assert json.loads(out.read_text(encoding="utf-8")) == fake_report
+    assert buf.getvalue().isascii()
 
 
 def test_windowed_exe_with_none_stdout(tmp_path, monkeypatch):
