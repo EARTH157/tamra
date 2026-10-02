@@ -1,0 +1,23 @@
+{
+  "llama": {
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11344/llama-b11344-bin-win-vulkan-x64.zip",
+    "sha256": "f561d5af233f802bd0605ff281fd204fba162dfaf09032a361e244ad292ba397",
+    "dest": "vendor/downloads/llama-b11344-bin-win-vulkan-x64.zip",
+    "extract_to": "vendor/llama"
+  },
+  "bge-m3-model": {
+    "url": "https://huggingface.co/Xenova/bge-m3/resolve/4de13258303883538bd53b696b452bf8099f0858/onnx/model_int8.onnx",
+    "sha256": "a206e10e995aa2a833924bcd725ba5dd6c3425cd34bac3cf2b5677cd2a1c51d6",
+    "dest": ".models/bge-m3/model.onnx"
+  },
+  "bge-m3-tokenizer": {
+    "url": "https://huggingface.co/Xenova/bge-m3/resolve/4de13258303883538bd53b696b452bf8099f0858/tokenizer.json",
+    "sha256": "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
+    "dest": ".models/bge-m3/tokenizer.json"
+  },
+  "qwen-0.5b": {
+    "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+    "dest": ".models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+  }
+}
