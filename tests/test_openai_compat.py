@@ -261,6 +261,10 @@ def test_loopback_client_bypasses_proxy(monkeypatch):
     # Start a background server on loopback
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
+            # Read the request body to avoid socket abort on close
+            content_length = int(self.headers["Content-Length"])
+            self.rfile.read(content_length)
+
             self.send_response(200)
             self.send_header("content-type", "text/event-stream")
             self.end_headers()
@@ -282,3 +286,4 @@ def test_loopback_client_bypasses_proxy(monkeypatch):
         assert tokens == ["Hel", "lo"]
     finally:
         server.shutdown()
+        server.server_close()

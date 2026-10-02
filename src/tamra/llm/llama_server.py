@@ -60,7 +60,7 @@ class LlamaServer:
                     self.gpu_used = gpu
                     return self
                 self.stop()
-            except Exception:
+            except BaseException:
                 self.stop()
                 raise
         raise LlamaServerError(f"llama-server failed to start; see {self.log_file}")

@@ -11,7 +11,6 @@ from tamra.net import free_port
 # Stub server script for lifecycle tests
 _STUB_SERVER = """
 import http.server
-import socket
 import sys
 import time
 
@@ -87,80 +86,68 @@ class _StubLlamaServer(LlamaServer):
     def __init__(self, *args, modes=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.modes = modes or {}
-        self._attempt = 0
 
     def args(self, gpu: bool):
         mode_key = "gpu" if gpu else "cpu"
         mode = self.modes.get(mode_key, "ok")
-        self._attempt += 1
         return [sys.executable, str(self.exe), str(self.port), mode]
 
 
-def test_stub_server_gpu_fail_cpu_ok(tmp_path, monkeypatch):
+@pytest.fixture
+def spawned(monkeypatch):
+    """Fixture that records subprocess.Popen calls and cleans up on teardown."""
+    procs = []
+    original_popen = subprocess.Popen
+
+    def tracked_popen(*args, **kwargs):
+        proc = original_popen(*args, **kwargs)
+        procs.append(proc)
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", tracked_popen)
+    yield procs
+
+    # Cleanup: terminate any still-running processes
+    for proc in procs:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait()
+
+
+def test_stub_server_gpu_fail_cpu_ok(tmp_path, spawned):
     """GPU fails, CPU succeeds."""
     stub_script = tmp_path / "stub.py"
     stub_script.write_text(_STUB_SERVER)
 
-    procs = []
-    original_popen = subprocess.Popen
-
-    def tracked_popen(*args, **kwargs):
-        proc = original_popen(*args, **kwargs)
-        procs.append(proc)
-        return proc
-
-    monkeypatch.setattr(subprocess, "Popen", tracked_popen)
-
-    try:
-        srv = _StubLlamaServer(
-            stub_script,
-            Path("dummy.gguf"),
-            tmp_path / "log.txt",
-            modes={"gpu": "fail", "cpu": "ok"},
-        )
-        srv.start(timeout=5)
-        assert srv.gpu_used is False
-        srv.stop()
-        for proc in procs:
-            assert proc.poll() is not None
-    finally:
-        for proc in procs:
-            if proc.poll() is None:
-                proc.terminate()
-                proc.wait()
+    srv = _StubLlamaServer(
+        stub_script,
+        Path("dummy.gguf"),
+        tmp_path / "log.txt",
+        modes={"gpu": "fail", "cpu": "ok"},
+    )
+    srv.start(timeout=5)
+    assert srv.gpu_used is False
+    srv.stop()
+    for proc in spawned:
+        assert proc.poll() is not None
 
 
-def test_stub_server_both_hang(tmp_path, monkeypatch):
+def test_stub_server_both_hang(tmp_path, spawned):
     """Both GPU and CPU attempts hang; timeout and error."""
     stub_script = tmp_path / "stub.py"
     stub_script.write_text(_STUB_SERVER)
 
-    procs = []
-    original_popen = subprocess.Popen
-
-    def tracked_popen(*args, **kwargs):
-        proc = original_popen(*args, **kwargs)
-        procs.append(proc)
-        return proc
-
-    monkeypatch.setattr(subprocess, "Popen", tracked_popen)
-
-    try:
-        srv = _StubLlamaServer(
-            stub_script,
-            Path("dummy.gguf"),
-            tmp_path / "log.txt",
-            modes={"gpu": "hang", "cpu": "hang"},
-        )
-        with pytest.raises(LlamaServerError):
-            srv.start(timeout=1)
-        for proc in procs:
-            assert proc.poll() is not None
-    finally:
-        for proc in procs:
-            if proc.poll() is None:
-                proc.terminate()
-                proc.wait()
+    srv = _StubLlamaServer(
+        stub_script,
+        Path("dummy.gguf"),
+        tmp_path / "log.txt",
+        modes={"gpu": "hang", "cpu": "hang"},
+    )
+    with pytest.raises(LlamaServerError):
+        srv.start(timeout=1)
+    assert len(spawned) == 2
+    for proc in spawned:
+        assert proc.poll() is not None
 
 
 def test_missing_exe_raises(tmp_path):
@@ -178,7 +165,7 @@ def test_missing_exe_raises(tmp_path):
         srv.stop()
 
 
-def test_proxy_bypass(tmp_path, monkeypatch):
+def test_proxy_bypass(tmp_path, monkeypatch, spawned):
     """GPU startup succeeds even with broken proxy env."""
     stub_script = tmp_path / "stub.py"
     stub_script.write_text(_STUB_SERVER)
@@ -187,30 +174,40 @@ def test_proxy_bypass(tmp_path, monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
 
-    procs = []
-    original_popen = subprocess.Popen
+    srv = _StubLlamaServer(
+        stub_script,
+        Path("dummy.gguf"),
+        tmp_path / "log.txt",
+        modes={"gpu": "ok"},
+    )
+    srv.start(timeout=10)
+    assert srv.gpu_used is True
+    srv.stop()
+    for proc in spawned:
+        assert proc.poll() is not None
 
-    def tracked_popen(*args, **kwargs):
-        proc = original_popen(*args, **kwargs)
-        procs.append(proc)
-        return proc
 
-    monkeypatch.setattr(subprocess, "Popen", tracked_popen)
+def test_keyboard_interrupt_during_start(tmp_path, spawned):
+    """KeyboardInterrupt during _wait_healthy closes log handle and stops child."""
+    stub_script = tmp_path / "stub.py"
+    stub_script.write_text(_STUB_SERVER)
 
-    try:
-        srv = _StubLlamaServer(
-            stub_script,
-            Path("dummy.gguf"),
-            tmp_path / "log.txt",
-            modes={"gpu": "ok"},
-        )
+    srv = _StubLlamaServer(
+        stub_script,
+        Path("dummy.gguf"),
+        tmp_path / "log.txt",
+        modes={"gpu": "ok"},
+    )
+
+    # Make _wait_healthy raise KeyboardInterrupt
+    def raise_on_wait(timeout):
+        raise KeyboardInterrupt()
+
+    srv._wait_healthy = raise_on_wait
+
+    with pytest.raises(KeyboardInterrupt):
         srv.start(timeout=10)
-        assert srv.gpu_used is True
-        srv.stop()
-        for proc in procs:
-            assert proc.poll() is not None
-    finally:
-        for proc in procs:
-            if proc.poll() is None:
-                proc.terminate()
-                proc.wait()
+
+    assert srv._log is None
+    for proc in spawned:
+        assert proc.poll() is not None
