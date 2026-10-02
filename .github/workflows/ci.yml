@@ -24,3 +24,28 @@ jobs:
         working-directory: ui
       - run: npm run build
         working-directory: ui
+
+  package:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: uv sync --locked
+      - run: ./scripts/build.ps1
+        shell: pwsh
+      - name: Selfcheck packaged exe
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Tamra\Tamra.exe -ArgumentList "selfcheck","--report","selfcheck.json" -Wait -PassThru
+          Get-Content selfcheck.json
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tamra-windows
+          path: dist/Tamra

@@ -24,6 +24,10 @@ uv run tamra --dev                        # core API only on :8765, token "dev"
 npm --prefix ui run dev                   # UI with hot reload → http://localhost:5173/#token=dev
 npm --prefix ui test                      # UI unit tests (Vitest)
 npm --prefix ui run build                 # build UI into ui/dist (bundled by PyInstaller)
+uv run python scripts/fetch_assets.py     # download pinned llama.cpp + dev models (~1.1 GB, gitignored)
+./scripts/build.ps1                       # UI build + PyInstaller → dist/Tamra/Tamra.exe
+# windowed exe: get output via --report and Start-Process -Wait
+Start-Process dist\Tamra\Tamra.exe -ArgumentList "selfcheck","--report","r.json" -Wait
 ```
 
 ## Architecture
