@@ -29,9 +29,9 @@ answer can be checked against the exact passage it came from.
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Stack | Python core + React/TypeScript UI in a pywebview (WebView2) window | Best local-AI ecosystem; web UI makes the popup and PDF highlighting easy; one process, one installer |
+| Stack | Python core + React/TypeScript UI in a pywebview (WebView2) window | Best local-AI ecosystem; web UI makes the popup and PDF highlighting easy; one installer |
 | UI ↔ core | FastAPI on `127.0.0.1`, random port, per-launch token; SSE for streaming | Lets the UI be developed in a normal browser with hot reload |
-| Local LLM | llama.cpp (GGUF), Vulkan build with CPU fallback | One build covers NVIDIA, AMD, and Intel GPUs |
+| Local LLM | llama.cpp's official prebuilt `llama-server.exe` (Vulkan build), run as a managed child process on `127.0.0.1` and called through its OpenAI-compatible API; CPU fallback via `--device none` | One build covers NVIDIA, AMD, and Intel GPUs. Prebuilt binaries ship every release (the Python binding needs a local Vulkan SDK compile). Reuses the OpenAI-compatible client. A llama.cpp crash cannot take down the app. |
 | API LLM | Anthropic, plus any OpenAI-compatible endpoint (Ollama, LM Studio, others) | User choice; the OpenAI-compatible option is nearly free once the interface exists |
 | Embedding | `bge-m3` via ONNX Runtime, **always local**, single fixed model | Strong multilingual (TH/EN/ZH) and cross-lingual retrieval; offline search; index never depends on LLM mode |
 | Storage | One SQLite database: metadata, chats, chunks, FTS5 (trigram) keyword index, and `sqlite-vec` for dense vectors | One file, one transaction across file/chunk updates; trigram FTS needs no Thai/Chinese word segmenter |
@@ -53,7 +53,7 @@ pywebview window (WebView2)
                                                  ├─ ingest      watch folders, parse, chunk
                                                  ├─ embedder    bge-m3 ONNX
                                                  ├─ retriever   hybrid search
-                                                 ├─ llm         LocalLlama | Anthropic | OpenAICompatible
+                                                 ├─ llm         OpenAICompatible (llama-server child | Ollama | LM Studio) | Anthropic
                                                  ├─ answer      prompt, stream, record sources
                                                  ├─ attribution selection → source passage
                                                  ├─ models      hardware detect, download, import, verify
@@ -61,8 +61,10 @@ pywebview window (WebView2)
 ```
 
 Each module has one job and a narrow interface. `llm` exposes one streaming
-`generate(messages, max_tokens) -> AsyncIterator[str]` interface. Nothing outside `llm`
-knows which provider is active. `store` is the only module that touches SQL.
+`generate(messages, max_tokens) -> Iterator[str]` interface (synchronous; FastAPI runs
+it in its threadpool for SSE). Nothing outside `llm` knows which provider is active.
+`store` is the only module that touches SQL. The only child process is `llama-server`,
+which is started on demand in local mode and stopped when the app exits.
 
 ## 4. Data model (SQLite)
 
@@ -175,8 +177,8 @@ Every type also has "Open with default app" (`os.startfile`).
 - **Catalog:** `models.json` shipped with the app. Each entry has `id`, `role`
   (embedding|llm), `tier` (small|medium|large), `file_size`, `url` (Hugging Face),
   `sha256`, `license`, `languages`, `context_length`. It updates with app releases.
-- **Hardware detection:** RAM, and GPU VRAM via Vulkan device query. Tamra recommends a
-  tier; the user can override.
+- **Hardware detection:** RAM, and GPU devices/VRAM via `llama-server --list-devices`.
+  Tamra recommends a tier; the user can override.
   - Small: about 1–4B parameters, for low-spec or CPU-only machines.
   - Medium: about 7–9B.
   - Large: about 14B and up, for GPUs with enough VRAM.
@@ -233,7 +235,7 @@ Every type also has "Open with default app" (`os.startfile`).
 
 | # | Scope | Exit criterion |
 |---|---|---|
-| M0 | Scaffold (uv + Vite), CI (lint + tests), CLAUDE.md commands. **Spike:** llama.cpp Vulkan + bge-m3 ONNX + sqlite-vec packaged with PyInstaller, running on Windows | A packaged exe embeds text, stores and queries a vector, and generates tokens with a small GGUF |
+| M0 | Scaffold (uv + Vite), CI (lint + tests), CLAUDE.md commands. **Spike:** llama-server (Vulkan) + bge-m3 ONNX + sqlite-vec packaged with PyInstaller, running on Windows | A packaged exe embeds text, stores and queries a vector, and generates tokens with a small GGUF |
 | M1 | Core loop: one collection, 4 file types, hybrid search, local LLM answers with `[n]`, chats persisted | Ask a question about a folder of mixed TH/EN/ZH docs and get a cited answer |
 | M2 | API providers, settings UI, model catalog/download/import, hardware tiers, LLM picks per tier | Switch local↔API and see both work; install a model offline via import |
 | M3 | Attribution popup + document viewer with highlights | Select text in an answer, see its source highlighted in the PDF |
@@ -243,8 +245,9 @@ Every type also has "Open with default app" (`os.startfile`).
 
 ## 14. Risks
 
-- **llama.cpp Vulkan and PyInstaller packaging** may fight (DLLs, driver variance). This is
-  why it is the M0 spike. Fallback: ship CPU and CUDA builds separately.
+- **llama-server Vulkan on varied drivers** may fail to start or crash. This is why it is
+  the M0 spike. The CPU retry (`--device none`) covers most cases. Fallback: also ship
+  the CPU-only build.
 - **Small local models answer Thai and Chinese poorly.** Mitigations: tier
   recommendations, the API mode, and eval-driven model picks.
 - **bge-m3 ONNX on CPU** is slow for large first-time indexing. Mitigations: the background

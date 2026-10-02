@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Build output
+build/
+dist/
+
+# Downloaded assets (never commit model weights or llama.cpp binaries)
+.models/
+vendor/
+*.part
+
+# UI
+ui/node_modules/
+ui/dist/
+
+# Local Claude Code settings
+.claude/settings.local.json
