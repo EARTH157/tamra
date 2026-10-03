@@ -10,7 +10,15 @@ from pathlib import Path
 import numpy as np
 
 from tamra.store.db import capabilities, connect
-from tamra.store.models import ChunkInput, ChunkRecord, Collection, FileRecord
+from tamra.store.models import (
+    Chat,
+    ChunkInput,
+    ChunkRecord,
+    Collection,
+    FileRecord,
+    MessageRecord,
+    SourceRecord,
+)
 from tamra.store.schema import migrate
 
 FILE_STATUSES = ("pending", "indexing", "indexed", "failed", "skipped")
@@ -245,3 +253,133 @@ class Store:
                 (fts_query, collection_id, k),
             ).fetchall()
         return [row[0] for row in rows]
+
+    # Chats ----------------------------------------------------------------------------------
+
+    def create_chat(self, title: str = "") -> Chat:
+        created = _now()
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO chats (title, created_at, updated_at, activity)"
+                " VALUES (?, ?, ?, (SELECT COALESCE(MAX(activity), 0) + 1 FROM chats))",
+                (title, created, created),
+            )
+        return Chat(cursor.lastrowid, title, created, created)
+
+    def get_chat(self, chat_id: int) -> Chat | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, title, created_at, updated_at FROM chats WHERE id = ?", (chat_id,)
+            ).fetchone()
+        return Chat(*row) if row else None
+
+    def list_chats(self) -> list[Chat]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, title, created_at, updated_at FROM chats ORDER BY activity DESC"
+            ).fetchall()
+        return [Chat(*row) for row in rows]
+
+    def delete_chat(self, chat_id: int) -> bool:
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+        return cursor.rowcount > 0
+
+    def add_user_message(self, chat_id: int, content: str) -> int:
+        """Store a question; the first question of an untitled chat becomes its title."""
+        created = _now()
+        title = " ".join(content.split())[:60]
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO messages (chat_id, role, content, created_at)"
+                " VALUES (?, 'user', ?, ?)",
+                (chat_id, content, created),
+            )
+            self._conn.execute(
+                "UPDATE chats SET updated_at = ?,"
+                " activity = (SELECT MAX(activity) FROM chats) + 1,"
+                " title = CASE WHEN title = '' THEN ? ELSE title END WHERE id = ?",
+                (created, title, chat_id),
+            )
+        return cursor.lastrowid
+
+    def add_assistant_message(
+        self,
+        chat_id: int,
+        content: str,
+        *,
+        provider: str | None,
+        model: str | None,
+        sources: Sequence[SourceRecord],
+    ) -> int:
+        """Store an answer with a snapshot of every source the model was given."""
+        created = _now()
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO messages (chat_id, role, content, provider, model, created_at)"
+                " VALUES (?, 'assistant', ?, ?, ?, ?)",
+                (chat_id, content, provider, model, created),
+            )
+            message_id = cursor.lastrowid
+            self._conn.executemany(
+                "INSERT INTO message_sources (message_id, n, chunk_id, file_id, rel_path,"
+                " text_snapshot, location_json, file_hash_at_answer)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        message_id,
+                        s.n,
+                        s.chunk_id,
+                        s.file_id,
+                        s.rel_path,
+                        s.text,
+                        json.dumps(s.location, ensure_ascii=False),
+                        s.file_hash,
+                    )
+                    for s in sources
+                ],
+            )
+            self._conn.execute(
+                "UPDATE chats SET updated_at = ?,"
+                " activity = (SELECT MAX(activity) FROM chats) + 1 WHERE id = ?",
+                (created, chat_id),
+            )
+        return message_id
+
+    def last_exchange(self, chat_id: int) -> tuple[str | None, str | None]:
+        """The chat's latest question and the assistant reply that followed it, if any."""
+        with self._lock:
+            question = self._conn.execute(
+                "SELECT id, content FROM messages WHERE chat_id = ? AND role = 'user'"
+                " ORDER BY id DESC LIMIT 1",
+                (chat_id,),
+            ).fetchone()
+            if question is None:
+                return None, None
+            answer = self._conn.execute(
+                "SELECT content FROM messages WHERE chat_id = ? AND role = 'assistant' AND id > ?"
+                " ORDER BY id LIMIT 1",
+                (chat_id, question[0]),
+            ).fetchone()
+        return question[1], (answer[0] if answer else None)
+
+    def list_messages(self, chat_id: int) -> list[MessageRecord]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, role, content, provider, model, created_at FROM messages"
+                " WHERE chat_id = ? ORDER BY id",
+                (chat_id,),
+            ).fetchall()
+            source_rows = self._conn.execute(
+                "SELECT s.message_id, s.n, s.chunk_id, s.file_id, s.rel_path, s.text_snapshot,"
+                " s.location_json, s.file_hash_at_answer FROM message_sources s"
+                " JOIN messages m ON m.id = s.message_id WHERE m.chat_id = ?"
+                " ORDER BY s.message_id, s.n",
+                (chat_id,),
+            ).fetchall()
+        sources: dict[int, list[SourceRecord]] = {}
+        for row in source_rows:
+            sources.setdefault(row[0], []).append(
+                SourceRecord(row[1], row[2], row[3], row[4], row[5], json.loads(row[6]), row[7])
+            )
+        return [MessageRecord(*row, sources=tuple(sources.get(row[0], ()))) for row in rows]

@@ -57,6 +57,7 @@ def test_report_survives_non_cp1252_stdout(tmp_path, monkeypatch):
     sys.stdout.flush()
     assert json.loads(out.read_text(encoding="utf-8")) == fake_report
     assert buf.getvalue().isascii()
+    assert json.loads(buf.getvalue().decode("ascii")) == fake_report
 
 
 def test_windowed_exe_with_none_stdout(tmp_path, monkeypatch):

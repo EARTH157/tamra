@@ -15,45 +15,66 @@ def _guard(check: Callable[[], dict]) -> dict:
 
 
 def _check_sqlite() -> dict:
-    import sqlite_vec
+    import numpy as np
 
-    from tamra import store
+    from tamra.store import ChunkInput, Store
 
-    conn = store.connect(":memory:")
-    caps = store.capabilities(conn)
-    conn.execute("CREATE VIRTUAL TABLE v USING vec0(embedding float[2])")
-    conn.execute(
-        "INSERT INTO v(rowid, embedding) VALUES (1, ?)", (sqlite_vec.serialize_float32([1, 0]),)
-    )
-    hit = conn.execute(
-        "SELECT rowid FROM v WHERE embedding MATCH ? AND k = 1",
-        (sqlite_vec.serialize_float32([1, 0]),),
-    ).fetchone()
-    return {"ok": bool(caps["fts5_trigram"]) and hit is not None and hit[0] == 1, **caps}
+    store = Store.open(":memory:")
+    try:
+        caps = store.capabilities()
+        collection = store.replace_collection("selfcheck", ".", "selfcheck")
+        file_id = store.add_file(collection.id, "probe.txt", 0, 0.0)
+        vector = np.zeros(1024, dtype=np.float32)
+        vector[0] = 1.0
+        location = {"kind": "text", "line_start": 1, "line_end": 1}
+        store.replace_file_chunks(
+            file_id,
+            [ChunkInput("selfcheck probe text", location)],
+            vector[None, :],
+            content_hash="-",
+            note=None,
+        )
+        dense = store.search_dense(collection.id, vector, 1)
+        keyword = store.search_keyword(collection.id, '"pro"', 1)
+    finally:
+        store.close()
+    ok = bool(caps["fts5_trigram"]) and len(dense) == 1 and keyword == [dense[0][0]]
+    return {"ok": ok, **caps}
 
 
 def _check_embedding(model_dir: Path) -> dict:
-    from tamra import store
     from tamra.embedder import Embedder
+    from tamra.store import ChunkInput, Store
 
     t0 = time.perf_counter()
     embedder = Embedder(model_dir)
     load_s = time.perf_counter() - t0
 
     docs = ["แมวกำลังนอนหลับอยู่บนโซฟา", "汽车停在路边"]
-    conn = store.connect(":memory:")
-    conn.execute("CREATE VIRTUAL TABLE v USING vec0(embedding float[1024])")
-    for rowid, vec in enumerate(embedder.embed(docs), start=1):
-        conn.execute("INSERT INTO v(rowid, embedding) VALUES (?, ?)", (rowid, vec.tobytes()))
-    query = embedder.embed(["A cat sleeping on a couch"])[0]
-    nearest = conn.execute(
-        "SELECT rowid FROM v WHERE embedding MATCH ? AND k = 1", (query.tobytes(),)
-    ).fetchone()[0]
+    store = Store.open(":memory:")
+    try:
+        collection = store.replace_collection("selfcheck", ".", "selfcheck")
+        file_id = store.add_file(collection.id, "probe.txt", 0, 0.0)
+        chunks = [
+            ChunkInput(text, {"kind": "text", "line_start": i + 1, "line_end": i + 1})
+            for i, text in enumerate(docs)
+        ]
+        store.replace_file_chunks(
+            file_id, chunks, embedder.embed(docs), content_hash="-", note=None
+        )
+        query = embedder.embed(["A cat sleeping on a couch"])[0]
+        best = store.get_chunks([store.search_dense(collection.id, query, 1)[0][0]])[0]
+    finally:
+        store.close()
 
     t0 = time.perf_counter()
     embedder.embed([PASSAGE] * 32)
     rate = 32 / (time.perf_counter() - t0)
-    return {"ok": nearest == 1, "load_s": round(load_s, 2), "passages_per_sec": round(rate, 2)}
+    return {
+        "ok": best.text == docs[0],
+        "load_s": round(load_s, 2),
+        "passages_per_sec": round(rate, 2),
+    }
 
 
 def _check_llm(llama_exe: Path, model: Path, log_dir: Path) -> dict:
