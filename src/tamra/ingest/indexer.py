@@ -207,13 +207,14 @@ class Indexer:
                 self._store.set_file_status(file_id, "skipped", doc.note or "no text found")
                 return
             vectors = embedder.embed([chunk.text for chunk in chunks])
-            self._store.replace_file_chunks(
-                file_id, chunks, vectors, content_hash=content_hash, note=doc.note
-            )
+            try:
+                self._store.replace_file_chunks(
+                    file_id, chunks, vectors, content_hash=content_hash, note=doc.note
+                )
+            except LookupError:
+                return  # the file left the collection while it was being indexed
         except _Pause:
             raise
-        except LookupError:
-            pass  # the file left the collection while it was being indexed
         except (ParseError, OSError) as e:
             self._store.set_file_status(file_id, "failed", str(e))
         except Exception as e:  # one bad file must not stop the others

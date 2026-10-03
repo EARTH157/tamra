@@ -155,11 +155,28 @@ def test_an_unavailable_model_pauses_indexing_without_failing_files(tmp_path):
     def missing():
         raise FileNotFoundError("model.onnx not found")
 
-    indexer = Indexer(store, missing, lambda: fake_spans, MODEL)
+    try:
+        indexer = Indexer(store, missing, lambda: fake_spans, MODEL)
+        run(indexer)
+        assert indexer.state().error.startswith("Embedding model unavailable")
+        assert files(store)["a.md"].status == "pending"
+    finally:
+        store.close()
+
+
+def test_a_lookup_error_while_indexing_fails_the_file_instead_of_hiding_it(env):
+    docs, store, _, indexer = env
+
+    class BrokenEmbedder:
+        def embed(self, texts, batch_size=16):
+            raise KeyError("boom")
+
+    indexer._embedder = lambda: BrokenEmbedder()
+    (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
     run(indexer)
-    assert indexer.state().error.startswith("Embedding model unavailable")
-    assert files(store)["a.md"].status == "pending"
-    store.close()
+    record = files(store)["a.md"]
+    assert record.status == "failed"
+    assert "KeyError" in record.error
 
 
 def test_interrupted_indexing_is_requeued(env):
