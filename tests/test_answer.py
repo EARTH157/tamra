@@ -56,6 +56,7 @@ def test_an_answer_streams_sources_then_tokens_and_is_saved(env):
     system = llm.calls[0][0]["content"]
     assert "[1] lease.md (line 1)" in system
     assert "in English" in system
+    assert system.endswith("Example answer format: The rent is 10,000 baht [1].")
 
 
 def test_an_unrelated_question_gets_not_found_without_the_llm(env):

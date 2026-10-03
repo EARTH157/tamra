@@ -27,7 +27,9 @@ Rules:
 
 Sources:
 
-{sources}"""
+{sources}
+
+Example answer format: The rent is 10,000 baht [1]."""
 
 
 class LLMLike(Protocol):
