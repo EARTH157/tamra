@@ -12,11 +12,23 @@ verifiable citations.
 - Implementation plans, one per milestone: `docs/superpowers/plans/`
 - Spike measurements: `docs/spikes/`
 
-## Status
+## Commands
 
-M0 (foundation & packaging spike) is planned but not started. Execute
-`docs/superpowers/plans/2026-10-02-tamra-m0-foundation.md` with superpowers:executing-plans
-or superpowers:subagent-driven-development.
+```powershell
+uv sync                                   # install/refresh Python env (Python 3.12, managed by uv)
+uv run pytest                             # unit tests (skips tests marked `assets`)
+uv run pytest tests/test_paths.py::test_data_dir_uses_override_and_creates_it -v   # single test
+uv run pytest -m assets                   # tests needing downloaded models/binaries
+uv run ruff check; uv run ruff format     # lint, format
+uv run tamra --dev                        # core API only on :8765, token "dev"
+npm --prefix ui run dev                   # UI with hot reload → http://localhost:5173/#token=dev
+npm --prefix ui test                      # UI unit tests (Vitest)
+npm --prefix ui run build                 # build UI into ui/dist (bundled by PyInstaller)
+uv run python scripts/fetch_assets.py     # download pinned llama.cpp + dev models (~1.1 GB, gitignored)
+./scripts/build.ps1                       # UI build + PyInstaller → dist/Tamra/Tamra.exe
+# windowed exe: get output via --report and Start-Process -Wait
+Start-Process dist\Tamra\Tamra.exe -ArgumentList "selfcheck","--report","r.json" -Wait
+```
 
 ## Architecture
 

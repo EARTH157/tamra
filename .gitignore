@@ -18,5 +18,9 @@ vendor/
 ui/node_modules/
 ui/dist/
 
+# Selfcheck reports written to the repo root (e.g. selfcheck.json, selfcheck-full.json, r.json)
+/selfcheck*.json
+/r.json
+
 # Local Claude Code settings
 .claude/settings.local.json
