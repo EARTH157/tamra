@@ -1875,6 +1875,7 @@ git commit -m "feat(ingest): token-based chunker with split hierarchy, overlap, 
 
 **Files:**
 - Create: `src/tamra/ingest/indexer.py`, `tests/fakes.py`
+- Modify: `src/tamra/store/repo.py` (`set_file_status`), `tests/test_store_repo.py`
 - Test: `tests/test_indexer.py`
 
 **Interfaces:**
@@ -1885,7 +1886,7 @@ git commit -m "feat(ingest): token-based chunker with split hierarchy, overlap, 
   - `Indexer(store, embedder: Callable[[], EmbedderLike], token_spans: Callable[[], TokenSpans], model_id: str)` with `start()`, `stop(timeout=30.0)`, `request_reconcile()`, `request_rebuild()`, `state() -> IndexerState`, and `process()` (runs one pass on the calling thread; tests use it).
   - `EmbedderLike` protocol: `embed(texts: list[str], batch_size: int = 16) -> np.ndarray`.
 - Produces (tests only): `tests/fakes.py` with `FakeEmbedder` (bag-of-words hashing vectors, `dim = 1024`, `calls` counter), `fake_spans(text)` (one token per whitespace-separated word), and `FakeLLM(tokens=...)` (yields the tokens, records `calls`).
-- Behavior (spec §5): files are indexed one at a time (parse → chunk → embed → one-transaction write). Reconcile compares size and mtime and hashes only when they differ; files left in `indexing` go back to `pending`; removed files leave the index. A stale collection is not indexed until `request_rebuild()`. A missing folder or an unloadable embedding model stops the pass with `state().error` set and changes no file to `failed`.
+- Behavior (spec §5): files are indexed one at a time (parse → chunk → embed → one-transaction write). Reconcile compares size and mtime and hashes only when they differ; files left in `indexing` go back to `pending`; removed files leave the index. A stale collection is not indexed until `request_rebuild()`. A missing folder or an unloadable embedding model stops the pass with `state().error` set and changes no file to `failed`. A file that becomes `failed` or `skipped` leaves the index: `Store.set_file_status` deletes its chunks and clears its content hash in the same transaction (its old chunks no longer match the file on disk, and a cleared hash makes the next change re-index it); `pending` and `indexing` keep the old chunks searchable until they are replaced.
 
 - [ ] **Step 1: Add the shared test doubles**
 
@@ -2116,6 +2117,19 @@ def test_interrupted_indexing_is_requeued(env):
     assert files(store)["a.md"].status == "indexed"
 
 
+def test_a_file_that_loses_its_text_leaves_the_index(env):
+    docs, store, _, indexer = env
+    path = docs / "a.md"
+    path.write_text("Lease terms.", encoding="utf-8")
+    run(indexer)
+    path.write_text("   \n  ", encoding="utf-8")
+    os.utime(path, (time.time() + 60, time.time() + 60))
+    run(indexer)
+    record = files(store)["a.md"]
+    assert (record.status, record.error) == ("skipped", "no text found")
+    assert not keyword(store, "Lease")
+
+
 def test_the_background_worker_indexes_and_stops(env):
     docs, store, _, indexer = env
     (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
@@ -2131,12 +2145,47 @@ def test_the_background_worker_indexes_and_stops(env):
     assert indexer.state().current is None
 ```
 
+Append to `tests/test_store_repo.py`:
+
+```python
+def test_failed_or_skipped_files_leave_the_index(store, coll):
+    file_id = store.add_file(coll.id, "a.md", 10, 1.0)
+    index(store, file_id, ["lease terms"], [unit(1)])
+    store.set_file_status(file_id, "pending")
+    assert store.search_dense(coll.id, unit(1), 5)  # pending keeps the old chunks searchable
+    store.set_file_status(file_id, "skipped", "no text found")
+    record = store.list_files(coll.id)[0]
+    assert (record.status, record.content_hash, record.indexed_at) == ("skipped", None, None)
+    assert store.search_dense(coll.id, unit(1), 5) == []
+    assert store.search_keyword(coll.id, '"lea"', 5) == []
+```
+
 - [ ] **Step 3: Run the tests to see them fail**
 
-Run: `uv run pytest tests/test_indexer.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'tamra.ingest.indexer'`.
+Run: `uv run pytest tests/test_indexer.py tests/test_store_repo.py -v`
+Expected: `tests/test_indexer.py` fails with `ModuleNotFoundError: No module named 'tamra.ingest.indexer'`; `test_failed_or_skipped_files_leave_the_index` fails (the chunks are still searchable).
 
 - [ ] **Step 4: Implement**
+
+In `src/tamra/store/repo.py`, replace `set_file_status`:
+
+```python
+    def set_file_status(self, file_id: int, status: str, error: str | None = None) -> None:
+        """Set a file's status. A failed or skipped file leaves the index: its old chunks no
+        longer match the file on disk. A pending or indexing file keeps them until replaced."""
+        if status not in FILE_STATUSES:
+            raise ValueError(f"unknown file status: {status}")
+        with self._lock, self._conn:
+            if status in ("failed", "skipped"):
+                self._conn.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
+                self._conn.execute(
+                    "UPDATE files SET content_hash = NULL, indexed_at = NULL WHERE id = ?",
+                    (file_id,),
+                )
+            self._conn.execute(
+                "UPDATE files SET status = ?, error = ? WHERE id = ?", (status, error, file_id)
+            )
+```
 
 `src/tamra/ingest/indexer.py`:
 
@@ -2376,14 +2425,14 @@ def _hash_or_none(path: Path) -> str | None:
 
 - [ ] **Step 5: Run the tests**
 
-Run: `uv run pytest tests/test_indexer.py -v`
+Run: `uv run pytest tests/test_indexer.py tests/test_store_repo.py -v`
 Expected: all pass.
 Then: `uv run pytest; uv run ruff format; uv run ruff check; uv run ruff format --check`
 
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add src/tamra/ingest/indexer.py tests/fakes.py tests/test_indexer.py
+git add src/tamra/ingest/indexer.py src/tamra/store/repo.py tests/fakes.py tests/test_indexer.py tests/test_store_repo.py
 git commit -m "feat(ingest): reconcile and background indexer with stale-model and missing-folder guards"
 ```
 
