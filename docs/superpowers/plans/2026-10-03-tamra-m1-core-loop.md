@@ -267,7 +267,8 @@ CREATE TABLE chats (
     id INTEGER PRIMARY KEY,
     title TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    activity INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
@@ -390,7 +391,8 @@ class Store:
         """Rebuild: drop every chunk, mark every file pending, and record the current model."""
         with self._lock, self._conn:
             self._conn.execute(
-                "DELETE FROM chunks WHERE file_id IN (SELECT id FROM files WHERE collection_id = ?)",
+                "DELETE FROM chunks"
+                " WHERE file_id IN (SELECT id FROM files WHERE collection_id = ?)",
                 (collection_id,),
             )
             self._conn.execute(
@@ -827,7 +829,7 @@ git commit -m "feat(store): storage package with schema v1, files, chunks, and h
 
 **Interfaces:**
 - Consumes: Task 1 `Store`, `ChunkInput`, models.
-- Produces: `Store.create_chat(title="") -> Chat`, `get_chat(chat_id) -> Chat | None`, `list_chats() -> list[Chat]` (most recently updated first), `delete_chat(chat_id) -> bool`, `add_user_message(chat_id, content) -> int` (sets an empty title from the first question: whitespace collapsed, at most 60 characters), `add_assistant_message(chat_id, content, *, provider, model, sources: Sequence[SourceRecord]) -> int`, `last_exchange(chat_id) -> tuple[str | None, str | None]` (latest user question and the assistant reply after it), `list_messages(chat_id) -> list[MessageRecord]` (oldest first, with sources ordered by `n`).
+- Produces: `Store.create_chat(title="") -> Chat`, `get_chat(chat_id) -> Chat | None`, `list_chats() -> list[Chat]` (most recently used first, by the `activity` counter that creating a chat and adding a message raise; timestamps have one-second resolution and would tie), `delete_chat(chat_id) -> bool`, `add_user_message(chat_id, content) -> int` (sets an empty title from the first question: whitespace collapsed, at most 60 characters), `add_assistant_message(chat_id, content, *, provider, model, sources: Sequence[SourceRecord]) -> int`, `last_exchange(chat_id) -> tuple[str | None, str | None]` (latest user question and the assistant reply after it), `list_messages(chat_id) -> list[MessageRecord]` (oldest first, with sources ordered by `n`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -950,7 +952,8 @@ In `src/tamra/store/repo.py`, extend the models import to
         created = _now()
         with self._lock, self._conn:
             cursor = self._conn.execute(
-                "INSERT INTO chats (title, created_at, updated_at) VALUES (?, ?, ?)",
+                "INSERT INTO chats (title, created_at, updated_at, activity)"
+                " VALUES (?, ?, ?, (SELECT COALESCE(MAX(activity), 0) + 1 FROM chats))",
                 (title, created, created),
             )
         return Chat(cursor.lastrowid, title, created, created)
@@ -965,8 +968,7 @@ In `src/tamra/store/repo.py`, extend the models import to
     def list_chats(self) -> list[Chat]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, title, created_at, updated_at FROM chats"
-                " ORDER BY updated_at DESC, id DESC"
+                "SELECT id, title, created_at, updated_at FROM chats ORDER BY activity DESC"
             ).fetchall()
         return [Chat(*row) for row in rows]
 
@@ -987,6 +989,7 @@ In `src/tamra/store/repo.py`, extend the models import to
             )
             self._conn.execute(
                 "UPDATE chats SET updated_at = ?,"
+                " activity = (SELECT MAX(activity) FROM chats) + 1,"
                 " title = CASE WHEN title = '' THEN ? ELSE title END WHERE id = ?",
                 (created, title, chat_id),
             )
@@ -1029,7 +1032,9 @@ In `src/tamra/store/repo.py`, extend the models import to
                 ],
             )
             self._conn.execute(
-                "UPDATE chats SET updated_at = ? WHERE id = ?", (created, chat_id)
+                "UPDATE chats SET updated_at = ?,"
+                " activity = (SELECT MAX(activity) FROM chats) + 1 WHERE id = ?",
+                (created, chat_id),
             )
         return message_id
 
@@ -4334,7 +4339,7 @@ def data_dir() -> Path:
 
 ```python
 def models_dir() -> Path:
-    """Model files: TAMRA_MODELS_DIR, else the repo's .models (from source), else data_dir()/models."""
+    """TAMRA_MODELS_DIR, else the repo's .models (from source), else data_dir()/models."""
     override = os.environ.get("TAMRA_MODELS_DIR", "").strip()
     if override:
         return Path(override).expanduser().absolute()
