@@ -37,7 +37,8 @@ class LLMLike(Protocol):
 @dataclass(frozen=True)
 class AnswerSettings:
     top_k: int = 4  # spec §6: about 4 sources for small local models
-    min_similarity: float = 0.5  # below this best dense similarity: "not found" (Task 16 tunes)
+    # below this best dense similarity: "not found" (M1 eval; docs/spikes/2026-10-m1-results.md)
+    min_similarity: float = 0.43
     max_tokens: int = 1024
 
 

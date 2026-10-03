@@ -40,6 +40,7 @@ packages = ["src/tamra"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["scripts"]
 markers = ["assets: needs downloaded models/binaries (run scripts/fetch_assets.py)"]
 addopts = "-m 'not assets'"
 
