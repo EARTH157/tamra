@@ -55,23 +55,36 @@ export default function ChatView({ chatId, createChat, onBusyChange, onAnswered 
     let state: Pending = { question: text, sources: [], text: "", error: null };
     setPending(state);
     onBusyChange(true);
+    let usedId: number | null = chatId;
     try {
-      const id = chatId ?? (await createChat());
-      await streamAnswer(id, text, (e) => {
+      usedId = chatId ?? (await createChat());
+      await streamAnswer(usedId, text, (e) => {
         if (e.type === "sources") state = { ...state, sources: e.sources };
         else if (e.type === "token") state = { ...state, text: state.text + e.text };
         else if (e.type === "error") state = { ...state, error: e.message };
         setPending(state);
       });
-      setDetail(await api<ChatDetail>("GET", `/api/chats/${id}`));
     } catch (e) {
       state = { ...state, error: (e as Error).message };
     } finally {
+      if (usedId !== null) await reload(usedId);
       asking.current = false;
       setNotice(state.error);
       setPending(null);
       onBusyChange(false);
       onAnswered();
+    }
+  }
+
+  /** Show what the core saved for this chat. A chat with nothing loaded stays usable, but empty. */
+  async function reload(id: number) {
+    try {
+      setDetail(await api<ChatDetail>("GET", `/api/chats/${id}`));
+    } catch {
+      setDetail(
+        (current) =>
+          current ?? { id, title: "", created_at: "", updated_at: "", messages: [] },
+      );
     }
   }
 

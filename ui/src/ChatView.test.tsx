@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ChatView from "./ChatView";
-import { click, json, type Mounted, mockFetch, mount, sse, typeInto } from "./test-utils";
+import { click, json, type Mounted, mockFetch, mount, settle, sse, typeInto } from "./test-utils";
 
 let view: Mounted | undefined;
 
@@ -18,6 +19,23 @@ const source = {
   text: "The lease term is three years.",
   location: { kind: "pdf" },
 };
+
+
+/** Like App: creating a chat makes it the active one. */
+function Host({ id }: { id: number }) {
+  const [chatId, setChatId] = useState<number | null>(null);
+  return (
+    <ChatView
+      chatId={chatId}
+      createChat={async () => {
+        setChatId(id);
+        return id;
+      }}
+      onBusyChange={vi.fn()}
+      onAnswered={vi.fn()}
+    />
+  );
+}
 
 describe("ChatView", () => {
   it("streams an answer and opens its source", async () => {
@@ -88,6 +106,60 @@ describe("ChatView", () => {
     await click(view.container.querySelector('button[type="submit"]'));
     expect(createChat).toHaveBeenCalledTimes(1);
     expect(calls.map((c) => c.key)).toEqual(["POST /api/chats/9/messages", "GET /api/chats/9"]);
+  });
+
+  it("stays usable when the answer of a new chat fails", async () => {
+    mockFetch({
+      "POST /api/chats/9/messages": () => json({ detail: "The model is not ready." }, 500),
+      "GET /api/chats/9": () => json({ ...chat, id: 9, messages: [] }),
+    });
+    view = await mount(<Host id={9} />);
+    await typeInto(view.container.querySelector("textarea"), "first question");
+    await click(view.container.querySelector('button[type="submit"]'));
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      "The model is not ready.",
+    );
+    expect(view.container.querySelector("textarea")?.disabled).toBe(false);
+  });
+
+  it("stays usable when the saved chat cannot be reloaded", async () => {
+    mockFetch({
+      "POST /api/chats/9/messages": () => json({ detail: "The model is not ready." }, 500),
+      "GET /api/chats/9": () => json({ detail: "gone" }, 500),
+    });
+    view = await mount(<Host id={9} />);
+    await typeInto(view.container.querySelector("textarea"), "first question");
+    await click(view.container.querySelector('button[type="submit"]'));
+    expect(view.container.querySelector("textarea")?.disabled).toBe(false);
+  });
+
+  it("sends a cancel request when Stop is pressed during a stream", async () => {
+    let finish: () => void = () => {};
+    const open = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "token", text: "Hi" })}\n\n`));
+        finish = () => controller.close();
+      },
+    });
+    const calls = mockFetch({
+      "GET /api/chats/5": () => json({ ...chat, messages: [] }),
+      "POST /api/chats/5/messages": () =>
+        new Response(open, { headers: { "Content-Type": "text/event-stream" } }),
+      "POST /api/answer/cancel": () => json({ cancelled: true }),
+    });
+    view = await mount(
+      <ChatView chatId={5} createChat={vi.fn()} onBusyChange={vi.fn()} onAnswered={vi.fn()} />,
+    );
+    await typeInto(view.container.querySelector("textarea"), "q");
+    await click(view.container.querySelector('button[type="submit"]'));
+    const stopButton = [...view.container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Stop",
+    );
+    await click(stopButton);
+    expect(calls.map((c) => c.key)).toContain("POST /api/answer/cancel");
+    finish();
+    await settle();
   });
 
   it("shows an error from the core", async () => {
