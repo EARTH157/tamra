@@ -22,9 +22,16 @@ class FolderWatcher:
         observer = Observer()
         observer.schedule(_Handler(self._poke), str(folder), recursive=True)
         observer.daemon = True
-        observer.start()
         with self._lock:
+            # Set before start() so an event dispatched right away is not dropped by _poke.
             self._observer = observer
+        try:
+            observer.start()
+        except BaseException:
+            with self._lock:
+                if self._observer is observer:
+                    self._observer = None
+            raise
 
     def stop(self) -> None:
         with self._lock:
@@ -48,7 +55,9 @@ class FolderWatcher:
 
     def _fire(self) -> None:
         with self._lock:
-            if self._timer is None:
+            # Timer.cancel() cannot stop a timer that already finished waiting, so only
+            # the current timer may fire; a replaced or stopped one is stale.
+            if self._timer is not threading.current_thread():
                 return
             self._timer = None
         self._on_change()
