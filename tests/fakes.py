@@ -44,3 +44,19 @@ class FakeLLM:
     def generate(self, messages, max_tokens: int = 1024) -> Iterator[str]:
         self.calls.append(list(messages))
         yield from self.tokens
+
+
+class FakeLocalLLM:
+    """Stands in for tamra.llm.runtime.LocalLLM."""
+
+    label = "fake-model"
+
+    def __init__(self, llm: "FakeLLM | None" = None):
+        self.llm = llm or FakeLLM()
+        self.closed = False
+
+    def client(self) -> "FakeLLM":
+        return self.llm
+
+    def close(self) -> None:
+        self.closed = True
