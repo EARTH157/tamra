@@ -141,9 +141,17 @@ class Store:
                 )
 
     def set_file_status(self, file_id: int, status: str, error: str | None = None) -> None:
+        """Set a file's status. A failed or skipped file leaves the index: its old chunks no
+        longer match the file on disk. A pending or indexing file keeps them until replaced."""
         if status not in FILE_STATUSES:
             raise ValueError(f"unknown file status: {status}")
         with self._lock, self._conn:
+            if status in ("failed", "skipped"):
+                self._conn.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
+                self._conn.execute(
+                    "UPDATE files SET content_hash = NULL, indexed_at = NULL WHERE id = ?",
+                    (file_id,),
+                )
             self._conn.execute(
                 "UPDATE files SET status = ?, error = ? WHERE id = ?", (status, error, file_id)
             )

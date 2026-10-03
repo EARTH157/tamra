@@ -179,3 +179,15 @@ def test_the_store_works_from_another_thread(store, coll):
     thread.join()
     assert errors == []
     assert len(store.list_files(coll.id)) == 1
+
+
+def test_failed_or_skipped_files_leave_the_index(store, coll):
+    file_id = store.add_file(coll.id, "a.md", 10, 1.0)
+    index(store, file_id, ["lease terms"], [unit(1)])
+    store.set_file_status(file_id, "pending")
+    assert store.search_dense(coll.id, unit(1), 5)  # pending keeps the old chunks searchable
+    store.set_file_status(file_id, "skipped", "no text found")
+    record = store.list_files(coll.id)[0]
+    assert (record.status, record.content_hash, record.indexed_at) == ("skipped", None, None)
+    assert store.search_dense(coll.id, unit(1), 5) == []
+    assert store.search_keyword(coll.id, '"lea"', 5) == []
