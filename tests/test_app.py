@@ -1,9 +1,11 @@
+import logging
 import threading
 
 import pytest
 import webview
 
 from tamra import app
+from tamra.logs import shutdown_logging
 from tamra.net import free_port
 
 
@@ -48,3 +50,27 @@ def test_build_core_uses_the_configured_folders(monkeypatch, tmp_path):
         assert core.llm.label == "qwen2.5-0.5b-instruct-q4_k_m"
     finally:
         core.shutdown()
+
+
+def test_a_failing_core_is_logged_and_shown_after_cleanup(monkeypatch, tmp_path):
+    monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path))
+    alerts = []
+    started = []
+
+    def boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(app, "build_core", boom)
+    monkeypatch.setattr(app, "_alert", alerts.append)
+    monkeypatch.setattr(app, "create_app", lambda *a, **k: started.append("api"))
+    monkeypatch.setattr(app, "_show_window", lambda *a, **k: started.append("window"))
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            app.run(dev=False)
+        logging.getLogger().handlers[0].flush()
+        assert "boom" in (tmp_path / "logs" / "tamra.log").read_text(encoding="utf-8")
+    finally:
+        shutdown_logging()
+    assert len(alerts) == 1
+    assert "boom" in alerts[0]
+    assert started == []

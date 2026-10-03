@@ -15,6 +15,7 @@ def test_logs_go_to_a_file(tmp_path):
         flush()
         assert "hello log" in path.read_text(encoding="utf-8")
         assert logging.getLogger("uvicorn.access").level == logging.WARNING
+        assert logging.getLogger("httpx").level == logging.WARNING
     finally:
         shutdown_logging()
 

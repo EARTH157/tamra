@@ -69,8 +69,10 @@ def run(dev: bool = False) -> None:
     port, token = (DEV_PORT, DEV_TOKEN) if dev else (free_port(), secrets.token_urlsafe(32))
     ui_dir = None if dev else resource_dir() / "ui" / "dist"
     picker = None if dev else FolderPicker()
-    core = build_core()
+    core: Core | None = None
+    failure: Exception | None = None
     try:
+        core = build_core()
         core.start()
         config = uvicorn.Config(
             create_app(token, ui_dir, core, pick_folder=picker),
@@ -93,11 +95,17 @@ def run(dev: bool = False) -> None:
             thread.join(timeout=5)
     except Exception as e:
         log.exception("Tamra stopped because of an error")
-        if not dev:
-            _alert(f"Tamra could not start:\n\n{e}\n\nDetails: {data_dir() / 'logs' / 'tamra.log'}")
-        raise
+        failure = e
     finally:
-        core.shutdown()
+        if core is not None:
+            core.shutdown()
+    if failure is not None:
+        if not dev:  # the message box is modal, so show it once cleanup is done
+            _alert(
+                f"Tamra could not start:\n\n{failure}\n\n"
+                f"Details: {data_dir() / 'logs' / 'tamra.log'}"
+            )
+        raise failure
 
 
 def _wait_in_dev_mode(port: int, token: str, thread: threading.Thread) -> None:

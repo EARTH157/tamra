@@ -27,6 +27,7 @@ def setup_logging(log_dir: Path, *, console: bool = False) -> Path:
         root.addHandler(handler)
         _installed.append(handler)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # the UI polls status
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one INFO line per health poll
     return path
 
 
