@@ -90,6 +90,30 @@ def test_whitespace_only_units_produce_no_chunks():
     assert chunk_document(ParsedDoc("text", [Unit("   \n  ", line=1)]), words) == []
 
 
+def test_location_ignores_separators_consumed_by_a_split():
+    unit = Unit("a b c\n\n\n\nd e f\n\ng h i", line=1)
+    chunks = chunk_document(ParsedDoc("text", [unit]), words, max_tokens=4, overlap=0)
+    assert [c.text for c in chunks] == ["a b c", "d e f", "g h i"]
+    assert [(c.location["line_start"], c.location["line_end"]) for c in chunks] == [
+        (1, 1),
+        (5, 5),
+        (7, 7),
+    ]
+
+
+def test_location_ignores_leading_and_trailing_whitespace():
+    [chunk] = chunk_document(ParsedDoc("text", [Unit("\n\nhello\n\n", line=1)]), words)
+    assert chunk.text == "hello"
+    assert chunk.location == {"kind": "text", "line_start": 3, "line_end": 3}
+
+
+def test_pdf_char_range_ends_at_the_visible_text():
+    [chunk] = chunk_document(ParsedDoc("pdf", [Unit("  Page text \n\n", page=1)]), words)
+    assert chunk.text == "Page text"
+    assert chunk.location["char_start"] == 2
+    assert chunk.location["char_end"] == 11
+
+
 @pytest.mark.assets
 def test_real_tokenizer_keeps_thai_chunks_near_the_limit(bge_dir):
     spans = bge_token_spans(bge_dir / "tokenizer.json")

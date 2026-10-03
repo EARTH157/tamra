@@ -124,4 +124,9 @@ def _make_chunk(kind: str, pieces: list[_Piece]) -> ChunkInput:
         previous = piece
     text = "".join(parts).replace("\r\n", "\n").strip()
     first, last = pieces[0], pieces[-1]
-    return ChunkInput(text, location(kind, first.unit, first.start, last.unit, last.end))
+    # Splits leave separators at piece edges and the text is stripped, so trim the range alike.
+    first_text = first.unit.text[first.start : first.end]
+    last_text = last.unit.text[last.start : last.end]
+    start = first.start + len(first_text) - len(first_text.lstrip())
+    end = last.end - (len(last_text) - len(last_text.rstrip()))
+    return ChunkInput(text, location(kind, first.unit, start, last.unit, end))
