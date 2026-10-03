@@ -47,7 +47,7 @@ def _check_embedding(model_dir: Path) -> dict:
     from tamra.store import ChunkInput, Store
 
     t0 = time.perf_counter()
-    embedder = Embedder(model_dir)
+    embedder = Embedder.load(model_dir)
     load_s = time.perf_counter() - t0
 
     docs = ["แมวกำลังนอนหลับอยู่บนโซฟา", "汽车停在路边"]
@@ -77,12 +77,18 @@ def _check_embedding(model_dir: Path) -> dict:
     }
 
 
-def _check_llm(llama_exe: Path, model: Path, log_dir: Path) -> dict:
+def _check_llm(llama_exe: Path, model: Path, log_dir: Path | None) -> dict:
+    """Start llama-server and stream a short reply.
+
+    `tokens` counts streamed text chunks; llama-server streams one token per chunk.
+    """
     from tamra.llm.llama_server import LlamaServer
     from tamra.llm.openai_compat import OpenAICompatibleLLM
+    from tamra.paths import data_dir
 
+    log_file = (log_dir if log_dir is not None else data_dir() / "logs") / "llama-server.log"
     t0 = time.perf_counter()
-    with LlamaServer(llama_exe, model, log_dir / "llama-server.log") as srv:
+    with LlamaServer(llama_exe, model, log_file) as srv:
         start_s = time.perf_counter() - t0
         llm = OpenAICompatibleLLM(srv.base_url, "local")
         try:
@@ -108,8 +114,12 @@ def _check_llm(llama_exe: Path, model: Path, log_dir: Path) -> dict:
 
 
 def run_selfcheck(
-    embed_model_dir: Path | None, llm_model: Path | None, llama_exe: Path, log_dir: Path
+    embed_model_dir: Path | None,
+    llm_model: Path | None,
+    llama_exe: Path,
+    log_dir: Path | None = None,
 ) -> dict:
+    """Run the checks; log_dir (for llama-server's log) defaults to data_dir()/logs."""
     checks = {"sqlite": _guard(_check_sqlite)}
     if embed_model_dir is not None:
         checks["embedding"] = _guard(lambda: _check_embedding(embed_model_dir))

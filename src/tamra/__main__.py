@@ -15,14 +15,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "selfcheck":
-        from tamra.paths import data_dir, resource_dir
+        from tamra.paths import resource_dir
         from tamra.selfcheck import run_selfcheck
 
         report = run_selfcheck(
             args.embed_model_dir,
             args.llm_model,
             resource_dir() / "vendor" / "llama" / "llama-server.exe",
-            data_dir() / "logs",
         )
         # Write report file first (with full Unicode, before stdout encoding can fail)
         if args.report:

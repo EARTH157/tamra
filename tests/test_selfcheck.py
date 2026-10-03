@@ -100,3 +100,50 @@ def test_llm_failure_is_reported(tmp_path):
     assert report["checks"]["llm"]["ok"] is False
     assert "error" in report["checks"]["llm"]
     assert "LlamaServerError" in report["checks"]["llm"]["error"]
+
+
+def test_selfcheck_cli_does_not_create_the_data_folder(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    monkeypatch.setenv("TAMRA_DATA_DIR", str(data))
+    assert main(["selfcheck", "--report", str(tmp_path / "r.json")]) == 0
+    assert not data.exists()
+
+
+def test_llm_check_reports_timings_from_a_stub_server(tmp_path, monkeypatch):
+    import tamra.llm.llama_server as llama_server
+    import tamra.llm.openai_compat as openai_compat
+
+    class StubServer:
+        base_url = "http://127.0.0.1:9"
+        gpu_used = True
+
+        def __init__(self, exe, model, log_file):
+            self.log_file = log_file
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class StubClient:
+        closed = False
+
+        def __init__(self, base_url, model):
+            pass
+
+        def generate(self, messages, max_tokens=1024):
+            yield from ["1", ",", " 2"]
+
+        def close(self):
+            StubClient.closed = True
+
+    monkeypatch.setattr(llama_server, "LlamaServer", StubServer)
+    monkeypatch.setattr(openai_compat, "OpenAICompatibleLLM", StubClient)
+    report = run_selfcheck(None, tmp_path / "m.gguf", tmp_path / "x.exe", tmp_path)
+    llm = report["checks"]["llm"]
+    assert report["ok"] is True
+    assert (llm["tokens"], llm["gpu_used"]) == (3, True)
+    assert llm["first_token_s"] >= 0
+    assert llm["tokens_per_sec"] > 0
+    assert StubClient.closed

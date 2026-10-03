@@ -13,7 +13,9 @@ def _require(path: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def bge_dir() -> Path:
-    return _require(ROOT / ".models" / "bge-m3" / "model.onnx").parent
+    model_dir = ROOT / ".models" / "bge-m3"
+    _require(model_dir / "tokenizer.json")
+    return _require(model_dir / "model.onnx").parent
 
 
 @pytest.fixture(scope="session")
