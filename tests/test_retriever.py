@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 import pytest
 from fakes import FakeEmbedder
@@ -8,7 +10,7 @@ from tamra.store import ChunkInput, Store
 
 def test_query_text_adds_the_previous_question():
     assert query_text("and item 2?", None) == "and item 2?"
-    assert query_text("and item 2?", "list the fees") == "list the fees\nand item 2?"
+    assert query_text("and item 2?", "list the fees") == "and item 2?\nlist the fees"
 
 
 def test_fts_query_quotes_unique_trigrams():
@@ -21,6 +23,17 @@ def test_fts_query_keeps_thai_marks_inside_words():
     grams = fts_query("เช่าบ้าน").split(" OR ")
     assert len(grams) == 6
     assert grams[0] == '"เช่"'
+
+
+def test_fts_query_handles_chinese():
+    assert fts_query("租赁合同期限").count(" OR ") == 3
+
+
+def test_a_long_previous_question_does_not_push_out_the_latest_one():
+    previous = "".join(chr(c) for c in random.Random(0).choices(range(0x0E01, 0x0E2F), k=100))
+    grams = fts_query(query_text("rent fee", previous)).split(" OR ")
+    assert len(grams) == 64
+    assert grams[:3] == ['"ren"', '"ent"', '"fee"']
 
 
 def test_fts_query_is_capped():

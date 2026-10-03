@@ -19,10 +19,14 @@ class Hit:
 
 
 def query_text(question: str, previous_question: str | None) -> str:
-    """The latest question plus the previous one, so short follow-ups stay on topic."""
+    """The latest question, then the previous one, so short follow-ups stay on topic.
+
+    The latest question comes first so the term cap in `fts_query`, which truncates from
+    the front, always keeps its trigrams.
+    """
     if not previous_question:
         return question
-    return f"{previous_question}\n{question}"
+    return f"{question}\n{previous_question}"
 
 
 def fts_query(text: str, max_terms: int = MAX_FTS_TERMS) -> str | None:
