@@ -8,10 +8,10 @@ from tamra.__main__ import main
 from tamra.selfcheck import run_selfcheck
 
 
-def test_sqlite_only_selfcheck(tmp_path):
+def test_selfcheck_without_models(tmp_path):
     report = run_selfcheck(None, None, tmp_path / "missing.exe", tmp_path)
     assert report["ok"] is True
-    assert set(report["checks"]) == {"sqlite"}
+    assert set(report["checks"]) == {"sqlite", "documents"}
     assert report["checks"]["sqlite"]["fts5_trigram"] is True
 
 
@@ -147,3 +147,8 @@ def test_llm_check_reports_timings_from_a_stub_server(tmp_path, monkeypatch):
     assert llm["first_token_s"] >= 0
     assert llm["tokens_per_sec"] > 0
     assert StubClient.closed
+
+
+def test_document_libraries_are_checked(tmp_path):
+    report = run_selfcheck(None, None, tmp_path / "x.exe", tmp_path)
+    assert report["checks"]["documents"] == {"ok": True}

@@ -42,6 +42,38 @@ def _check_sqlite() -> dict:
     return {"ok": ok, **caps}
 
 
+def _check_documents() -> dict:
+    """The document libraries load and work: pdfium, python-docx's template, charset detection."""
+    import io
+
+    import docx
+    import pypdfium2 as pdfium
+    from charset_normalizer import from_bytes
+
+    pdf = pdfium.PdfDocument.new()
+    try:
+        pdf.new_page(200, 200).close()
+        buffer = io.BytesIO()
+        pdf.save(buffer)
+    finally:
+        pdf.close()
+    reopened = pdfium.PdfDocument(buffer.getvalue())
+    try:
+        pages = len(reopened)
+    finally:
+        reopened.close()
+
+    document = docx.Document()
+    document.add_paragraph("Tamra")
+    stream = io.BytesIO()
+    document.save(stream)
+    stream.seek(0)
+    text = docx.Document(stream).paragraphs[0].text
+
+    detected = from_bytes("Tamra ตอบคำถามจากเอกสาร".encode()).best()
+    return {"ok": pages == 1 and text == "Tamra" and detected is not None}
+
+
 def _check_embedding(model_dir: Path) -> dict:
     from tamra.embedder import Embedder
     from tamra.store import ChunkInput, Store
@@ -121,6 +153,7 @@ def run_selfcheck(
 ) -> dict:
     """Run the checks; log_dir (for llama-server's log) defaults to data_dir()/logs."""
     checks = {"sqlite": _guard(_check_sqlite)}
+    checks["documents"] = _guard(_check_documents)
     if embed_model_dir is not None:
         checks["embedding"] = _guard(lambda: _check_embedding(embed_model_dir))
     if llm_model is not None:

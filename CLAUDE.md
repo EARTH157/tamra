@@ -25,6 +25,8 @@ npm --prefix ui run dev                   # UI with hot reload → http://localh
 npm --prefix ui test                      # UI unit tests (Vitest)
 npm --prefix ui run build                 # build UI into ui/dist (bundled by PyInstaller)
 uv run python scripts/fetch_assets.py     # download pinned llama.cpp + dev models (~1.1 GB, gitignored)
+uv run python scripts/eval_retrieval.py   # retrieval eval: hit@k and the not-found threshold (needs .models)
+uv run python scripts/exe_smoke.py        # end-to-end check of dist/Tamra/Tamra.exe (needs .models)
 ./scripts/build.ps1                       # UI build + PyInstaller → dist/Tamra/Tamra.exe
 # windowed exe: get output via --report and Start-Process -Wait
 Start-Process dist\Tamra\Tamra.exe -ArgumentList "selfcheck","--report","r.json" -Wait
@@ -45,6 +47,7 @@ The modules follow the RAG pipeline. Each owns one stage:
 - `attribution`: maps a selected answer span to its source passage.
 - `models`: the model catalog, download/import, and hardware tiers.
 - `store`: the only module that touches SQL.
+- `core`: owns the store, the indexer and watcher, the answer service, and the local LLM's lifecycle.
 
 Not all of these modules exist yet. Plans add them milestone by milestone.
 
