@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet } from "./api";
+import { api } from "./api";
 
 type Health = { status: string; version: string };
 
@@ -7,7 +7,7 @@ export default function App() {
   const [message, setMessage] = useState("Connecting to Tamra core…");
 
   useEffect(() => {
-    apiGet<Health>("/api/health")
+    api<Health>("GET", "/api/health")
       .then((h) => setMessage(`Tamra core: ${h.status} (v${h.version})`))
       .catch((e: Error) => setMessage(`Tamra core unreachable: ${e.message}`));
   }, []);
