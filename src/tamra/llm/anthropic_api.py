@@ -10,6 +10,7 @@ from tamra.llm.base import Chunk, ErrorReason, Message, ProviderError
 
 log = logging.getLogger(__name__)
 
+API_BASE_URL = "https://api.anthropic.com"
 REQUEST_TIMEOUT = anthropic.Timeout(120.0, connect=10.0)
 # Claude 5 models think adaptively even when `thinking` is omitted (a fixed `budget_tokens` is
 # rejected with a 400), and thinking tokens count against max_tokens. Always reserve room for
@@ -21,12 +22,15 @@ class AnthropicLLM:
     kind: Literal["local", "api"] = "api"
 
     def __init__(self, model: str, api_key: str, *, client: Any = None):
-        if not api_key:  # never let the SDK fall back to environment or profile credentials
+        if not api_key or not api_key.strip():  # never fall back to env or profile credentials
             raise ProviderError("No API key is set.", "auth")
         self._model = model
         self.label = model
         # `client` lets tests inject a stub; the real one honours the system proxy and trust store.
-        self._client = client or anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT)
+        # base_url is pinned so ANTHROPIC_BASE_URL in the environment cannot redirect the key.
+        self._client = client or anthropic.Anthropic(
+            api_key=api_key, base_url=API_BASE_URL, timeout=REQUEST_TIMEOUT
+        )
 
     def __repr__(self) -> str:  # never show the key held by the SDK client
         return f"AnthropicLLM(model={self._model!r})"

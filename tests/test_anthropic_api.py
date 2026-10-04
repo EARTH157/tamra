@@ -216,9 +216,15 @@ def test_a_normal_stop_is_not_an_error():
     assert list(llm_for(client).generate(MESSAGES)) == [Chunk("text", "ok")]
 
 
-@pytest.mark.parametrize("key", ["", None])
+@pytest.mark.parametrize("key", ["", "   ", None])
 def test_a_missing_key_is_refused_before_the_sdk_can_look_elsewhere(key, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "from-the-environment")
     with pytest.raises(ProviderError) as info:
         AnthropicLLM("claude-sonnet-5-5", key)
     assert info.value.reason == "auth"
+
+
+def test_the_api_host_is_pinned_against_an_environment_override(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://elsewhere.invalid")
+    llm = AnthropicLLM("claude-sonnet-5-5", "test-key")
+    assert str(llm._client.base_url).startswith("https://api.anthropic.com")
