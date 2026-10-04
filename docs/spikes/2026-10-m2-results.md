@@ -81,3 +81,21 @@ the run (the exe's own and the API-mode one) was left afterwards.
   re-measured.
 - **Anthropic.** Streaming and extended thinking are covered by unit tests with a fake client; a
   live call with a real key is the owner's check.
+- **Verify a model on first use.** Downloads and imports check the sha256 when the file arrives,
+  and later launches check only the file size. Hashing a 5-9 GB model again on every launch
+  would add 10 seconds or more to the first answer, so this is deferred. A model file that is
+  damaged on disk after it was installed is not noticed until it fails to load.
+- **Clear stale llama DLLs on re-extraction** (carried over from M0). `fetch_assets.py` extracts a
+  new llama.cpp build over the old one without removing files the new build no longer ships.
+  Do this before the first pin bump.
+- **Smaller gaps a user may notice:**
+  - A catalog model whose file has the right size but a damaged body cannot be repaired from
+    the app: Download answers "Already installed." until the file is deleted by hand.
+  - Closing Tamra during a model download does not cancel it first; the `.part` file stays
+    and the next download resumes from it. An import that was interrupted can leave a hidden
+    `.*.import` temp file in the models folder, which is not cleaned up at startup.
+  - Import hashes a file before it checks that it is a GGUF, so a very large wrong file is
+    refused slowly.
+  - The radio groups in Settings take one Tab stop per option instead of arrow-key navigation.
+  - A "thinking" block is dropped when an answer fails, so a long thought that ended in an
+    error is not kept on screen.

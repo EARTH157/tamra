@@ -61,8 +61,9 @@ pywebview window (WebView2)
 ```
 
 Each module has one job and a narrow interface. `llm` exposes one streaming
-`generate(messages, max_tokens) -> Iterator[str]` interface (synchronous; FastAPI runs
-it in its threadpool for SSE). Nothing outside `llm` knows which provider is active.
+`generate(messages, max_tokens, *, think=False) -> Iterator[Chunk]` interface
+(`tamra.llm.base`; a chunk is answer text or thinking), plus `close()`, `label`, and `kind`
+(synchronous; FastAPI runs it in its threadpool for SSE). Nothing outside `llm` knows which provider is active.
 `store` is the only module that touches SQL. The only child process is `llama-server`,
 which is started on demand in local mode and stopped when the app exits.
 

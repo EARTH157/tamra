@@ -52,7 +52,7 @@ Open **Settings > AI model**. Tamra detects your RAM and GPU and recommends a mo
 | Large | Qwen3-14B (Q4_K_M) | 9.0 GB | a GPU with 10 GB VRAM or more |
 
 - **Download.** Press **Download** next to a model. Tamra downloads the file once, resumes an
-  interrupted download, and checks its sha256 before use.
+  interrupted download, and checks its sha256 when it is downloaded or imported.
 - **Import for offline use.** On a computer without internet, press **Import model file...** and
   choose a `.gguf` file (when you run Tamra from source in the browser, there is no file dialog:
   enter the full path instead). Tamra copies it into its models folder. A file that
@@ -62,7 +62,8 @@ Open **Settings > AI model**. Tamra detects your RAM and GPU and recommends a mo
 - **Think longer.** Models that can reason (the Qwen3 family) offer a "think longer" switch in
   the message box. It makes answers slower and usually better.
 
-Models are stored in `%LOCALAPPDATA%\Tamra\models` (or `TAMRA_MODELS_DIR`). Search and
+Models are stored in `%LOCALAPPDATA%\Tamra\models` (or `TAMRA_MODELS_DIR`). When you run
+Tamra from source, they live in the repo's `.models` folder instead. Search and
 indexing always run locally with the bge-m3 embedding model, whichever AI mode you choose.
 
 ## Cloud API
@@ -77,12 +78,13 @@ For better answers on a computer that cannot run a large model, switch to **Clou
 Paste your API key and press **Test connection**.
 
 - **What leaves your computer.** In API mode, the passages found for each question, and the
-  question itself, are sent to the provider. Your files and the search index stay on your
-  computer. Use a local model if your documents must not leave it.
+  question itself, are sent to the provider. So are the previous question of the chat and up
+  to 600 characters of its answer, which help the model follow a follow-up. Your files and the
+  search index stay on your computer. Use a local model if your documents must not leave it.
 - **Where the key is stored.** In Windows Credential Manager, under the name `Tamra` (the user
   name is the provider: `anthropic` or `openai`). It is never written to Tamra's files, database,
-  or logs. To remove it, clear the key field in Settings and save, or delete the `Tamra` entry in
-  Credential Manager.
+  or logs. To remove it, press **Remove key** next to the key field in **Settings > AI model**
+  and confirm, or delete the `Tamra` entry in Credential Manager.
 
 ## Thai interface
 
