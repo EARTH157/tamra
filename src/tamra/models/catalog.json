@@ -1,0 +1,81 @@
+{
+  "models": [
+    {
+      "id": "bge-m3-int8",
+      "role": "embedding",
+      "name": "bge-m3 (int8)",
+      "license": "mit",
+      "files": [
+        {
+          "path": "bge-m3/model.onnx",
+          "size": 568456694,
+          "sha256": "a206e10e995aa2a833924bcd725ba5dd6c3425cd34bac3cf2b5677cd2a1c51d6",
+          "url": "https://huggingface.co/Xenova/bge-m3/resolve/4de13258303883538bd53b696b452bf8099f0858/onnx/model_int8.onnx"
+        },
+        {
+          "path": "bge-m3/tokenizer.json",
+          "size": 17082821,
+          "sha256": "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
+          "url": "https://huggingface.co/Xenova/bge-m3/resolve/4de13258303883538bd53b696b452bf8099f0858/tokenizer.json"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-4b",
+      "role": "llm",
+      "name": "Qwen3-4B",
+      "tier": "small",
+      "license": "apache-2.0",
+      "languages": ["th", "en", "zh"],
+      "context_length": 32768,
+      "thinking": true,
+      "min_vram_gb": 0,
+      "files": [
+        {
+          "path": "Qwen3-4B-Q4_K_M.gguf",
+          "size": 2497280256,
+          "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+          "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-8b",
+      "role": "llm",
+      "name": "Qwen3-8B",
+      "tier": "medium",
+      "license": "apache-2.0",
+      "languages": ["th", "en", "zh"],
+      "context_length": 32768,
+      "thinking": true,
+      "min_vram_gb": 6,
+      "files": [
+        {
+          "path": "Qwen3-8B-Q4_K_M.gguf",
+          "size": 5027783488,
+          "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+          "url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-14b",
+      "role": "llm",
+      "name": "Qwen3-14B",
+      "tier": "large",
+      "license": "apache-2.0",
+      "languages": ["th", "en", "zh"],
+      "context_length": 32768,
+      "thinking": true,
+      "min_vram_gb": 10,
+      "files": [
+        {
+          "path": "Qwen3-14B-Q4_K_M.gguf",
+          "size": 9001752960,
+          "sha256": "500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0",
+          "url": "https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/530227a7d994db8eca5ab5ced2fb692b614357fd/Qwen3-14B-Q4_K_M.gguf"
+        }
+      ]
+    }
+  ]
+}
