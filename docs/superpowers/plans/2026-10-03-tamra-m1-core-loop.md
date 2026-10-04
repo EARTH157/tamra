@@ -7981,6 +7981,208 @@ git commit -m "feat(packaging): document-library selfcheck, packaged end-to-end 
 
 ---
 
+### Task 18: Automatic citation fallback, build script under Windows PowerShell, and the exit run
+
+Added by the controller after Task 17. The packaged smoke test found that the Qwen2.5-0.5B dev model answers correctly but almost never writes `[n]` markers once it sees real retrieved passages. Two probes confirmed it: 0 of 5 answers cited with the plan's prompt, and 1 of 5 with an extra reminder in the question turn. The M1 exit criterion is a cited answer. Ruling: when a finished answer has no valid marker, the answer service appends one for the source the answer was clearly taken from, judged by character-trigram overlap.
+
+**Files:**
+- Modify: `src/tamra/retriever.py` (public `trigrams()`; `fts_query` uses it), `src/tamra/answer.py` (`cited_numbers`, `auto_citation`, the fallback in `AnswerService._ask`), `scripts/build.ps1`, `docs/spikes/2026-10-m1-results.md`
+- Test: `tests/test_retriever.py`, `tests/test_answer.py`
+
+**Interfaces:**
+- `tamra.retriever.trigrams(text) -> list[str]`: the unique character trigrams of the text's words, in first-seen order. Words come from the existing `_words`, so they are lowercased and Thai marks stay inside words. `fts_query(text, max_terms)` becomes `trigrams(text)[:max_terms]` quoted and joined with `" OR "`, with identical behavior and every existing retriever test unchanged.
+- `tamra.answer.AUTO_CITE_MIN_OVERLAP = 0.5`.
+- `tamra.answer.cited_numbers(text, source_count) -> list[int]`: the numbers of `[n]` markers in the text with `1 <= n <= source_count`, in order. It recognizes `[n]` only; comma lists are the UI's business.
+- `tamra.answer.auto_citation(answer, sources) -> int | None`. Returns `None` when there are no sources, when the answer already cites a valid source, or when the answer has no trigrams. Otherwise it scores each source by `len(answer_grams & source_grams) / len(answer_grams)` and returns the `n` of the best one when its score is at least `AUTO_CITE_MIN_OVERLAP`, else `None`. Ties go to the earlier, higher-ranked source.
+- `AnswerService._ask`: after the generation loop ends without cancel and without an error, `n = auto_citation("".join(parts), sources)`. If `n` is not `None`, append the token `f" [{n}]"` to `parts` and yield it as a normal `{"type": "token", ...}` event, so the saved answer includes it. Cancelled, closed, and failed answers are never changed.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/test_retriever.py` (extend the import from `tamra.retriever` with `trigrams`):
+
+```python
+def test_trigrams_are_unique_and_in_order():
+    assert trigrams("Lease lease") == ["lea", "eas", "ase"]
+    assert trigrams("a ab") == []
+    assert trigrams("租赁合同期限")[:2] == ["租赁合", "赁合同"]
+```
+
+Append to `tests/test_answer.py` (extend the import from `tamra.answer` with `auto_citation` and `cited_numbers`, and add `from tamra.store import SourceRecord` if it is not imported yet):
+
+```python
+def src(n, text):
+    location = {"kind": "text", "line_start": 1, "line_end": 1}
+    return SourceRecord(n, None, None, f"f{n}.md", text, location, None)
+
+
+def test_cited_numbers_keeps_only_valid_markers():
+    assert cited_numbers("A [1] b [3] c [9] d [0]", 3) == [1, 3]
+    assert cited_numbers("no markers", 3) == []
+
+
+def test_auto_citation_finds_the_source_an_answer_was_taken_from():
+    sources = [
+        src(1, "Parking costs fifty baht per day."),
+        src(2, "The monthly rent is 18,500 baht, due on the 5th day of each month."),
+    ]
+    assert auto_citation("The monthly rent is 18,500 baht, due on the 5th.", sources) == 2
+
+
+def test_auto_citation_works_for_thai_and_chinese():
+    thai = [src(1, "พนักงานที่ผ่านการทดลองงานแล้วมีสิทธิลาพักร้อนปีละ 12 วันทำงาน")]
+    assert auto_citation("พนักงานลาพักร้อนได้ปีละ 12 วัน", thai) == 1
+    chinese = [src(1, "沙发框架保修五年，布料和海绵保修两年。")]
+    assert auto_citation("沙发框架保修五年。", chinese) == 1
+
+
+def test_auto_citation_leaves_cited_unrelated_and_empty_answers_alone():
+    sources = [src(1, "The monthly rent is 18,500 baht.")]
+    assert auto_citation("The monthly rent is 18,500 baht [1].", sources) is None
+    assert auto_citation("Bananas are yellow and grow in bunches.", sources) is None
+    assert auto_citation("ok", sources) is None
+    assert auto_citation("The monthly rent is 18,500 baht.", []) is None
+
+
+def test_an_uncited_answer_gets_a_citation_from_its_source(env):
+    store, make, chat = env
+    events = list(make(FakeLLM(("The lease term is three years.",))).ask(
+        chat.id, "How long is the lease term?"))
+    tokens = [e["text"] for e in events if e["type"] == "token"]
+    assert tokens == ["The lease term is three years.", " [1]"]
+    assert store.list_messages(chat.id)[1].content == "The lease term is three years. [1]"
+
+
+def test_a_cancelled_answer_gets_no_automatic_citation(env):
+    store, make, chat = env
+    service = make(FakeLLM(("The lease term ", "is three years.")))
+    stream = service.ask(chat.id, "How long is the lease term?")
+    next(stream)  # sources
+    next(stream)  # first token
+    service.cancel()
+    assert [e["type"] for e in stream] == ["done"]
+    assert store.list_messages(chat.id)[1].content == "The lease term "
+```
+
+Check before relying on it: in `tests/test_answer.py`'s `env` fixture, chunk 1 is "The lease term is three years". The existing tests whose FakeLLM already writes `[1]` must still pass unchanged.
+
+- [ ] **Step 2: Run the tests to see them fail**
+
+Run: `uv run pytest tests/test_retriever.py tests/test_answer.py -v`
+Expected: the new tests fail with `ImportError` for `trigrams`, `auto_citation`, and `cited_numbers`.
+
+- [ ] **Step 3: Implement**
+
+In `src/tamra/retriever.py`, add `trigrams` and make `fts_query` use it:
+
+```python
+def trigrams(text: str) -> list[str]:
+    """The unique character trigrams of the text's words, in first-seen order."""
+    grams: list[str] = []
+    seen: set[str] = set()
+    for word in _words(text):
+        for i in range(len(word) - 2):
+            gram = word[i : i + 3]
+            if gram not in seen:
+                seen.add(gram)
+                grams.append(gram)
+    return grams
+
+
+def fts_query(text: str, max_terms: int = MAX_FTS_TERMS) -> str | None:
+    """OR the text's character trigrams; None when no word reaches 3 characters.
+
+    (keep the existing docstring body)
+    """
+    grams = trigrams(text)[:max_terms]
+    if not grams:
+        return None
+    return " OR ".join('"' + gram.replace('"', '""') + '"' for gram in grams)
+```
+
+In `src/tamra/answer.py`:
+- Import `re` and `trigrams`.
+- Add, next to the other module helpers:
+
+```python
+AUTO_CITE_MIN_OVERLAP = 0.5  # share of the answer's trigrams found in one source
+_MARKER = re.compile(r"\[(\d+)\]")
+
+
+def cited_numbers(text: str, source_count: int) -> list[int]:
+    """The [n] markers in text that name one of the sources."""
+    return [n for n in map(int, _MARKER.findall(text)) if 1 <= n <= source_count]
+
+
+def auto_citation(answer: str, sources: list[SourceRecord]) -> int | None:
+    """The source an uncited answer was taken from, by character-trigram overlap.
+
+    Small local models often answer from a source without writing its [n]. Returns None
+    when the answer already cites a source or no single source clearly contains it.
+    """
+    if not sources or cited_numbers(answer, len(sources)):
+        return None
+    grams = set(trigrams(answer))
+    if not grams:
+        return None
+    best_n, best_score = None, 0.0
+    for source in sources:
+        score = len(grams & set(trigrams(source.text))) / len(grams)
+        if score > best_score:
+            best_n, best_score = source.n, score
+    return best_n if best_score >= AUTO_CITE_MIN_OVERLAP else None
+```
+
+- In `AnswerService._ask`, inside the inner `try`, replace the generation loop with:
+
+```python
+                client = self._llm()
+                cancelled = False
+                for token in client.generate(messages, self._settings.max_tokens):
+                    if self._cancel.is_set():
+                        cancelled = True
+                        break
+                    parts.append(token)
+                    yield {"type": "token", "text": token}
+                if not cancelled:
+                    n = auto_citation("".join(parts), sources)
+                    if n is not None:
+                        marker = f" [{n}]"
+                        parts.append(marker)
+                        yield {"type": "token", "text": marker}
+```
+
+  An LLM error raises out of the loop into the existing `except`, so it skips the fallback.
+
+`scripts/build.ps1`: replace the first line, `$ErrorActionPreference = "Stop"`, with the two lines below. Windows PowerShell 5.1 turns a native tool's stderr into a terminating error under "Stop", and pyinstaller writes its progress to stderr. Every native step already checks `$LASTEXITCODE`.
+
+```powershell
+# Native tools write progress to stderr; each step's exit code is checked below.
+$ErrorActionPreference = "Continue"
+```
+
+- [ ] **Step 4: Run the tests**
+
+Run: `uv run pytest tests/test_retriever.py tests/test_answer.py -v`, then `uv run pytest`, `uv run ruff format`, `uv run ruff check --fix`, and `uv run ruff format --check`.
+
+- [ ] **Step 5: Rebuild and rerun the exit check**
+
+1. Build with `powershell -ExecutionPolicy Bypass -File scripts/build.ps1`. This is Windows PowerShell 5.1, which shows that the build script now works there. Port 5173 must be free, so that no Vite server holds `ui/node_modules`.
+2. Run the packaged selfcheck with the models, as in Task 17 Step 6. Expect all four checks to report `ok`.
+3. Run `uv run python scripts/exe_smoke.py --out "$env:TEMP\tamra-smoke.json"`. Port 8765 must be free. Expect exit code 0, with every answerable smoke question cited. If a problem remains, report it with the full JSON and do not change thresholds to force a pass.
+4. In `docs/spikes/2026-10-m1-results.md`, section "Exit criterion":
+   - Replace the smoke-run part with the new run's numbers, answers, and citations.
+   - Add one paragraph: the dev model rarely writes `[n]` with real passages; probes found 0 of 5 and 1 of 5. The answer service now appends `[n]` when an uncited answer shares at least half of its character trigrams with one source. Larger models in M2 are expected to cite on their own, and then the fallback rarely fires.
+   - Keep the packaged selfcheck numbers current.
+
+- [ ] **Step 6: Commit**
+
+```powershell
+git add src/tamra/retriever.py src/tamra/answer.py tests/test_retriever.py tests/test_answer.py scripts/build.ps1 docs/spikes/2026-10-m1-results.md
+git commit -m "feat(answer): cite the source an uncited answer was taken from; build script runs under Windows PowerShell"
+```
+
+---
+
 ## M1 exit check in the window
 
 After Task 17, the controller (not a task subagent) confirms the M1 exit criterion in the real window: launch `dist\Tamra\Tamra.exe` with `TAMRA_DATA_DIR` set to a scratch folder and `TAMRA_MODELS_DIR` set to the repo's `.models`; choose a folder with the eval corpus (rendered by `scripts/build_eval_corpus.py`) through "Browse…"; wait for indexing; ask a Thai, an English, and a Chinese question; open a source from an answer. Capture screenshots (computer use, with the user's approval of the app), close the window, and confirm that no `llama-server.exe` started by this run is left (compare PIDs before and after; stop nothing by name). Record the result in `docs/spikes/2026-10-m1-results.md`.
