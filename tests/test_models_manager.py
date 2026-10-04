@@ -457,3 +457,37 @@ def test_a_worker_killed_by_a_base_exception_releases_the_slot(tmp_path, monkeyp
     monkeypatch.undo()
     manager.start_download("tiny")
     assert _wait_idle(manager, "tiny")["state"] == "idle"
+
+
+def test_a_finished_worker_leaves_a_retry_of_the_same_model_alone(tmp_path):
+    gate = threading.Event()
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) == 1:
+            raise httpx.ConnectError("offline")
+        return _transport(gate).handle_request(request)
+
+    manager = ModelManager(tmp_path, _catalog(), transport=httpx.MockTransport(handler))
+    real_finish = manager._finish
+    first_worker = []
+
+    def finish_then_retry(model_id, **fields):
+        real_finish(model_id, **fields)
+        if not first_worker:  # retry inside the window before the old worker's cleanup
+            first_worker.append(threading.current_thread())
+            manager.start_download(model_id)
+
+    manager._finish = finish_then_retry
+    manager.start_download("tiny")
+    deadline = time.monotonic() + 10
+    while not first_worker and time.monotonic() < deadline:
+        time.sleep(0.01)
+    first_worker[0].join(10)
+
+    assert manager.status()["tiny"]["state"] == "downloading"  # the retry was not clobbered
+    with pytest.raises(DownloadBusy):
+        manager.start_download("emb")  # and it still holds the slot
+    gate.set()
+    assert _wait_idle(manager, "tiny")["state"] == "idle"

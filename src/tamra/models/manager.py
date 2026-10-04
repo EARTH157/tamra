@@ -132,8 +132,10 @@ class ModelManager:
             log.warning("download of %s failed: %s", model_id, exc)
             self._finish(model_id, state="error", error=str(exc) or type(exc).__name__)
         finally:
-            with self._lock:  # a BaseException (e.g. SystemExit) must not leave the slot taken
-                if self._active == model_id:
+            # A BaseException (e.g. SystemExit) must not leave the slot taken. The cancel event
+            # identifies this run, so a retry started after _finish is left alone.
+            with self._lock:
+                if self._active == model_id and self._cancel is cancel:
                     self._active = None
                     self._state[model_id].update(state="error", error="download interrupted")
 
