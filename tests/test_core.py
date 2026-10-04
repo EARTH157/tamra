@@ -157,6 +157,23 @@ def test_the_local_model_is_the_selected_one_when_installed(tmp_path):
         c.shutdown()
 
 
+def test_a_catalog_model_is_labelled_with_its_name_and_an_import_with_its_stem(tmp_path):
+    models = tmp_path / "models"
+    install(models, "a.gguf")
+    install(models, "loose.gguf")
+    named = Catalog(
+        [ModelEntry("a", "llm", "Qwen3-8B", (ModelFile("a.gguf", 5, "0" * 64, "http://x"),))]
+    )
+    c = make_core(tmp_path, llm=None, catalog=named)
+    try:
+        assert c.resolve_local_model() == ("a", models / "a.gguf", "Qwen3-8B")
+        assert local_label(c) == "Qwen3-8B"  # what an answer records as its model
+        c.apply_settings({"local_model_id": "import:loose.gguf"})
+        assert c.resolve_local_model()[2] == local_label(c) == "loose"
+    finally:
+        c.shutdown()
+
+
 def test_the_local_model_falls_back_to_an_uncatalogued_gguf(tmp_path):
     install(tmp_path / "models", "dev-model.gguf")
     c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
@@ -362,6 +379,24 @@ def test_the_provider_is_built_once_per_key_and_rebuilt_when_the_key_changes(tmp
     finally:
         c.shutdown()
     assert factory.built[1][2].closed
+
+
+def test_retire_api_closes_the_cached_provider_and_the_next_answer_builds_a_new_one(
+    tmp_path, monkeypatch
+):
+    Keys(monkeypatch, anthropic="key-1")
+    factory = ApiFactory()
+    c = indexed_core(tmp_path, api_factory=factory)
+    try:
+        c.apply_settings({"mode": "api"})
+        ask(c)
+        c.retire_api()
+        assert factory.built[0][2].closed
+        c.retire_api()  # nothing cached: harmless
+        ask(c)  # the same key: a new provider anyway
+        assert len(factory.built) == 2
+    finally:
+        c.shutdown()
 
 
 def test_settings_pick_the_real_provider_and_its_base_url():

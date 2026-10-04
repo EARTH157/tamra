@@ -82,6 +82,7 @@ export const th: Record<TranslationKey, string> = {
   "chat.error.quota": "ถึงขีดจำกัดการใช้งานของผู้ให้บริการแล้ว ลองอีกครั้งภายหลัง",
   "chat.error.modelMissing": "ยังไม่มีโมเดลที่พร้อมตอบ เลือกหรือดาวน์โหลดโมเดลในการตั้งค่า",
   "chat.openModelSettings": "เปิดการตั้งค่าโมเดล",
+  "chat.useLocal": "ใช้โมเดลในเครื่อง",
 
   "model.chip": "โมเดล",
   "model.menu": "เลือกโมเดล",
@@ -99,6 +100,8 @@ export const th: Record<TranslationKey, string> = {
   "model.imported": "โมเดลที่นำเข้า",
   "model.cloudSent": "{provider} · ข้อความที่ค้นพบจะถูกส่งให้ผู้ให้บริการ",
   "model.cloudNoKey": "{provider} · ตั้งค่าคีย์ API ในการตั้งค่าก่อน",
+  "model.cpuFallback":
+    "โมเดลกำลังทำงานบน CPU เพราะใช้ GPU ไม่ได้ คำตอบจึงจะช้ากว่าปกติ",
 
   "index.cardLabel": "โฟลเดอร์เอกสาร",
   "index.changeFolder": "เปลี่ยนโฟลเดอร์",
@@ -185,6 +188,7 @@ export const th: Record<TranslationKey, string> = {
   "settings.downloadText":
     "Tamra จะดาวน์โหลดไฟล์ครั้งเดียวและตรวจสอบก่อนใช้งาน ต้องเชื่อมต่ออินเทอร์เน็ตและมีพื้นที่ดิสก์ว่างเพียงพอ",
   "settings.alreadyInstalled": "ติดตั้งโมเดลนี้แล้ว",
+  "settings.downloadBusy": "กำลังดาวน์โหลดโมเดลอื่นอยู่ รอให้เสร็จก่อนแล้วลองอีกครั้ง",
   "settings.sizeGb": "{size} GB",
   "settings.sizeMb": "{size} MB",
   "settings.uncatalogued": "ไม่อยู่ในแคตตาล็อกของ Tamra จึงไม่ทราบคุณภาพของคำตอบ",
@@ -208,6 +212,14 @@ export const th: Record<TranslationKey, string> = {
   "settings.apiKey": "คีย์ API",
   "settings.apiKeyPlaceholder": "วางคีย์ API ที่นี่",
   "settings.apiKeyNote": "เก็บไว้ใน Windows Credential Manager ไม่เก็บในไฟล์ของ Tamra",
+  "settings.removeKey": "ลบคีย์",
+  "settings.removeKeyTitle": "ลบคีย์ API ของ {provider} หรือไม่",
+  "settings.removeKeyText":
+    "คีย์จะถูกลบออกจาก Windows Credential Manager หากต้องการใช้ผู้ให้บริการนี้อีก ต้องวางคีย์ใหม่",
+  "settings.keyRemoved": "ลบคีย์แล้ว",
+  "settings.modelRequired": "ต้องระบุชื่อโมเดล",
+  "settings.baseUrlInvalid":
+    "Base URL ต้องขึ้นต้นด้วย http:// หรือ https:// และห้ามมีชื่อผู้ใช้ พารามิเตอร์ หรือ #",
   "settings.save": "บันทึก",
   "settings.saved": "บันทึกแล้ว",
   "settings.test": "ทดสอบการเชื่อมต่อ",

@@ -98,6 +98,7 @@ class FakeApi:
         self.error = error
         self.calls: list[tuple[list, int]] = []
         self.generators_closed = 0
+        self.closed = False
 
     def generate(self, messages, max_tokens=1024, *, think=False):
         self.calls.append((list(messages), max_tokens))
@@ -110,7 +111,7 @@ class FakeApi:
             self.generators_closed += 1
 
     def close(self) -> None:
-        pass
+        self.closed = True
 
 
 class Api:
@@ -303,6 +304,30 @@ def test_an_empty_key_deletes_the_stored_key(env, keys):
     assert client.get("/api/settings", headers=AUTH).json()["api_key_set"] is False
 
 
+def test_setting_or_removing_a_key_retires_the_cached_provider(env):
+    client, core, _ = env
+
+    def put(key):
+        response = client.put(
+            "/api/settings/api-key", headers=AUTH, json={"provider": "anthropic", "key": key}
+        )
+        assert response.status_code == 204
+
+    put(KEY)
+    client.post("/api/settings/test-connection", headers=AUTH)
+    ((_, _, first),) = client.api.built
+    assert core._api is first
+    put(KEY)  # the same key again: the provider is still dropped
+    assert first.closed and core._api is None
+    client.post("/api/settings/test-connection", headers=AUTH)
+    assert len(client.api.built) == 2
+    second = client.api.built[1][2]
+    put("")  # removing the key drops it too
+    assert second.closed and core._api is None
+    refused = client.post("/api/settings/test-connection", headers=AUTH).json()
+    assert (refused["ok"], refused["reason"]) == (False, "auth")
+
+
 def test_an_unknown_provider_is_a_400_and_stores_nothing(env, keys):
     client, _, _ = env
     for provider in ("google", "", "Anthropic"):
@@ -465,7 +490,7 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
             "gpus": [{"name": "NVIDIA RTX 4070", "vram_mb": 12282, "integrated": False}],
         },
         "recommended_tier": "medium",
-        "active": {"mode": "local", "label": "Small-Q4", "id": "small"},
+        "active": {"mode": "local", "label": "Small", "id": "small"},
         "gpu_offload": None,
         "local": [
             {
@@ -567,7 +592,7 @@ def test_active_model_is_the_selected_one_when_it_is_installed(env):
     (client.models_dir / "Mine.gguf").write_bytes(b"GGUF1234")
     assert active_of(client)["id"] == "small"  # nothing selected: the first installed
     client.put("/api/settings", headers=AUTH, json={"local_model_id": "medium"})
-    assert active_of(client) == {"mode": "local", "label": "Medium-Q4", "id": "medium"}
+    assert active_of(client) == {"mode": "local", "label": "Medium", "id": "medium"}
     client.put("/api/settings", headers=AUTH, json={"local_model_id": "import:mine.GGUF"})
     assert active_of(client) == {"mode": "local", "label": "Mine", "id": "import:Mine.gguf"}
     client.put("/api/settings", headers=AUTH, json={"local_model_id": "import:gone.gguf"})
@@ -577,7 +602,7 @@ def test_active_model_is_the_selected_one_when_it_is_installed(env):
 def test_active_model_with_one_catalog_model_installed_and_none_selected(env):
     client, _, _ = env
     (client.models_dir / "Medium-Q4.gguf").write_bytes(MEDIUM)
-    assert active_of(client) == {"mode": "local", "label": "Medium-Q4", "id": "medium"}
+    assert active_of(client) == {"mode": "local", "label": "Medium", "id": "medium"}
 
 
 def test_active_model_is_the_import_id_when_only_an_uncatalogued_file_is_installed(env):

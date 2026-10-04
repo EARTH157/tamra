@@ -516,6 +516,16 @@ def test_connection_errors_map_to_offline():
     assert info.value.reason == "offline"
 
 
+def test_a_dead_local_server_is_not_reported_as_offline():
+    def handler(request):
+        raise httpx.ConnectError("Connection refused")
+
+    with pytest.raises(ProviderError) as info:
+        list(make(handler, kind="local").generate(USER))
+    assert info.value.reason == "other"
+    assert str(info.value) == "The local model server stopped responding."
+
+
 def test_a_read_timeout_is_not_offline():
     def handler(request):
         raise httpx.ReadTimeout("slow")

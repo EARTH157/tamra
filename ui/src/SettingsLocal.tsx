@@ -1,6 +1,7 @@
-import { AlertTriangle, Check } from "lucide-react";
+import { AlertTriangle, Check, Info } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { api, ApiError } from "./api";
+import { errorText } from "./apiErrors";
 import ConfirmDialog from "./ConfirmDialog";
 import { type TranslationKey, useT } from "./i18n";
 import { isDownloading, percent, useModels } from "./models";
@@ -82,7 +83,7 @@ export default function SettingsLocal() {
       if (!(e instanceof ApiError) || e.status !== 409) throw e; // shown in the dialog
       // Already installed, or another download is running: the list was out of date.
       setConfirming(null);
-      setError(e.message === "Already installed." ? t("settings.alreadyInstalled") : e.message);
+      setError(e.message === "Already installed." ? t("settings.alreadyInstalled") : errorText(e, t));
       await refresh();
       return;
     }
@@ -141,6 +142,12 @@ export default function SettingsLocal() {
   return (
     <Section title={t("settings.localModel")}>
       {models && <p className="settings-detected">{detected(models.hardware, t)}</p>}
+      {models?.gpu_offload === false && settings.mode === "local" && (
+        <p className="settings-cpu-note" role="status">
+          <Info size={14} />
+          {t("model.cpuFallback")}
+        </p>
+      )}
       {error && (
         <p className="field-error settings-error" role="alert">
           {error}

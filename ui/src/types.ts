@@ -89,6 +89,8 @@ export type ModelsInfo = {
   recommended_tier: "small" | "medium" | "large";
   /** `id` is the local model that local mode would use, in either mode. */
   active: { mode: Mode; label: string | null; id: string | null };
+  /** Whether the running local model uses the GPU; null when none is running or it is unknown. */
+  gpu_offload: boolean | null;
   local: LocalModel[];
   uncatalogued: UncataloguedModel[];
 };

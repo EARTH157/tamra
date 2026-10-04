@@ -397,20 +397,78 @@ describe("AI model tab: local", () => {
     expect(dialog()).toBeNull();
   });
 
-  it("closes the dialog, reloads the list and shows the reason when a download is refused", async () => {
+  it("closes the dialog, reloads the list and explains it when another download is running", async () => {
     const { calls } = await mountPage({
       tab: "model",
       routes: {
         "POST /api/models/qwen3-14b/download": () =>
-          json({ detail: "Another download is already running." }, 409),
+          json({ detail: "Another download is running." }, 409),
       },
     });
     await click(find('button[aria-label="Download Qwen3-14B"]'));
     const before = calls.filter((c) => c.key === "GET /api/models").length;
     await click(buttonByText(dialog()!, "Download"));
     expect(dialog()).toBeNull();
-    expect(find('[role="alert"]').textContent).toBe("Another download is already running.");
+    expect(find('[role="alert"]').textContent).toBe(
+      "Another model is downloading. Wait for it to finish, then try again.",
+    );
     expect(calls.filter((c) => c.key === "GET /api/models").length).toBeGreaterThan(before);
+  });
+
+  it("shows the core's own text for a refusal it does not know", async () => {
+    await mountPage({
+      tab: "model",
+      routes: {
+        "POST /api/models/qwen3-14b/download": () => json({ detail: "Disk is read-only." }, 409),
+      },
+    });
+    await click(find('button[aria-label="Download Qwen3-14B"]'));
+    await click(buttonByText(dialog()!, "Download"));
+    expect(find('[role="alert"]').textContent).toBe("Disk is read-only.");
+  });
+
+  it("explains in Thai that another download is running", async () => {
+    await mountPage({
+      tab: "model",
+      settings: { language: "th" },
+      routes: {
+        "POST /api/models/qwen3-14b/download": () =>
+          json({ detail: "Another download is running." }, 409),
+      },
+    });
+    await click(find('button[aria-label="ดาวน์โหลด Qwen3-14B"]'));
+    await click(buttonByText(dialog()!, "ดาวน์โหลด"));
+    expect(find('[role="alert"]').textContent).toBe(
+      "กำลังดาวน์โหลดโมเดลอื่นอยู่ รอให้เสร็จก่อนแล้วลองอีกครั้ง",
+    );
+  });
+
+  it("warns under the Detected line when the model runs on the CPU", async () => {
+    await mountPage({ tab: "model", models: modelsInfo({ gpu_offload: false }) });
+    const note = find(".settings-cpu-note");
+    expect(note.textContent).toBe(
+      "The model is running on the CPU because the GPU could not be used, so answers will be slower.",
+    );
+    expect(find(".settings-detected").nextElementSibling).toBe(note);
+  });
+
+  it.each([
+    ["the GPU is used", modelsInfo({ gpu_offload: true })],
+    ["nothing is running", modelsInfo({ gpu_offload: null })],
+  ])("shows no CPU warning when %s", async (_, models) => {
+    await mountPage({ tab: "model", models });
+    expect(view!.container.querySelector(".settings-cpu-note")).toBeNull();
+  });
+
+  it("shows the CPU warning in Thai", async () => {
+    await mountPage({
+      tab: "model",
+      settings: { language: "th" },
+      models: modelsInfo({ gpu_offload: false }),
+    });
+    expect(find(".settings-cpu-note").textContent).toBe(
+      "โมเดลกำลังทำงานบน CPU เพราะใช้ GPU ไม่ได้ คำตอบจึงจะช้ากว่าปกติ",
+    );
   });
 
   it("explains in the user's language that a model is already installed", async () => {
@@ -663,6 +721,162 @@ describe("AI model tab: Cloud API", () => {
     expect(calls).toContainEqual({ key: "PUT /api/settings", body: { api_provider: "openai" } });
     expect(input("Base URL").disabled).toBe(false);
     expect(input("Base URL").placeholder).toBe("Only for OpenAI-compatible servers");
+  });
+
+  it("empties Anthropic's default model for OpenAI-compatible servers and asks for a name", async () => {
+    const { calls } = await mountPage({ tab: "model", settings: cloud });
+    expect(text()).not.toContain("Model name is required.");
+    await click(radio("OpenAI-compatible"));
+    expect(input("Model").value).toBe("");
+    expect(text()).toContain("Model name is required.");
+    // The core refuses an empty name, so nothing is sent for it and Save waits for a name.
+    expect(calls.filter((c) => c.key === "PUT /api/settings").map((c) => c.body)).toEqual([
+      { api_provider: "openai" },
+    ]);
+    expect(buttonByText(view!.container, "Save")?.disabled).toBe(true);
+    expect(buttonByText(view!.container, "Test connection")?.disabled).toBe(true);
+    await typeInto(input("Model"), "gpt-test");
+    expect(text()).not.toContain("Model name is required.");
+    expect(buttonByText(view!.container, "Save")?.disabled).toBe(false);
+  });
+
+  it("goes back to Anthropic's default model when the name was left empty", async () => {
+    const { calls } = await mountPage({ tab: "model", settings: cloud });
+    await click(radio("OpenAI-compatible"));
+    await click(radio("Anthropic"));
+    expect(input("Model").value).toBe("claude-sonnet-5-5");
+    expect(text()).not.toContain("Model name is required.");
+    expect(calls.filter((c) => c.key === "PUT /api/settings").map((c) => c.body)).toEqual([
+      { api_provider: "openai" },
+      { api_provider: "anthropic", api_model: "claude-sonnet-5-5" },
+    ]);
+  });
+
+  it("keeps a model name the user chose when the provider changes", async () => {
+    const { calls } = await mountPage({
+      tab: "model",
+      settings: { ...cloud, api_provider: "openai", api_model: "gpt-test" },
+    });
+    await click(radio("Anthropic"));
+    expect(input("Model").value).toBe("gpt-test");
+    expect(calls.filter((c) => c.key === "PUT /api/settings").map((c) => c.body)).toEqual([
+      { api_provider: "anthropic" },
+    ]);
+  });
+
+  it("explains a refused Base URL in the user's language", async () => {
+    await mountPage({
+      tab: "model",
+      settings: { ...cloud, api_provider: "openai" },
+      routes: {
+        "PUT /api/settings": () =>
+          json({ detail: "invalid value for setting api_base_url: 'ftp://x'" }, 400),
+      },
+    });
+    await typeInto(input("Base URL"), "ftp://x");
+    await click(buttonByText(view!.container, "Save"));
+    expect(find('[role="alert"]').textContent).toBe(
+      "The Base URL must start with http:// or https:// and have no user name, query, or #.",
+    );
+  });
+
+  it("shows other refusals as the core worded them", async () => {
+    await mountPage({
+      tab: "model",
+      settings: cloud,
+      routes: { "PUT /api/settings": () => json({ detail: "something else" }, 400) },
+    });
+    await typeInto(input("Model"), "other-model");
+    await click(buttonByText(view!.container, "Save"));
+    expect(find('[role="alert"]').textContent).toBe("something else");
+  });
+
+  describe("Remove key", () => {
+    /** The core has no key once it has been sent an empty one. */
+    const removing = (page: () => Harness) => ({
+      "PUT /api/settings/api-key": () => {
+        page().core.settings = { ...page().core.settings, api_key_set: false, api_key_hint: null };
+        return noContent();
+      },
+    });
+
+    it("is offered only while a key is saved", async () => {
+      await mountPage({ tab: "model", settings: cloud });
+      expect(buttonByText(view!.container, "Remove key")).toBeDefined();
+      await view?.unmount();
+      await mountPage({ tab: "model", settings: { mode: "api" } });
+      expect(buttonByText(view!.container, "Remove key")).toBeUndefined();
+    });
+
+    it("asks first, and a Cancel changes nothing", async () => {
+      const { calls } = await mountPage({ tab: "model", settings: cloud });
+      await click(buttonByText(view!.container, "Remove key"));
+      expect(dialog()?.querySelector("h2")?.textContent).toBe("Remove the Anthropic API key?");
+      expect(dialog()?.textContent).toContain("deleted from Windows Credential Manager");
+      expect(keys(calls)).not.toContain("PUT /api/settings/api-key");
+      await click(buttonByText(dialog()!, "Cancel"));
+      expect(dialog()).toBeNull();
+      expect(keys(calls)).not.toContain("PUT /api/settings/api-key");
+      expect(buttonByText(view!.container, "Remove key")).toBeDefined();
+    });
+
+    it("sends an empty key, reloads the settings and shows that no key is saved", async () => {
+      let page: Harness | undefined;
+      page = await mountPage({ tab: "model", settings: cloud, routes: removing(() => page!) });
+      const before = keys(page.calls).filter((k) => k === "GET /api/settings").length;
+      await click(buttonByText(view!.container, "Remove key"));
+      await click(buttonByText(dialog()!, "Remove key"));
+      expect(page.calls).toContainEqual({
+        key: "PUT /api/settings/api-key",
+        body: { provider: "anthropic", key: "" },
+      });
+      expect(keys(page.calls).filter((k) => k === "GET /api/settings").length).toBe(before + 1);
+      expect(dialog()).toBeNull();
+      expect(input("API key").placeholder).toBe("Paste your API key");
+      expect(buttonByText(view!.container, "Remove key")).toBeUndefined();
+      expect(find('[role="status"]').textContent).toBe("Key removed");
+    });
+
+    it("removes the key of the selected provider", async () => {
+      let page: Harness | undefined;
+      page = await mountPage({
+        tab: "model",
+        settings: { ...cloud, api_provider: "openai", api_model: "gpt-test" },
+        routes: removing(() => page!),
+      });
+      await click(buttonByText(view!.container, "Remove key"));
+      expect(dialog()?.querySelector("h2")?.textContent).toBe(
+        "Remove the OpenAI-compatible API key?",
+      );
+      await click(buttonByText(dialog()!, "Remove key"));
+      expect(page.calls).toContainEqual({
+        key: "PUT /api/settings/api-key",
+        body: { provider: "openai", key: "" },
+      });
+    });
+
+    it("keeps the dialog open and says why when the key cannot be removed", async () => {
+      await mountPage({
+        tab: "model",
+        settings: cloud,
+        routes: {
+          "PUT /api/settings/api-key": () =>
+            json({ detail: "The API key could not be saved to the system." }, 500),
+        },
+      });
+      await click(buttonByText(view!.container, "Remove key"));
+      await click(buttonByText(dialog()!, "Remove key"));
+      expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe(
+        "The API key could not be saved to the system.",
+      );
+      expect(buttonByText(view!.container, "Remove key")).toBeDefined();
+    });
+
+    it("is in Thai", async () => {
+      await mountPage({ tab: "model", settings: { ...cloud, language: "th" } });
+      await click(buttonByText(view!.container, "ลบคีย์"));
+      expect(dialog()?.querySelector("h2")?.textContent).toBe("ลบคีย์ API ของ Anthropic หรือไม่");
+    });
   });
 
   it("shows a saved key masked with its last 4 characters, and never as text", async () => {

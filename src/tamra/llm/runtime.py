@@ -21,10 +21,12 @@ class LocalLLM:
         log_file: Path,
         ctx_size: int = 8192,
         server_factory: Callable[..., LlamaServer] = LlamaServer,
+        label_for: Callable[[Path], str] | None = None,
     ):
         self._exe, self._model_path, self._log_file = exe, model_path, log_file
         self._ctx_size = ctx_size
         self._factory = server_factory
+        self._label_for = label_for or (lambda path: path.stem)  # what answers record as the model
         self._lock = threading.Lock()
         self._server: LlamaServer | None = None
         self._client: OpenAICompatibleLLM | None = None
@@ -32,7 +34,7 @@ class LocalLLM:
 
     @property
     def label(self) -> str:
-        return self._model_path().stem
+        return self._label_for(self._model_path())
 
     # base_url and gpu_offload read one snapshot of `_server` without taking the lock: a UI poll
     # must not wait behind client(), which holds it for the whole llama-server start. `_server`
@@ -71,7 +73,11 @@ class LocalLLM:
                 self._server = server
                 self._running_model = model
                 self._client = OpenAICompatibleLLM(
-                    server.base_url, "local", api_key=key, kind="local", label=model.stem
+                    server.base_url,
+                    "local",
+                    api_key=key,
+                    kind="local",
+                    label=self._label_for(model),
                 )
             return self._client
 

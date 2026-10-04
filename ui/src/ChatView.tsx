@@ -1,7 +1,8 @@
-import { BookOpen, FileText, Lightbulb, SearchX, X } from "lucide-react";
+import { BookOpen, FileText, Info, Lightbulb, SearchX, X } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import AnswerText, { TextWithParagraphs } from "./AnswerText";
 import { api, streamAnswer } from "./api";
+import { errorText } from "./apiErrors";
 import Composer from "./Composer";
 import { useT } from "./i18n";
 import { canThink, useModels } from "./models";
@@ -92,6 +93,8 @@ export default function ChatView({
   const [thoughts, setThoughts] = useState<Record<number, Thought>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
+  // The CPU-fallback line is shown until dismissed, then not again while the app stays open.
+  const [cpuNoticeDismissed, setCpuNoticeDismissed] = useState(false);
   const asking = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const thinkAvailable = canThink(models, settings);
@@ -185,6 +188,8 @@ export default function ChatView({
     } finally {
       const saved = usedId !== null ? await reload(usedId) : null;
       asking.current = false;
+      // The core knows whether the GPU is used only once llama-server has started: after an answer.
+      if (settings.mode === "local") void refreshModels();
       const thought = endThought(state.thought);
       const savedId = state.messageId;
       if (thought && savedId !== null) setThoughts((all) => ({ ...all, [savedId]: thought }));
@@ -219,6 +224,21 @@ export default function ChatView({
   function chooseModel(changes: SettingsChanges) {
     update(changes).catch((e: Error) => setNotice({ message: e.message }));
   }
+
+  /** Back to the local model after a cloud failure; the failure notice goes away. */
+  function switchToLocal() {
+    update({ mode: "local" })
+      .then(() => setNotice(null))
+      .catch((e: Error) => setNotice({ message: errorText(e, t) }));
+  }
+
+  // A cloud call that failed for a reason the local model does not share: offer it instead.
+  const canFallBack =
+    settings.mode === "api" &&
+    models?.active.id != null &&
+    (notice?.reason === "offline" || notice?.reason === "auth" || notice?.reason === "quota");
+  const cpuNotice =
+    settings.mode === "local" && models?.gpu_offload === false && !cpuNoticeDismissed;
 
   const messages: Message[] = detail?.messages ?? [];
   const ready = chatId === null || detail !== null;
@@ -302,9 +322,28 @@ export default function ChatView({
                   {t("chat.openModelSettings")}
                 </button>
               )}
+              {canFallBack && (
+                <button type="button" className="btn" onClick={switchToLocal}>
+                  {t("chat.useLocal")}
+                </button>
+              )}
             </div>
           )}
         </div>
+        {cpuNotice && (
+          <div className="chat-notice" role="status">
+            <Info size={16} />
+            <span>{t("model.cpuFallback")}</span>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={t("common.dismiss")}
+              onClick={() => setCpuNoticeDismissed(true)}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
         <Composer
           question={question}
           onQuestionChange={setQuestion}

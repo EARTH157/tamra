@@ -83,6 +83,7 @@ export const en = {
   "chat.error.modelMissing":
     "No model is ready to answer. Choose or download one in Settings.",
   "chat.openModelSettings": "Open model settings",
+  "chat.useLocal": "Use the local model",
 
   "model.chip": "Model",
   "model.menu": "Choose a model",
@@ -100,6 +101,8 @@ export const en = {
   "model.imported": "Imported model",
   "model.cloudSent": "{provider} · passages are sent to the provider",
   "model.cloudNoKey": "{provider} · add an API key in Settings first",
+  "model.cpuFallback":
+    "The model is running on the CPU because the GPU could not be used, so answers will be slower.",
 
   "index.cardLabel": "Documents folder",
   "index.changeFolder": "Change folder",
@@ -185,6 +188,7 @@ export const en = {
   "settings.downloadText":
     "Tamra downloads the file once and checks it before use. This needs an internet connection and free disk space.",
   "settings.alreadyInstalled": "This model is already installed.",
+  "settings.downloadBusy": "Another model is downloading. Wait for it to finish, then try again.",
   "settings.sizeGb": "{size} GB",
   "settings.sizeMb": "{size} MB",
   "settings.uncatalogued": "Not in Tamra's catalog; answer quality is unknown.",
@@ -209,6 +213,14 @@ export const en = {
   "settings.apiKey": "API key",
   "settings.apiKeyPlaceholder": "Paste your API key",
   "settings.apiKeyNote": "Stored in Windows Credential Manager, never in Tamra's files.",
+  "settings.removeKey": "Remove key",
+  "settings.removeKeyTitle": "Remove the {provider} API key?",
+  "settings.removeKeyText":
+    "The key is deleted from Windows Credential Manager. Paste it again to use this provider.",
+  "settings.keyRemoved": "Key removed",
+  "settings.modelRequired": "Model name is required.",
+  "settings.baseUrlInvalid":
+    "The Base URL must start with http:// or https:// and have no user name, query, or #.",
   "settings.save": "Save",
   "settings.saved": "Saved",
   "settings.test": "Test connection",

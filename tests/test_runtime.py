@@ -95,6 +95,19 @@ def test_a_changed_model_restarts_the_server_on_the_next_question(tmp_path):
     llm.close()
 
 
+def test_the_label_can_come_from_a_name_for_the_model_file(model, tmp_path):
+    llm = LocalLLM(
+        tmp_path / "x.exe",
+        lambda: model,
+        tmp_path / "l.log",
+        server_factory=FakeServer,
+        label_for=lambda path: f"Name of {path.stem}",
+    )
+    assert llm.label == "Name of m"
+    assert llm.client().label == "Name of m"
+    llm.close()
+
+
 def test_gpu_offload_comes_from_the_running_server(model, tmp_path):
     llm = LocalLLM(tmp_path / "x.exe", lambda: model, tmp_path / "l.log", server_factory=FakeServer)
     assert llm.gpu_offload is None  # nothing running

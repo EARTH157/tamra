@@ -613,6 +613,145 @@ describe("model errors", () => {
   });
 });
 
+describe("switching to the local model after a cloud error", () => {
+  const cloud = saved({ mode: "api", api_key_set: true, api_key_hint: "1234" });
+  const failing = (reason: string) => ({
+    "POST /api/chats/5/messages": () => sse([{ type: "error", message: "raw text", reason }]),
+  });
+  const alertBox = () => view!.container.querySelector('[role="alert"]');
+
+  it.each(["offline", "auth", "quota"])(
+    "offers the local model after a %s failure and switches to it",
+    async (reason) => {
+      const calls = await mountChat({
+        settings: cloud,
+        routes: {
+          ...failing(reason),
+          "PUT /api/settings": () => json(saved({ mode: "local", api_key_set: true })),
+        },
+      });
+      await ask();
+      await click(buttonByText(alertBox()!, "Use the local model"));
+      expect(calls.find((c) => c.key === "PUT /api/settings")?.body).toEqual({ mode: "local" });
+      expect(alertBox()).toBeNull(); // the failure is no longer the news
+      expect(chip("Model").textContent).toContain("Qwen3-4B");
+    },
+  );
+
+  it("does not offer it for other failures, in local mode, or when no local model exists", async () => {
+    await mountChat({ settings: cloud, routes: failing("other") });
+    await ask();
+    expect(buttonByText(alertBox()!, "Use the local model")).toBeUndefined();
+    await view?.unmount();
+
+    await mountChat({ routes: failing("offline") }); // already local
+    await ask();
+    expect(buttonByText(alertBox()!, "Use the local model")).toBeUndefined();
+    await view?.unmount();
+
+    await mountChat({
+      settings: cloud,
+      models: modelsInfo({ active: { mode: "api", label: "claude-sonnet-5-5", id: null } }),
+      routes: failing("offline"),
+    });
+    await ask();
+    expect(buttonByText(alertBox()!, "Use the local model")).toBeUndefined();
+  });
+
+  it("keeps the notice and shows why when the core refuses the switch", async () => {
+    await mountChat({
+      settings: cloud,
+      routes: {
+        ...failing("auth"),
+        "PUT /api/settings": () => json({ detail: "nope" }, 500),
+      },
+    });
+    await ask();
+    await click(buttonByText(alertBox()!, "Use the local model"));
+    expect(alertBox()?.textContent).toBe("nope");
+  });
+
+  it("is offered in Thai", async () => {
+    await mountChat({ settings: cloud, language: "th", routes: failing("quota") });
+    await ask();
+    expect(buttonByText(alertBox()!, "ใช้โมเดลในเครื่อง")).toBeDefined();
+  });
+});
+
+describe("CPU fallback notice", () => {
+  const CPU_TEXT =
+    "The model is running on the CPU because the GPU could not be used, so answers will be slower.";
+  const notice = () => view!.container.querySelector(".chat-notice");
+
+  it("is shown above the question box when the local model runs on the CPU", async () => {
+    await mountChat({ models: modelsInfo({ gpu_offload: false }) });
+    expect(notice()?.textContent).toBe(CPU_TEXT);
+    expect(notice()?.nextElementSibling?.tagName).toBe("FORM"); // right above the composer
+  });
+
+  it.each([
+    ["the GPU is used", modelsInfo({ gpu_offload: true })],
+    ["it is not known yet", modelsInfo({ gpu_offload: null })],
+  ])("is not shown when %s", async (_, models) => {
+    await mountChat({ models });
+    expect(notice()).toBeNull();
+  });
+
+  it("is not shown in API mode", async () => {
+    await mountChat({
+      settings: saved({ mode: "api", api_key_set: true }),
+      models: modelsInfo({ gpu_offload: false }),
+    });
+    expect(notice()).toBeNull();
+  });
+
+  it("can be dismissed, and stays dismissed", async () => {
+    await mountChat({
+      models: modelsInfo({ gpu_offload: false }),
+      routes: { "POST /api/chats/5/messages": () => sse([{ type: "done", message_id: 1 }]) },
+    });
+    await click(notice()?.querySelector('button[aria-label="Dismiss"]'));
+    expect(notice()).toBeNull();
+    await ask(); // refreshes the models, which still say CPU
+    expect(notice()).toBeNull();
+  });
+
+  it("is in Thai", async () => {
+    await mountChat({ models: modelsInfo({ gpu_offload: false }), language: "th" });
+    expect(notice()?.textContent).toBe(
+      "โมเดลกำลังทำงานบน CPU เพราะใช้ GPU ไม่ได้ คำตอบจึงจะช้ากว่าปกติ",
+    );
+  });
+
+  it("appears once the first local answer has started the model", async () => {
+    let models = modelsInfo({ gpu_offload: null }); // llama-server is not running yet
+    const calls = await mountChat({
+      routes: {
+        "GET /api/models": () => json(models),
+        "POST /api/chats/5/messages": () => {
+          models = modelsInfo({ gpu_offload: false }); // it started, on the CPU
+          return sse([{ type: "done", message_id: 1 }]);
+        },
+      },
+    });
+    expect(notice()).toBeNull();
+    const before = calls.filter((c) => c.key === "GET /api/models").length;
+    await ask();
+    expect(calls.filter((c) => c.key === "GET /api/models").length).toBeGreaterThan(before);
+    expect(notice()?.textContent).toBe(CPU_TEXT);
+  });
+
+  it("does not reload the models after an answer in API mode", async () => {
+    const calls = await mountChat({
+      settings: saved({ mode: "api", api_key_set: true }),
+      routes: { "POST /api/chats/5/messages": () => sse([{ type: "done", message_id: 1 }]) },
+    });
+    const before = calls.filter((c) => c.key === "GET /api/models").length;
+    await ask();
+    expect(calls.filter((c) => c.key === "GET /api/models").length).toBe(before);
+  });
+});
+
 describe("Thai", () => {
   it("translates the chips and the menus", async () => {
     await mountChat({ language: "th" });

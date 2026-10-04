@@ -174,6 +174,8 @@ class OpenAICompatibleLLM:
         except httpx.ReadTimeout as e:  # connected but slow: not "offline"
             raise ProviderError(f"{type(e).__name__}: {e}") from e
         except httpx.TransportError as e:  # connect, read, protocol and network failures
+            if self.kind == "local":  # the child process died: the network is not the problem
+                raise ProviderError("The local model server stopped responding.") from e
             raise ProviderError(f"{type(e).__name__}: {e}", "offline") from e
         except (httpx.HTTPError, UnicodeDecodeError) as e:
             raise ProviderError(f"{type(e).__name__}: {e}") from e

@@ -276,16 +276,20 @@ def api_mode_step(
             problems += [f"back to local {question['id']}: {p}" for p in back["problems"]]
     finally:
         if key_written:
-            try:
-                client.put("/api/settings/api-key", json={"provider": "openai", "key": ""})
-            except httpx.HTTPError:
-                pass
-            if key_store.get_api_key("openai"):  # the API could not delete it: do it directly
-                key_store.delete_api_key("openai")
-            gone = key_store.get_api_key("openai") is None
+            try:  # a failure here must never replace the error that is already propagating
+                try:
+                    client.put("/api/settings/api-key", json={"provider": "openai", "key": ""})
+                except httpx.HTTPError:
+                    pass
+                if key_store.get_api_key("openai"):  # the API could not delete it: do it directly
+                    key_store.delete_api_key("openai")
+                gone = key_store.get_api_key("openai") is None
+                if not gone:
+                    problems.append("the throwaway API key could not be deleted")
+            except Exception as e:  # the key store itself failed (never print its message)
+                gone = False
+                problems.append(f"the throwaway API key cleanup failed ({type(e).__name__})")
             api["key_deleted"] = gone
-            if not gone:
-                problems.append("the throwaway API key could not be deleted")
         try:
             # The provider is still "openai" here, so api_key_set is about the throwaway key.
             if key_written and client.get("/api/settings").json()["api_key_set"]:

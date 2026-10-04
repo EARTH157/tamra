@@ -29,7 +29,8 @@ export function modelsInfo(over: Partial<ModelsInfo> = {}): ModelsInfo {
   return {
     hardware: { ram_gb: 15.9, gpus: [{ name: "NVIDIA RTX 3060", vram_mb: 12282, integrated: false }] },
     recommended_tier: "small",
-    active: { mode: "local", label: "Qwen3-4B-Q4_K_M", id: "qwen3-4b" },
+    active: { mode: "local", label: "Qwen3-4B", id: "qwen3-4b" },
+    gpu_offload: null,
     local: [
       localModel({}),
       localModel({

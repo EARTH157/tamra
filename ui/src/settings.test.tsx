@@ -66,11 +66,11 @@ describe("SettingsProvider", () => {
         <Probe />
       </SettingsProvider>,
     );
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 60));
+    // Wait for the retries by what they do, not for a fixed time.
+    await vi.waitFor(async () => {
+      await settle();
+      expect(attempts).toBe(3);
     });
-    await settle();
-    expect(attempts).toBe(3);
     expect(current.loaded).toBe(true);
   });
 

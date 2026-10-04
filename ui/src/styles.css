@@ -1053,6 +1053,35 @@ svg.lucide {
   color: var(--text);
 }
 
+/* A non-blocking note above the question box, e.g. the model runs on the CPU */
+
+.chat-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 32px 8px;
+  padding: 6px 8px 6px 12px;
+  border-radius: var(--radius);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.chat-notice svg {
+  flex: none;
+}
+
+.chat-notice span {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-notice .icon-button {
+  flex: none;
+  color: inherit;
+}
+
 /* Thinking block: the model's reasoning, open while it streams and collapsed after */
 
 .thinking {
@@ -1896,6 +1925,20 @@ svg.lucide {
   margin: -6px 0 14px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.settings-cpu-note {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+  color: var(--warning-text);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.settings-cpu-note svg {
+  flex: none;
+  margin-top: 2px;
 }
 
 .model-list {

@@ -357,6 +357,7 @@ def _add_settings_routes(app: FastAPI, core: Core) -> None:
             raise HTTPException(
                 status_code=500, detail="The API key could not be saved to the system."
             ) from e
+        core.retire_api()  # the cached provider holds the old key
         return Response(status_code=204)
 
     @app.post("/api/settings/test-connection")
@@ -436,8 +437,8 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
         # The local model that local mode would serve now; the same resolution LocalLLM uses.
         try:
             local_id: str | None
-            local_id, local_path = core.resolve_local_model()
-            local_label: str | None = local_path.stem
+            local_id, _, local_name = core.resolve_local_model()
+            local_label: str | None = local_name
         except ProviderError:  # no local model is installed
             local_id = local_label = None
         label = settings.api_model if settings.mode == "api" else local_label

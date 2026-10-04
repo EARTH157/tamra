@@ -80,7 +80,10 @@ class Core:
         self._api: Provider | None = None  # built on the first API answer, not at startup
         self._api_identity: tuple | None = None  # what _api was built from (the key as a sha256)
         self.local = llm or LocalLLM(
-            llama_exe, self._local_model_path, data_dir / "logs" / "llama-server.log"
+            llama_exe,
+            self._local_model_path,
+            data_dir / "logs" / "llama-server.log",
+            label_for=self._local_label,
         )
         self.indexer = Indexer(self.store, self.embedder, spans_factory, MODEL_ID)
         self.watcher = FolderWatcher(self.indexer.request_reconcile, debounce=debounce)
@@ -131,6 +134,14 @@ class Core:
         no key). It is the one answers use, so the caller must not close it."""
         return self._open_api(self._settings)
 
+    def retire_api(self) -> None:
+        """Drop the cached API provider, e.g. after its key was set or removed. It is closed once
+        the answer streaming on it (if any) has ended; the next question builds a new one."""
+        with self._provider_lock:
+            retired, self._api, self._api_identity = self._api, None, None
+        if retired is not None:
+            self.answers.when_idle(retired.close)
+
     def hardware(self) -> Hardware:
         """RAM and GPUs, probed on the first call (it runs llama-server) and then remembered."""
         with self._hardware_lock:
@@ -171,10 +182,11 @@ class Core:
             self.answers.when_idle(replaced.close)
         return provider
 
-    def resolve_local_model(self) -> tuple[str, Path]:
-        """The local model to serve, as (id, file): the selected one if installed, else the first
-        installed catalog model, else the first GGUF that is not in the catalog. The id is a
-        catalog id or "import:<file name>", so it is a valid `local_model_id`.
+    def resolve_local_model(self) -> tuple[str, Path, str]:
+        """The local model to serve, as (id, file, label): the selected one if installed, else the
+        first installed catalog model, else the first GGUF that is not in the catalog. The id is
+        a catalog id or "import:<file name>", so it is a valid `local_model_id`. The label is
+        the catalog name ("Qwen3-8B"), or the file name without its extension for an import.
 
         Raises ProviderError (model_missing) when no model is installed.
         """
@@ -183,20 +195,28 @@ class Core:
         uncatalogued = self._catalog.uncatalogued(self._models_dir)
         wanted = self._settings.local_model_id
         if wanted in llm_ids:
-            return wanted, installed[wanted]
+            return wanted, installed[wanted], self._catalog.get(wanted).name
         if wanted and wanted.startswith("import:"):
             name = wanted.removeprefix("import:").lower()
             for path in uncatalogued:
                 if path.name.lower() == name:
-                    return f"import:{path.name}", path
+                    return f"import:{path.name}", path, path.stem
         if llm_ids:
-            return llm_ids[0], installed[llm_ids[0]]
+            return llm_ids[0], installed[llm_ids[0]], self._catalog.get(llm_ids[0]).name
         if uncatalogued:
-            return f"import:{uncatalogued[0].name}", uncatalogued[0]
+            return f"import:{uncatalogued[0].name}", uncatalogued[0], uncatalogued[0].stem
         raise ProviderError("No local model is installed.", "model_missing")
 
     def _local_model_path(self) -> Path:
         return self.resolve_local_model()[1]
+
+    def _local_label(self, path: Path) -> str:
+        """The name to show for the model file `path`: its catalog name, else its file stem."""
+        installed = self._catalog.installed(self._models_dir)
+        for entry in self._catalog.llms():
+            if installed.get(entry.id) == path:
+                return entry.name
+        return path.stem
 
     # --- documents ---
 
