@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 
 import httpx
 import pytest
@@ -251,12 +253,13 @@ def test_empty_data_and_null_delta():
 def test_loopback_client_bypasses_proxy(monkeypatch):
     """Loopback client ignores proxy env vars and succeeds."""
     import http.server
-    import threading
 
     # Set broken proxy env vars
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
 
     # Start a background server on loopback
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -287,3 +290,63 @@ def test_loopback_client_bypasses_proxy(monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_tokens_arrive_before_the_stream_ends():
+    gate = threading.Event()
+
+    def body():
+        yield b'data: {"choices":[{"delta":{"content":"first"}}]}\n\n'
+        gate.wait(5)
+        yield (
+            b'data: {"choices":[{"delta":{"content":"second"},"finish_reason":"stop"}]}\n\n'
+            b"data: [DONE]\n\n"
+        )
+
+    llm = OpenAICompatibleLLM(
+        "http://llm.test",
+        "m",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body())),
+    )
+    stream = llm.generate([{"role": "user", "content": "hi"}])
+    started = time.monotonic()
+    assert next(stream) == "first"
+    assert time.monotonic() - started < 2  # did not wait for the rest of the body
+    gate.set()
+    assert list(stream) == ["second"]
+
+
+def test_closing_the_stream_closes_the_response():
+    closed = threading.Event()
+
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"a"}}]}\n\n'
+            yield b'data: {"choices":[{"delta":{"content":"b"}}]}\n\n'
+
+        def close(self):
+            closed.set()
+
+    llm = OpenAICompatibleLLM(
+        "http://llm.test",
+        "m",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, stream=Body())),
+    )
+    stream = llm.generate([{"role": "user", "content": "hi"}])
+    assert next(stream) == "a"
+    stream.close()
+    assert closed.is_set()
+
+
+def test_thai_and_chinese_tokens_stream_intact():
+    body = (
+        'data: {"choices":[{"delta":{"content":"สัญญาเช่า"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"三年"},"finish_reason":"stop"}]}\n\n'
+        "data: [DONE]\n\n"
+    ).encode()
+    llm = OpenAICompatibleLLM(
+        "http://llm.test",
+        "m",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body)),
+    )
+    assert list(llm.generate([{"role": "user", "content": "hi"}])) == ["สัญญาเช่า", "三年"]

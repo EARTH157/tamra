@@ -1,11 +1,99 @@
+import { createSseParser } from "./sse";
+import type { AnswerEvent } from "./types";
+
+const STORAGE_KEY = "tamra.token";
+let token = "";
+
+/** The per-launch API token in a `#token=` URL fragment; null if absent or malformed. */
 export function tokenFromHash(hash: string): string | null {
-  const match = /(?:^#|&)token=([^&]+)/.exec(hash);
-  return match ? decodeURIComponent(match[1]) : null;
+  const match = /(?:^#|&)token=([^&]*)/.exec(hash);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
-export async function apiGet<T>(path: string, fetchImpl: typeof fetch = fetch): Promise<T> {
-  const token = tokenFromHash(window.location.hash) ?? "";
-  const response = await fetchImpl(path, { headers: { "X-Tamra-Token": token } });
-  if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+/**
+ * Read the token once at startup and remove it from the address bar. It is kept in
+ * sessionStorage so that reloading the window keeps working.
+ */
+export function initToken(): void {
+  const fromHash = tokenFromHash(window.location.hash);
+  if (window.location.hash) {
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+  try {
+    if (fromHash !== null) sessionStorage.setItem(STORAGE_KEY, fromHash);
+    token = fromHash ?? sessionStorage.getItem(STORAGE_KEY) ?? "";
+  } catch {
+    token = fromHash ?? ""; // storage unavailable: a reload will need the token again
+  }
+}
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function errorOf(response: Response): Promise<ApiError> {
+  let message = `HTTP ${response.status}`;
+  try {
+    const data: unknown = await response.json();
+    if (data && typeof data === "object" && "detail" in data && typeof data.detail === "string") {
+      message = data.detail;
+    }
+  } catch {
+    // not JSON: keep the status
+  }
+  return new ApiError(response.status, message);
+}
+
+/** Call the Tamra core: JSON in and out, undefined for 204, ApiError on failure. */
+export async function api<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  fetchImpl: typeof fetch = fetch,
+): Promise<T> {
+  const headers: Record<string, string> = { "X-Tamra-Token": token };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetchImpl(path, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) throw await errorOf(response);
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/** Ask a question in a chat and call onEvent for every event of the streamed answer. */
+export async function streamAnswer(
+  chatId: number,
+  content: string,
+  onEvent: (event: AnswerEvent) => void,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const response = await fetchImpl(`/api/chats/${chatId}/messages`, {
+    method: "POST",
+    headers: { "X-Tamra-Token": token, "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) throw await errorOf(response);
+  if (!response.body) throw new ApiError(response.status, "The answer stream is empty.");
+  const feed = createSseParser((data) => onEvent(JSON.parse(data) as AnswerEvent));
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    feed(decoder.decode(value, { stream: true }));
+  }
+  feed(decoder.decode());
 }

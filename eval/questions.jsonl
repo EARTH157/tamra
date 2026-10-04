@@ -1,0 +1,28 @@
+{"id": "th-leave-annual", "lang": "th", "question": "พนักงานลาพักร้อนได้ปีละกี่วัน", "file": "hr-leave-policy.docx", "page": null}
+{"id": "th-leave-sick-certificate", "lang": "th", "question": "ลาป่วยกี่วันขึ้นไปต้องมีใบรับรองแพทย์", "file": "hr-leave-policy.docx", "page": null}
+{"id": "en-leave-maternity", "lang": "en", "question": "How many days of maternity leave does the company pay for?", "file": "hr-leave-policy.docx", "page": null}
+{"id": "en-lease-rent", "lang": "en", "question": "How much is the monthly rent and when is it due?", "file": "apartment-lease.pdf", "page": 1}
+{"id": "en-lease-dog", "lang": "en", "question": "Can I keep a dog in the apartment?", "file": "apartment-lease.pdf", "page": 2}
+{"id": "th-lease-notice", "lang": "th", "question": "ถ้าจะยกเลิกสัญญาเช่าก่อนกำหนดต้องแจ้งล่วงหน้ากี่วัน", "file": "apartment-lease.pdf", "page": 2}
+{"id": "zh-lease-deposit", "lang": "zh", "question": "租房押金是多少？", "file": "apartment-lease.pdf", "page": 1}
+{"id": "zh-warranty-sofa", "lang": "zh", "question": "沙发框架保修几年？", "file": "furniture-warranty.txt", "page": null}
+{"id": "zh-warranty-pets", "lang": "zh", "question": "宠物抓坏的沙发可以免费维修吗？", "file": "furniture-warranty.txt", "page": null}
+{"id": "en-warranty-mattress", "lang": "en", "question": "How long is the mattress warranty?", "file": "furniture-warranty.txt", "page": null}
+{"id": "en-security-password", "lang": "en", "question": "What is the minimum password length?", "file": "it-security-policy.md", "page": null}
+{"id": "en-security-lost-laptop", "lang": "en", "question": "Who do I tell if I lose my laptop, and how quickly?", "file": "it-security-policy.md", "page": null}
+{"id": "th-security-mfa-app", "lang": "th", "question": "ต้องใช้แอปอะไรในการยืนยันตัวตนแบบหลายขั้นตอน", "file": "it-security-policy.md", "page": null}
+{"id": "th-travel-hotel", "lang": "th", "question": "ค่าที่พักในกรุงเทพฯ เบิกได้คืนละเท่าไร", "file": "travel-expenses.pdf", "page": 1}
+{"id": "th-travel-deadline", "lang": "th", "question": "ต้องยื่นเบิกค่าเดินทางภายในกี่วัน", "file": "travel-expenses.pdf", "page": 2}
+{"id": "en-travel-mileage", "lang": "en", "question": "What is the mileage rate when I use my own car for work travel?", "file": "travel-expenses.pdf", "page": 1}
+{"id": "zh-travel-hotel", "lang": "zh", "question": "出差住曼谷的酒店每晚可以报销多少钱？", "file": "travel-expenses.pdf", "page": 1}
+{"id": "zh-purifier-filter", "lang": "zh", "question": "滤网多久更换一次？", "file": "air-purifier-manual.docx", "page": null}
+{"id": "zh-purifier-child-lock", "lang": "zh", "question": "怎么开启童锁？", "file": "air-purifier-manual.docx", "page": null}
+{"id": "th-purifier-noise", "lang": "th", "question": "เครื่องฟอกอากาศเสียงดังกี่เดซิเบลในโหมดนอนหลับ", "file": "air-purifier-manual.docx", "page": null}
+{"id": "th-canteen-price", "lang": "th", "question": "อาหารกลางวันที่โรงอาหารราคาชุดละเท่าไร", "file": "canteen-rules.txt", "page": null}
+{"id": "en-canteen-hours", "lang": "en", "question": "What time does the staff canteen open?", "file": "canteen-rules.txt", "page": null}
+{"id": "zh-shipping-free", "lang": "zh", "question": "订单满多少元免运费？", "file": "shipping-policy.pdf", "page": 1}
+{"id": "en-shipping-custom-return", "lang": "en", "question": "Can custom-made furniture be returned?", "file": "shipping-policy.pdf", "page": 1}
+{"id": "none-tom-yum", "lang": "th", "question": "สูตรต้มยำกุ้งน้ำข้นต้องใช้วัตถุดิบอะไรบ้าง", "file": null, "page": null}
+{"id": "none-world-cup", "lang": "en", "question": "Who won the 2022 FIFA World Cup?", "file": null, "page": null}
+{"id": "none-weather", "lang": "zh", "question": "明天北京的天气怎么样？", "file": null, "page": null}
+{"id": "none-mercury", "lang": "en", "question": "What is the boiling point of mercury?", "file": null, "page": null}

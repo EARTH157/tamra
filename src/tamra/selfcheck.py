@@ -15,53 +15,112 @@ def _guard(check: Callable[[], dict]) -> dict:
 
 
 def _check_sqlite() -> dict:
-    import sqlite_vec
+    import numpy as np
 
-    from tamra import store
+    from tamra.store import ChunkInput, Store
 
-    conn = store.connect(":memory:")
-    caps = store.capabilities(conn)
-    conn.execute("CREATE VIRTUAL TABLE v USING vec0(embedding float[2])")
-    conn.execute(
-        "INSERT INTO v(rowid, embedding) VALUES (1, ?)", (sqlite_vec.serialize_float32([1, 0]),)
-    )
-    hit = conn.execute(
-        "SELECT rowid FROM v WHERE embedding MATCH ? AND k = 1",
-        (sqlite_vec.serialize_float32([1, 0]),),
-    ).fetchone()
-    return {"ok": bool(caps["fts5_trigram"]) and hit is not None and hit[0] == 1, **caps}
+    store = Store.open(":memory:")
+    try:
+        caps = store.capabilities()
+        collection = store.replace_collection("selfcheck", ".", "selfcheck")
+        file_id = store.add_file(collection.id, "probe.txt", 0, 0.0)
+        vector = np.zeros(1024, dtype=np.float32)
+        vector[0] = 1.0
+        location = {"kind": "text", "line_start": 1, "line_end": 1}
+        store.replace_file_chunks(
+            file_id,
+            [ChunkInput("selfcheck probe text", location)],
+            vector[None, :],
+            content_hash="-",
+            note=None,
+        )
+        dense = store.search_dense(collection.id, vector, 1)
+        keyword = store.search_keyword(collection.id, '"pro"', 1)
+    finally:
+        store.close()
+    ok = bool(caps["fts5_trigram"]) and len(dense) == 1 and keyword == [dense[0][0]]
+    return {"ok": ok, **caps}
+
+
+def _check_documents() -> dict:
+    """The document libraries load and work: pdfium, python-docx's template, charset detection."""
+    import io
+
+    import docx
+    import pypdfium2 as pdfium
+    from charset_normalizer import from_bytes
+
+    pdf = pdfium.PdfDocument.new()
+    try:
+        pdf.new_page(200, 200).close()
+        buffer = io.BytesIO()
+        pdf.save(buffer)
+    finally:
+        pdf.close()
+    reopened = pdfium.PdfDocument(buffer.getvalue())
+    try:
+        pages = len(reopened)
+    finally:
+        reopened.close()
+
+    document = docx.Document()
+    document.add_paragraph("Tamra")
+    stream = io.BytesIO()
+    document.save(stream)
+    stream.seek(0)
+    text = docx.Document(stream).paragraphs[0].text
+
+    detected = from_bytes("Tamra ตอบคำถามจากเอกสาร".encode()).best()
+    return {"ok": pages == 1 and text == "Tamra" and detected is not None}
 
 
 def _check_embedding(model_dir: Path) -> dict:
-    from tamra import store
     from tamra.embedder import Embedder
+    from tamra.store import ChunkInput, Store
 
     t0 = time.perf_counter()
-    embedder = Embedder(model_dir)
+    embedder = Embedder.load(model_dir)
     load_s = time.perf_counter() - t0
 
     docs = ["แมวกำลังนอนหลับอยู่บนโซฟา", "汽车停在路边"]
-    conn = store.connect(":memory:")
-    conn.execute("CREATE VIRTUAL TABLE v USING vec0(embedding float[1024])")
-    for rowid, vec in enumerate(embedder.embed(docs), start=1):
-        conn.execute("INSERT INTO v(rowid, embedding) VALUES (?, ?)", (rowid, vec.tobytes()))
-    query = embedder.embed(["A cat sleeping on a couch"])[0]
-    nearest = conn.execute(
-        "SELECT rowid FROM v WHERE embedding MATCH ? AND k = 1", (query.tobytes(),)
-    ).fetchone()[0]
+    store = Store.open(":memory:")
+    try:
+        collection = store.replace_collection("selfcheck", ".", "selfcheck")
+        file_id = store.add_file(collection.id, "probe.txt", 0, 0.0)
+        chunks = [
+            ChunkInput(text, {"kind": "text", "line_start": i + 1, "line_end": i + 1})
+            for i, text in enumerate(docs)
+        ]
+        store.replace_file_chunks(
+            file_id, chunks, embedder.embed(docs), content_hash="-", note=None
+        )
+        query = embedder.embed(["A cat sleeping on a couch"])[0]
+        best = store.get_chunks([store.search_dense(collection.id, query, 1)[0][0]])[0]
+    finally:
+        store.close()
 
     t0 = time.perf_counter()
     embedder.embed([PASSAGE] * 32)
     rate = 32 / (time.perf_counter() - t0)
-    return {"ok": nearest == 1, "load_s": round(load_s, 2), "passages_per_sec": round(rate, 2)}
+    return {
+        "ok": best.text == docs[0],
+        "load_s": round(load_s, 2),
+        "passages_per_sec": round(rate, 2),
+    }
 
 
-def _check_llm(llama_exe: Path, model: Path, log_dir: Path) -> dict:
+def _check_llm(llama_exe: Path, model: Path, log_dir: Path | None) -> dict:
+    """Start llama-server and stream a short reply.
+
+    `tokens` counts streamed text chunks; llama-server streams one token per chunk.
+    """
     from tamra.llm.llama_server import LlamaServer
     from tamra.llm.openai_compat import OpenAICompatibleLLM
+    from tamra.paths import data_dir
 
+    log_file = (log_dir if log_dir is not None else data_dir() / "logs") / "llama-server.log"
     t0 = time.perf_counter()
-    with LlamaServer(llama_exe, model, log_dir / "llama-server.log") as srv:
+    with LlamaServer(llama_exe, model, log_file) as srv:
         start_s = time.perf_counter() - t0
         llm = OpenAICompatibleLLM(srv.base_url, "local")
         try:
@@ -87,9 +146,14 @@ def _check_llm(llama_exe: Path, model: Path, log_dir: Path) -> dict:
 
 
 def run_selfcheck(
-    embed_model_dir: Path | None, llm_model: Path | None, llama_exe: Path, log_dir: Path
+    embed_model_dir: Path | None,
+    llm_model: Path | None,
+    llama_exe: Path,
+    log_dir: Path | None = None,
 ) -> dict:
+    """Run the checks; log_dir (for llama-server's log) defaults to data_dir()/logs."""
     checks = {"sqlite": _guard(_check_sqlite)}
+    checks["documents"] = _guard(_check_documents)
     if embed_model_dir is not None:
         checks["embedding"] = _guard(lambda: _check_embedding(embed_model_dir))
     if llm_model is not None:

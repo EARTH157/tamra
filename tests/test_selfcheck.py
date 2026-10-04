@@ -8,10 +8,10 @@ from tamra.__main__ import main
 from tamra.selfcheck import run_selfcheck
 
 
-def test_sqlite_only_selfcheck(tmp_path):
+def test_selfcheck_without_models(tmp_path):
     report = run_selfcheck(None, None, tmp_path / "missing.exe", tmp_path)
     assert report["ok"] is True
-    assert set(report["checks"]) == {"sqlite"}
+    assert set(report["checks"]) == {"sqlite", "documents"}
     assert report["checks"]["sqlite"]["fts5_trigram"] is True
 
 
@@ -57,6 +57,7 @@ def test_report_survives_non_cp1252_stdout(tmp_path, monkeypatch):
     sys.stdout.flush()
     assert json.loads(out.read_text(encoding="utf-8")) == fake_report
     assert buf.getvalue().isascii()
+    assert json.loads(buf.getvalue().decode("ascii")) == fake_report
 
 
 def test_windowed_exe_with_none_stdout(tmp_path, monkeypatch):
@@ -99,3 +100,67 @@ def test_llm_failure_is_reported(tmp_path):
     assert report["checks"]["llm"]["ok"] is False
     assert "error" in report["checks"]["llm"]
     assert "LlamaServerError" in report["checks"]["llm"]["error"]
+
+
+def test_selfcheck_cli_does_not_create_the_data_folder(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    monkeypatch.setenv("TAMRA_DATA_DIR", str(data))
+    assert main(["selfcheck", "--report", str(tmp_path / "r.json")]) == 0
+    assert not data.exists()
+
+
+def test_llm_check_reports_timings_from_a_stub_server(tmp_path, monkeypatch):
+    import tamra.llm.llama_server as llama_server
+    import tamra.llm.openai_compat as openai_compat
+
+    class StubServer:
+        base_url = "http://127.0.0.1:9"
+        gpu_used = True
+
+        def __init__(self, exe, model, log_file):
+            self.log_file = log_file
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class StubClient:
+        closed = False
+
+        def __init__(self, base_url, model):
+            pass
+
+        def generate(self, messages, max_tokens=1024):
+            yield from ["1", ",", " 2"]
+
+        def close(self):
+            StubClient.closed = True
+
+    monkeypatch.setattr(llama_server, "LlamaServer", StubServer)
+    monkeypatch.setattr(openai_compat, "OpenAICompatibleLLM", StubClient)
+    report = run_selfcheck(None, tmp_path / "m.gguf", tmp_path / "x.exe", tmp_path)
+    llm = report["checks"]["llm"]
+    assert report["ok"] is True
+    assert (llm["tokens"], llm["gpu_used"]) == (3, True)
+    assert llm["first_token_s"] >= 0
+    assert llm["tokens_per_sec"] > 0
+    assert StubClient.closed
+
+
+def test_document_libraries_are_checked(tmp_path):
+    report = run_selfcheck(None, None, tmp_path / "x.exe", tmp_path)
+    assert report["checks"]["documents"] == {"ok": True}
+
+
+def test_a_startup_failure_returns_exit_code_1_without_raising(monkeypatch):
+    import tamra.app
+
+    def boom(dev):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(tamra.app, "run", boom)
+    assert main([]) == 1
+    with pytest.raises(RuntimeError, match="boom"):
+        main(["--dev"])

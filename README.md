@@ -7,8 +7,7 @@ app for Windows. Point it at a folder of documents and ask questions in Thai, En
 Chinese. Answers cite the passages they came from, and you can select any part of an
 answer to see the exact source text that supports it.
 
-> **Status: pre-alpha, in design.** There is no usable build yet. The first milestone (M0)
-> is the technical foundation. See the [roadmap](#roadmap).
+> **Status: pre-alpha.** Milestone M1 works: index a folder, ask in Thai, English, or Chinese, and get answers with [n] citations from a small local model. There is no installer yet (M6). See the [roadmap](#roadmap).
 
 ## Planned features
 
@@ -25,6 +24,22 @@ answer to see the exact source text that supports it.
 - **Folder-based collections.** Tamra watches your folders and keeps the index up to date.
   It never modifies your files.
 - PDF, Word (.docx), TXT, and Markdown, with OCR for scanned PDFs planned.
+
+## Try it from source
+
+You need Windows 10 or 11, [uv](https://docs.astral.sh/uv/), and Node.js 24.
+
+    uv sync
+    uv run python scripts/fetch_assets.py   # llama.cpp, bge-m3, and a small test model (~1.1 GB)
+    npm --prefix ui ci
+    npm --prefix ui run build
+    uv run tamra
+
+Choose a folder of PDF, Word, text, or Markdown files, wait for indexing, and ask a question.
+`./scripts/build.ps1` packages the same app as `dist\Tamra\Tamra.exe`. The packaged
+`Tamra.exe` looks for models in `%LOCALAPPDATA%\Tamra\models` (copy the contents of `.models`
+there) or in the folder named by `TAMRA_MODELS_DIR`. M1 uses Qwen2.5-0.5B, a very small model,
+so expect rough answers, especially in Thai and Chinese; M2 adds larger models and cloud APIs.
 
 ## Roadmap
 
@@ -50,7 +65,7 @@ pywebview · [llama.cpp](https://github.com/ggml-org/llama.cpp) ·
 
 Tamra คือแอปบน Windows สำหรับถามคำถามจากเอกสารของคุณเอง รองรับภาษาไทย อังกฤษ และจีน
 ใช้งานแบบ offline ได้ และทุกคำตอบอ้างอิงแหล่งที่มา คลุมข้อความในคำตอบเพื่อดูต้นฉบับที่ใช้ตอบได้ทันที
-ตอนนี้อยู่ในขั้นออกแบบ ยังไม่มีเวอร์ชันให้ใช้งาน
+ตอนนี้ (M1) ใช้งานจากซอร์สโค้ดได้แล้ว: เลือกโฟลเดอร์เอกสาร ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n] ยังไม่มีตัวติดตั้ง
 
 ## License
 

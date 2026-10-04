@@ -80,7 +80,6 @@ class OpenAICompatibleLLM:
                         continue
 
                     if data == "[DONE]":
-                        found_completion = True
                         return
 
                     try:
@@ -122,8 +121,6 @@ class OpenAICompatibleLLM:
                 if not found_completion:
                     raise LLMError("Stream ended without [DONE] or finish_reason")
 
-        except LLMError:
-            raise
         except (httpx.HTTPError, UnicodeDecodeError) as e:
             raise LLMError(f"{type(e).__name__}: {e}") from e
 

@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -127,7 +128,11 @@ def test_stub_server_gpu_fail_cpu_ok(tmp_path, spawned):
     )
     srv.start(timeout=5)
     assert srv.gpu_used is False
+    assert srv.alive() is True
+    assert srv._job is not None  # the child is in a kill-on-close job
     srv.stop()
+    assert srv.alive() is False
+    assert srv._job is None
     for proc in spawned:
         assert proc.poll() is not None
 
@@ -148,6 +153,24 @@ def test_stub_server_both_hang(tmp_path, spawned):
     assert len(spawned) == 2
     for proc in spawned:
         assert proc.poll() is not None
+
+
+def test_both_attempts_share_one_time_budget(tmp_path, spawned):
+    """GPU and CPU attempts together stay within the single timeout."""
+    stub_script = tmp_path / "stub.py"
+    stub_script.write_text(_STUB_SERVER)
+
+    srv = _StubLlamaServer(
+        stub_script,
+        Path("dummy.gguf"),
+        tmp_path / "log.txt",
+        modes={"gpu": "hang", "cpu": "hang"},
+    )
+    started = time.monotonic()
+    with pytest.raises(LlamaServerError):
+        srv.start(timeout=2)
+    assert time.monotonic() - started < 3.5
+    assert len(spawned) == 2
 
 
 def test_missing_exe_raises(tmp_path):
@@ -173,6 +196,8 @@ def test_proxy_bypass(tmp_path, monkeypatch, spawned):
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
 
     srv = _StubLlamaServer(
         stub_script,
@@ -211,3 +236,20 @@ def test_keyboard_interrupt_during_start(tmp_path, spawned):
     assert srv._log is None
     for proc in spawned:
         assert proc.poll() is not None
+
+
+def test_the_api_key_is_passed_when_given(tmp_path):
+    keyed = LlamaServer(Path("x.exe"), Path("m.gguf"), tmp_path / "l.txt", api_key="k1")
+    args = keyed.args(gpu=True)
+    assert args[args.index("--api-key") + 1] == "k1"
+    assert args[-2:] == ["-ngl", "99"]
+    plain = LlamaServer(Path("x.exe"), Path("m.gguf"), tmp_path / "l.txt")
+    assert "--api-key" not in plain.args(gpu=True)
+
+
+def test_an_unwritable_log_raises_llama_server_error(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    srv = LlamaServer(Path("x.exe"), Path("m.gguf"), blocker / "logs" / "l.txt")
+    with pytest.raises(LlamaServerError, match="cannot write"):
+        srv.start(timeout=1)
