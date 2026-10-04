@@ -12,11 +12,13 @@ a = Analysis(
     datas=[
         (str(ROOT / "ui" / "dist"), "ui/dist"),
         (str(ROOT / "vendor" / "llama"), "vendor/llama"),
+        (str(ROOT / "src" / "tamra" / "models" / "catalog.json"), "tamra/models"),
     ],
     hiddenimports=collect_submodules("uvicorn")
     # PyInstaller's hook-keyring already covers this; kept as belt-and-braces for the
     # Windows Credential Manager backend.
     + collect_submodules("keyring.backends")
+    + ["keyring.backends.Windows", "anthropic", "truststore"]
     + ["tamra.app", "tamra.selfcheck", "tamra.embedder"],
 )
 pyz = PYZ(a.pure)
