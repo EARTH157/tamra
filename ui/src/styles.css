@@ -1,14 +1,17 @@
 /* Design tokens, sampled from the Figma frames in docs/design/. Use only these variables. */
+/* Light palette (the default) and the tokens the Style settings change. */
 :root {
   --bg: #f6f3ec;
   --sidebar: #efebe2;
   --border: #e2ddd1;
   --border-strong: #cfc8b8;
   --surface: #ffffff;
-  --primary: #0f5c56;
-  --primary-hover: #0b4a45;
+  --primary: #0f5c56; /* accent fill: buttons, the logo tile, the send button */
+  --primary-hover: #0c4a45;
+  --primary-ink: #0f5c56; /* the accent as text, an icon or a border; lighter in dark mode */
   --primary-soft: #ddece9;
   --primary-soft-hover: #c9e0dc;
+  --on-primary: #ffffff; /* text on --primary and --danger fills */
   --track: #e6e1d5;
   --text: #1f1d18;
   --muted: #736d61;
@@ -19,10 +22,12 @@
   --error-text: #b42318;
   --danger: #b42318;
   --danger-hover: #962016;
+  --danger-ink: #b42318;
   --highlight: #fbe7a1; /* reserved for M3 sentence highlights */
   --highlight-bar: #e9b824; /* reserved for M3 */
   --overlay: rgba(31, 29, 24, 0.45);
   --tooltip: #1f1d18;
+  --on-tooltip: #ffffff;
   --row-hover: rgba(255, 255, 255, 0.55);
 
   --radius-sm: 6px;
@@ -35,6 +40,20 @@
   --sidebar-width: 260px;
   --panel-width: 520px;
 
+  /* Text size (data-text-size) scales the chat and source text; spacing (data-spacing) the
+     vertical rhythm. Line heights are multiples of the font size. */
+  --chat-size: 15px;
+  --paper-size: 14px;
+  --lh-answer: 1.8667;
+  --lh-user: 1.6;
+  --lh-paper: 1.8571;
+  --gap-user: 22px;
+  --gap-answer: 32px;
+  --gap-para: 13px;
+  --gap-cards: 18px;
+  --messages-pad: 28px 32px 24px;
+  --row-height: 36px;
+
   --font:
     "IBM Plex Sans", "IBM Plex Sans Thai", "Leelawadee UI", "Microsoft YaHei UI", system-ui,
     sans-serif;
@@ -46,6 +65,129 @@
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Accent colours, sampled from the Style frame. --primary-soft tints the user's bubble and the
+   citation chips. Each accent keeps at least 4.5:1 for white on --primary and for the accent
+   ink on its soft tint (checked in theme.test.ts). */
+:root[data-accent="blue"] {
+  --primary: #2b3fd1;
+  --primary-hover: #2232a7;
+  --primary-ink: #2b3fd1;
+  --primary-soft: #e1e4f9;
+  --primary-soft-hover: #d0d5f5;
+}
+
+:root[data-accent="orange"] {
+  --primary: #a8502a;
+  --primary-hover: #864022;
+  --primary-ink: #96431f;
+  --primary-soft: #f3e6e1;
+  --primary-soft-hover: #ecd8d0;
+}
+
+:root[data-accent="purple"] {
+  --primary: #7a3e8e;
+  --primary-hover: #623272;
+  --primary-ink: #7a3e8e;
+  --primary-soft: #ece4ef;
+  --primary-soft-hover: #e2d5e6;
+}
+
+:root[data-accent="slate"] {
+  --primary: #3f4a5a;
+  --primary-hover: #323b48;
+  --primary-ink: #3f4a5a;
+  --primary-soft: #e4e6e8;
+  --primary-soft-hover: #d5d7db;
+}
+
+/* Dark theme. The background, the sidebar and the accent tint are sampled from the Style frame's
+   dark preview; the rest is derived from them. The accent fill is kept; the accent ink is the
+   lighter tone that stays readable on dark surfaces. */
+:root[data-theme="dark"] {
+  --bg: #1c1b19;
+  --sidebar: #262421;
+  --border: #3a3732;
+  --border-strong: #4a463f;
+  --surface: #2e2b26;
+  --primary: #0f5c56;
+  --primary-hover: #226964;
+  --primary-ink: #75d7cf;
+  --primary-soft: #1f4a45;
+  --primary-soft-hover: #285a54;
+  --track: #3a3732;
+  --text: #f2efe7;
+  --muted: #a8a296;
+  --faint: #9c968a;
+  --warning-bg: #3a2f12;
+  --warning-text: #f2c76b;
+  --error-bg: #3d1f1c;
+  --error-text: #ff9e92;
+  --danger-ink: #ff8a7d;
+  --highlight: #5a4a14;
+  --highlight-bar: #e9b824;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --tooltip: #f2efe7;
+  --on-tooltip: #1c1b19;
+  --row-hover: rgba(255, 255, 255, 0.06);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-dialog: 0 16px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+
+:root[data-theme="dark"][data-accent="blue"] {
+  --primary: #2b3fd1;
+  --primary-hover: #3c4ed5;
+  --primary-ink: #909adf;
+  --primary-soft: #20254b;
+  --primary-soft-hover: #293060;
+}
+
+:root[data-theme="dark"][data-accent="orange"] {
+  --primary: #a8502a;
+  --primary-hover: #af5e3b;
+  --primary-ink: #dea58c;
+  --primary-soft: #4b2d20;
+  --primary-soft-hover: #603a29;
+}
+
+:root[data-theme="dark"][data-accent="purple"] {
+  --primary: #7a3e8e;
+  --primary-hover: #854d97;
+  --primary-ink: #cb90df;
+  --primary-soft: #40204b;
+  --primary-soft-hover: #532960;
+}
+
+:root[data-theme="dark"][data-accent="slate"] {
+  --primary: #3f4a5a;
+  --primary-hover: #4e5867;
+  --primary-ink: #8caede;
+  --primary-soft: #20324b;
+  --primary-soft-hover: #294060;
+}
+
+:root[data-text-size="small"] {
+  --chat-size: 13px;
+  --paper-size: 12.5px;
+}
+
+:root[data-text-size="large"] {
+  --chat-size: 17px;
+  --paper-size: 16px;
+}
+
+:root[data-spacing="compact"] {
+  --lh-answer: 1.6;
+  --lh-user: 1.45;
+  --lh-paper: 1.6;
+  --gap-user: 14px;
+  --gap-answer: 20px;
+  --gap-para: 7px;
+  --gap-cards: 12px;
+  --messages-pad: 18px 32px 14px;
+  --row-height: 30px;
 }
 
 *,
@@ -82,7 +224,7 @@ button:disabled {
 }
 
 :focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--primary-ink);
   outline-offset: 2px;
 }
 
@@ -118,7 +260,7 @@ svg.lucide {
 .btn.primary {
   border-color: var(--primary);
   background: var(--primary);
-  color: var(--surface);
+  color: var(--on-primary);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -129,7 +271,7 @@ svg.lucide {
 .btn.danger {
   border-color: var(--danger);
   background: var(--danger);
-  color: var(--surface);
+  color: var(--on-primary);
 }
 
 .btn.danger:hover:not(:disabled) {
@@ -163,7 +305,7 @@ svg.lucide {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--primary);
+  color: var(--primary-ink);
   font-size: 12px;
   font-weight: 500;
 }
@@ -209,7 +351,7 @@ svg.lucide {
   height: 28px;
   border-radius: 7px;
   background: var(--primary);
-  color: var(--surface);
+  color: var(--on-primary);
 }
 
 .brand-name {
@@ -285,7 +427,7 @@ svg.lucide {
   position: relative;
   display: flex;
   align-items: center;
-  height: 36px;
+  height: var(--row-height);
   margin-bottom: 2px;
   border: 1px solid transparent;
   border-radius: var(--radius);
@@ -333,7 +475,7 @@ svg.lucide {
   width: 100%;
   height: 36px;
   padding: 0 10px;
-  border: 1.5px solid var(--primary);
+  border: 1.5px solid var(--primary-ink);
   border-radius: var(--radius);
   outline: none;
   background: var(--surface);
@@ -350,7 +492,7 @@ svg.lucide {
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   background: var(--tooltip);
-  color: var(--surface);
+  color: var(--on-tooltip);
   font-size: 11px;
   line-height: 16px;
   white-space: nowrap;
@@ -396,7 +538,7 @@ svg.lucide {
 
 .menu-item.danger,
 .menu-item.danger svg {
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .menu-divider {
@@ -426,7 +568,7 @@ svg.lucide {
 }
 
 .collection-name svg {
-  color: var(--primary);
+  color: var(--primary-ink);
 }
 
 .collection-name span,
@@ -460,7 +602,7 @@ svg.lucide {
 .progress-fill {
   height: 100%;
   border-radius: 2px;
-  background: var(--primary);
+  background: var(--primary-ink);
   transition: width 0.3s ease;
 }
 
@@ -477,7 +619,7 @@ svg.lucide {
 }
 
 .collection-count.done svg {
-  color: var(--primary);
+  color: var(--primary-ink);
 }
 
 .collection-count.busy {
@@ -631,7 +773,7 @@ svg.lucide {
   height: 48px;
   border-radius: var(--radius-md);
   background: var(--primary);
-  color: var(--surface);
+  color: var(--on-primary);
 }
 
 .hero h1 {
@@ -663,7 +805,7 @@ svg.lucide {
 }
 
 .add-card > svg {
-  color: var(--primary);
+  color: var(--primary-ink);
 }
 
 .add-card h2 {
@@ -714,38 +856,38 @@ svg.lucide {
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  padding: 28px 32px 24px;
+  padding: var(--messages-pad);
   overflow-y: auto;
 }
 
 .message.user {
   align-self: flex-end;
   max-width: 75%;
-  margin-bottom: 22px;
+  margin-bottom: var(--gap-user);
   padding: 11px 16px;
   border-radius: var(--radius-lg);
   background: var(--primary-soft);
-  font-size: 15px;
-  line-height: 24px;
+  font-size: var(--chat-size);
+  line-height: calc(var(--chat-size) * var(--lh-user));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .message.assistant {
-  margin-bottom: 32px;
+  margin-bottom: var(--gap-answer);
 }
 
 .answer-text {
   max-width: 800px;
-  font-size: 15px;
-  line-height: 28px;
+  font-size: var(--chat-size);
+  line-height: calc(var(--chat-size) * var(--lh-answer));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .para-break {
   display: block;
-  height: 13px;
+  height: var(--gap-para);
 }
 
 .cite {
@@ -759,7 +901,7 @@ svg.lucide {
   border: 0;
   border-radius: 999px;
   background: var(--primary-soft);
-  color: var(--primary);
+  color: var(--primary-ink);
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
@@ -772,7 +914,7 @@ svg.lucide {
 
 .cite.active {
   background: var(--primary);
-  color: var(--surface);
+  color: var(--on-primary);
 }
 
 .searching {
@@ -788,7 +930,7 @@ svg.lucide {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 18px 0 0;
+  margin: var(--gap-cards) 0 0;
   padding: 0;
   list-style: none;
 }
@@ -819,7 +961,7 @@ svg.lucide {
   margin-top: 1px;
   border-radius: 999px;
   background: var(--primary-soft);
-  color: var(--primary);
+  color: var(--primary-ink);
   font-size: 11px;
   font-weight: 600;
 }
@@ -919,7 +1061,7 @@ svg.lucide {
 }
 
 .composer-card:focus-within {
-  border-color: var(--primary);
+  border-color: var(--primary-ink);
 }
 
 .composer textarea {
@@ -930,7 +1072,7 @@ svg.lucide {
   border: 0;
   outline: none;
   background: none;
-  font-size: 15px;
+  font-size: var(--chat-size);
   line-height: 26px;
   resize: none;
 }
@@ -955,7 +1097,7 @@ svg.lucide {
   border: 0;
   border-radius: 999px;
   background: var(--primary);
-  color: var(--surface);
+  color: var(--on-primary);
 }
 
 .send:hover:not(:disabled) {
@@ -997,7 +1139,7 @@ svg.lucide {
 }
 
 .source-panel header > svg {
-  color: var(--primary);
+  color: var(--primary-ink);
 }
 
 .source-title {
@@ -1033,8 +1175,8 @@ svg.lucide {
   padding: 28px 28px 32px;
   border: 1px solid var(--border);
   background: var(--surface);
-  font-size: 14px;
-  line-height: 26px;
+  font-size: var(--paper-size);
+  line-height: calc(var(--paper-size) * var(--lh-paper));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1120,7 +1262,7 @@ svg.lucide {
 }
 
 .path-field:focus-within {
-  border-color: var(--primary);
+  border-color: var(--primary-ink);
 }
 
 .path-field svg {

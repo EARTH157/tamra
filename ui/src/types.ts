@@ -49,3 +49,30 @@ export type AnswerEvent =
   | { type: "token"; text: string }
   | { type: "error"; message: string }
   | { type: "done"; message_id: number };
+
+// GET and PUT /api/settings: every saved setting, plus the key state of the selected provider.
+export type Mode = "local" | "api";
+export type ApiProvider = "anthropic" | "openai";
+export type ThemeSetting = "light" | "dark" | "system";
+export type Accent = "green" | "blue" | "orange" | "purple" | "slate";
+export type TextSize = "small" | "default" | "large";
+export type Spacing = "comfortable" | "compact";
+
+export type Settings = {
+  mode: Mode;
+  local_model_id: string | null;
+  api_provider: ApiProvider;
+  api_model: string;
+  api_base_url: string;
+  language: "en" | "th";
+  theme: ThemeSetting;
+  accent: Accent;
+  text_size: TextSize;
+  spacing: Spacing;
+  ask_before_delete: boolean;
+  api_key_set: boolean;
+  api_key_hint: string | null;
+};
+
+/** What PUT /api/settings accepts: any of the saved settings (never the key state). */
+export type SettingsChanges = Partial<Omit<Settings, "api_key_set" | "api_key_hint">>;

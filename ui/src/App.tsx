@@ -4,6 +4,7 @@ import { api } from "./api";
 import ChatList from "./ChatList";
 import ChatView from "./ChatView";
 import DeleteChatDialog from "./DeleteChatDialog";
+import { useT } from "./i18n";
 import IndexStatus from "./IndexStatus";
 import Setup from "./Setup";
 import type { Chat, CollectionState } from "./types";
@@ -12,6 +13,7 @@ import Welcome from "./Welcome";
 const POLL_MS = 2000;
 
 export default function App() {
+  const t = useT();
   const [state, setState] = useState<CollectionState | null>(null);
   const [offline, setOffline] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -116,13 +118,13 @@ export default function App() {
           disabled={busy || collection === null}
         >
           <Plus size={16} />
-          New chat
+          {t("app.newChat")}
         </button>
-        <div className="section-label">Chats</div>
+        <div className="section-label">{t("app.chats")}</div>
         {state !== null && collection === null ? (
-          <p className="sidebar-note">No chats yet. Add a folder of documents to start.</p>
+          <p className="sidebar-note">{t("app.noChatsNoFolder")}</p>
         ) : state !== null && chats.length === 0 ? (
-          <p className="sidebar-note">No chats yet. Ask a question to start one.</p>
+          <p className="sidebar-note">{t("app.noChatsYet")}</p>
         ) : (
           <ChatList
             chats={chats}
@@ -152,11 +154,11 @@ export default function App() {
           <div className="banner" role="alert">
             <AlertTriangle size={16} />
             <span className="banner-text" title={offline}>
-              Tamra core is unreachable. Answers are paused until it reconnects.
+              {t("app.coreUnreachable")}
             </span>
             <button type="button" className="retry" onClick={() => void retry()}>
               <RefreshCw size={14} />
-              Retry
+              {t("common.retry")}
             </button>
           </div>
         ) : (
@@ -167,7 +169,7 @@ export default function App() {
               <button
                 type="button"
                 className="icon-button"
-                aria-label="Dismiss"
+                aria-label={t("common.dismiss")}
                 onClick={() => setProblem(null)}
               >
                 <X size={16} />
@@ -176,7 +178,7 @@ export default function App() {
           )
         )}
         {state === null ? (
-          <div className="connecting">{offline ? null : "Connecting to Tamra…"}</div>
+          <div className="connecting">{offline ? null : t("app.connecting")}</div>
         ) : collection === null ? (
           <Welcome onChoose={() => setChoosingFolder(true)} />
         ) : (
@@ -191,12 +193,8 @@ export default function App() {
       </main>
       {choosingFolder && (
         <Setup
-          title={collection ? "Change documents folder" : "Choose documents folder"}
-          description={
-            collection
-              ? "Tamra will index the new folder and answer from it. Your files are never changed."
-              : "Tamra indexes the PDF, Word, text, and Markdown files in this folder and its subfolders. Your files are never changed."
-          }
+          title={collection ? t("folder.changeTitle") : t("folder.chooseTitle")}
+          description={collection ? t("folder.changeText") : t("folder.chooseText")}
           initialFolder={collection?.folder_path ?? ""}
           onDone={(next) => {
             setState(next);

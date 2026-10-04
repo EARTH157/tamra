@@ -9,6 +9,7 @@ import {
 } from "react";
 import AnswerText, { TextWithParagraphs } from "./AnswerText";
 import { api, streamAnswer } from "./api";
+import { useT } from "./i18n";
 import { isNotFound } from "./notFound";
 import type { ChatDetail, Message, Source } from "./types";
 
@@ -50,11 +51,13 @@ function reopen(source: Source, saved: ChatDetail | null): Opened | null {
 /** One chat: its messages, the answer being streamed, the question box, and a source panel. */
 export default function ChatView({
   chatId,
-  collectionName = "your documents",
+  collectionName,
   createChat,
   onBusyChange,
   onAnswered,
 }: Props) {
+  const t = useT();
+  const collection = collectionName ?? t("chat.defaultCollection");
   const [detail, setDetail] = useState<ChatDetail | null>(null);
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
@@ -173,10 +176,8 @@ export default function ChatView({
               <span className="hero-tile">
                 <BookOpen size={26} />
               </span>
-              <h1>Ask your documents</h1>
-              <p className="hero-sub">
-                Every answer cites the passage it came from, so you can check it.
-              </p>
+              <h1>{t("chat.emptyTitle")}</h1>
+              <p className="hero-sub">{t("chat.emptyText")}</p>
             </div>
           )}
           {messages.map((message) =>
@@ -191,7 +192,7 @@ export default function ChatView({
                 sources={message.sources}
                 meta={metaOf(message)}
                 hint={message === lastAnswer}
-                collectionName={collectionName}
+                collectionName={collection}
                 active={activeFor(message.id)}
                 onOpen={(source) => setOpened({ owner: message.id, source })}
               />
@@ -206,7 +207,7 @@ export default function ChatView({
                   sources={pending.sources}
                   meta={null}
                   hint={false}
-                  collectionName={collectionName}
+                  collectionName={collection}
                   done={pending.done}
                   active={activeFor("pending")}
                   onOpen={(source) => setOpened({ owner: "pending", source })}
@@ -216,7 +217,7 @@ export default function ChatView({
                   <div className="message assistant">
                     <p className="searching">
                       <Lightbulb size={16} />
-                      Searching your documents…
+                      {t("chat.searching")}
                     </p>
                   </div>
                 )
@@ -233,8 +234,8 @@ export default function ChatView({
           <div className="composer-card">
             <textarea
               ref={box}
-              aria-label="Question"
-              placeholder="Ask about your documents…"
+              aria-label={t("chat.questionLabel")}
+              placeholder={t("chat.placeholder")}
               rows={1}
               value={question}
               maxLength={4000}
@@ -244,14 +245,14 @@ export default function ChatView({
             />
             <div className="composer-actions">
               {pending ? (
-                <button type="button" className="send" aria-label="Stop" onClick={stop}>
+                <button type="button" className="send" aria-label={t("chat.stop")} onClick={stop}>
                   <Square size={12} fill="currentColor" />
                 </button>
               ) : (
                 <button
                   type="submit"
                   className="send"
-                  aria-label="Send"
+                  aria-label={t("chat.send")}
                   disabled={!ready || !question.trim()}
                 >
                   <ArrowUp size={18} />
@@ -259,7 +260,7 @@ export default function ChatView({
               )}
             </div>
           </div>
-          <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>
+          <p className="composer-hint">{t("chat.composerHint")}</p>
         </form>
       </div>
       {opened && <SourcePanel source={opened.source} onClose={() => setOpened(null)} />}
@@ -294,14 +295,15 @@ function Answer({
   active,
   onOpen,
 }: AnswerProps) {
+  const t = useT();
   if (done && isNotFound(text, sources.length)) {
     return (
       <div className="message assistant">
         <div className="not-found">
           <SearchX size={18} />
           <div>
-            <h3>Not found in {collectionName}</h3>
-            <p>Tamra answers only from your documents, so it will not guess.</p>
+            <h3>{t("chat.notFoundTitle", { name: collectionName })}</h3>
+            <p>{t("chat.notFoundText")}</p>
           </div>
         </div>
         {meta && <p className="answer-meta">{meta}</p>}
@@ -346,7 +348,7 @@ function Answer({
       )}
       {meta && <p className="answer-meta">{meta}</p>}
       {hint && sources.length > 0 && (
-        <p className="answer-hint">Click a number to see the passage it came from.</p>
+        <p className="answer-hint">{t("chat.citeHint")}</p>
       )}
     </div>
   );
@@ -364,15 +366,16 @@ export function folderOf(path: string): string {
 }
 
 function SourcePanel({ source, onClose }: { source: Source; onClose: () => void }) {
+  const t = useT();
   return (
-    <aside className="source-panel" aria-label="Source">
+    <aside className="source-panel" aria-label={t("chat.sourcePanel")}>
       <header>
         <FileText size={20} />
         <div className="source-title">
           <strong title={source.file}>{fileName(source.file)}</strong>
           <span>{[source.label, folderOf(source.file)].filter(Boolean).join(" · ")}</span>
         </div>
-        <button type="button" className="icon-button" aria-label="Close source" onClick={onClose}>
+        <button type="button" className="icon-button" aria-label={t("chat.closeSource")} onClick={onClose}>
           <X size={18} />
         </button>
       </header>

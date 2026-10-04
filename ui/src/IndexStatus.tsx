@@ -1,5 +1,6 @@
 import { AlertTriangle, Check, Folder } from "lucide-react";
 import { useState } from "react";
+import { useT } from "./i18n";
 import type { Collection, IndexStatus as IndexState, ProblemFile } from "./types";
 
 type Props = {
@@ -10,13 +11,18 @@ type Props = {
   onRebuild: () => void;
 };
 
-const files = (n: number) => (n === 1 ? "1 file" : `${n} files`);
+type Translate = ReturnType<typeof useT>;
 
 /** "Failed: <error>", "Skipped: <error>", or the note of a file indexed with missing parts. */
-function problemText(problem: ProblemFile): string {
-  const prefix = problem.status === "failed" ? "Failed" : problem.status === "skipped" ? "Skipped" : "";
+function problemText(problem: ProblemFile, t: Translate): string {
   const error = problem.error ?? "";
-  return prefix && error ? `${prefix}: ${error}` : prefix || error;
+  if (problem.status === "failed") {
+    return error ? t("index.failed", { error }) : t("index.failedBare");
+  }
+  if (problem.status === "skipped") {
+    return error ? t("index.skipped", { error }) : t("index.skippedBare");
+  }
+  return error;
 }
 
 /** The sidebar card: the chosen folder, indexing progress, and files that need attention. */
@@ -27,6 +33,7 @@ export default function IndexStatus({
   onChangeFolder,
   onRebuild,
 }: Props) {
+  const t = useT();
   const [showProblems, setShowProblems] = useState(false);
   const counts = index?.counts;
   const total = counts ? Object.values(counts).reduce((sum, n) => sum + n, 0) : 0;
@@ -34,7 +41,7 @@ export default function IndexStatus({
   const problems = index?.problems ?? [];
 
   return (
-    <section className="collection-card" aria-label="Documents folder">
+    <section className="collection-card" aria-label={t("index.cardLabel")}>
       <div className="collection-name">
         <Folder size={16} />
         <span>{collection.name}</span>
@@ -44,21 +51,21 @@ export default function IndexStatus({
       </div>
       {index?.stale ? (
         <p className="stale-note">
-          This index was built with a different embedding model. Rebuild it to search again.
+          {t("index.stale")}
           <button type="button" className="link-button" onClick={onRebuild} disabled={disabled}>
-            Rebuild index
+            {t("index.rebuild")}
           </button>
         </p>
       ) : !counts ? (
-        <div className="collection-count done">Checking files…</div>
+        <div className="collection-count done">{t("index.checking")}</div>
       ) : total === 0 ? (
-        <div className="collection-count done">No documents found yet</div>
+        <div className="collection-count done">{t("index.none")}</div>
       ) : waiting > 0 ? (
         <>
           <div
             className="progress"
             role="progressbar"
-            aria-label="Indexing progress"
+            aria-label={t("index.progress")}
             aria-valuemin={0}
             aria-valuemax={total}
             aria-valuenow={counts.indexed}
@@ -69,11 +76,11 @@ export default function IndexStatus({
             />
           </div>
           <div className="collection-count busy">
-            {counts.indexed} of {total} files indexed
+            {t("index.partial", { indexed: counts.indexed, total })}
           </div>
           {index?.current && (
             <div className="collection-current" title={index.current}>
-              Indexing {index.current}
+              {t("index.current", { file: index.current })}
             </div>
           )}
         </>
@@ -81,8 +88,8 @@ export default function IndexStatus({
         <div className="collection-count done">
           <Check size={14} />
           {counts.indexed === total
-            ? `${files(total)} indexed`
-            : `${counts.indexed} of ${total} files indexed`}
+            ? t("index.filesIndexed", { count: total })
+            : t("index.partial", { indexed: counts.indexed, total })}
         </div>
       )}
       {index?.error && <p className="index-error">{index.error}</p>}
@@ -95,17 +102,15 @@ export default function IndexStatus({
             onClick={() => setShowProblems((shown) => !shown)}
           >
             <AlertTriangle size={14} />
-            {problems.length === 1
-              ? "1 file needs attention"
-              : `${problems.length} files need attention`}
+            {t("index.needAttention", { count: problems.length })}
           </button>
           {showProblems && (
             <ul className="problems">
               {problems.map((problem) => (
                 <li key={problem.rel_path}>
                   {problem.rel_path}
-                  <span className="problem-error" title={problemText(problem)}>
-                    {problemText(problem)}
+                  <span className="problem-error" title={problemText(problem, t)}>
+                    {problemText(problem, t)}
                   </span>
                 </li>
               ))}
@@ -114,7 +119,7 @@ export default function IndexStatus({
         </>
       )}
       <button type="button" className="link-button" onClick={onChangeFolder} disabled={disabled}>
-        Change folder
+        {t("index.changeFolder")}
       </button>
     </section>
   );
