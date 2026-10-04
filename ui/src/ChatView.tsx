@@ -330,10 +330,12 @@ function Answer({
               >
                 <span className="source-num">{source.n}</span>
                 <span className="source-meta">
-                  <span className="source-file">{source.file}</span>
-                  {source.label && (
-                    <span className="source-label" title={source.label}>
-                      {source.label}
+                  <span className="source-file" title={source.file}>
+                    {fileName(source.file)}
+                  </span>
+                  {(source.label || folderOf(source.file)) && (
+                    <span className="source-label" title={source.file}>
+                      {[source.label, folderOf(source.file)].filter(Boolean).join(" · ")}
                     </span>
                   )}
                 </span>
@@ -350,14 +352,25 @@ function Answer({
   );
 }
 
+/** The file name of a collection-relative path ("a/b/c.pdf" -> "c.pdf"). */
+export function fileName(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** The folder part of a collection-relative path ("a/b/c.pdf" -> "a/b"; "" at the top). */
+export function folderOf(path: string): string {
+  const cut = path.lastIndexOf("/");
+  return cut < 0 ? "" : path.slice(0, cut);
+}
+
 function SourcePanel({ source, onClose }: { source: Source; onClose: () => void }) {
   return (
     <aside className="source-panel" aria-label="Source">
       <header>
         <FileText size={20} />
         <div className="source-title">
-          <strong title={source.file}>{source.file}</strong>
-          {source.label && <span>{source.label}</span>}
+          <strong title={source.file}>{fileName(source.file)}</strong>
+          <span>{[source.label, folderOf(source.file)].filter(Boolean).join(" · ")}</span>
         </div>
         <button type="button" className="icon-button" aria-label="Close source" onClick={onClose}>
           <X size={18} />

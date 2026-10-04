@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import ChatView from "./ChatView";
+import ChatView, { fileName, folderOf } from "./ChatView";
 import { click, json, type Mounted, mockFetch, mount, settle, sse, typeInto } from "./test-utils";
 
 let view: Mounted | undefined;
@@ -337,5 +337,14 @@ describe("ChatView", () => {
       "The lease term is three years.",
     );
     expect(view.container.querySelector("button.cite")?.classList.contains("active")).toBe(true);
+  });
+});
+
+describe("source names", () => {
+  it("puts the file name first and keeps its folder", () => {
+    expect(fileName("2.1 AVRS/2.1.4-more_detail/user-manual.pdf")).toBe("user-manual.pdf");
+    expect(folderOf("2.1 AVRS/2.1.4-more_detail/user-manual.pdf")).toBe("2.1 AVRS/2.1.4-more_detail");
+    expect(fileName("lease.pdf")).toBe("lease.pdf");
+    expect(folderOf("lease.pdf")).toBe("");
   });
 });
