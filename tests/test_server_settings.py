@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import time
+from pathlib import Path
 
 import httpx
 import keyring
@@ -17,7 +18,7 @@ from tamra.core import Core
 from tamra.llm.base import Chunk, ProviderError
 from tamra.models.catalog import Catalog, ModelEntry, ModelFile
 from tamra.models.hardware import Gpu, Hardware
-from tamra.models.manager import ModelManager
+from tamra.models.manager import ImportResult, ModelManager
 from tamra.server import create_app
 
 TOKEN = "secret"
@@ -404,6 +405,31 @@ def test_a_provider_error_is_reported_with_its_reason(env):
     assert client.api.built[0][2].generators_closed == 1
 
 
+def test_a_failing_close_cannot_turn_the_connection_test_into_a_500(env, caplog):
+    client, core, _ = env
+    caplog.set_level(logging.DEBUG)
+    client.put("/api/settings/api-key", headers=AUTH, json={"provider": "anthropic", "key": KEY})
+
+    class BadClose:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return Chunk("text", "pong")
+
+        def close(self):
+            raise RuntimeError(f"close failed with {KEY}")
+
+    provider = FakeApi("p")
+    provider.generate = lambda messages, max_tokens=1024, think=False: BadClose()
+    core._api_factory = lambda settings, key: provider
+    response = client.post("/api/settings/test-connection", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert "RuntimeError" in caplog.text
+    assert KEY not in caplog.text
+
+
 def test_an_unexpected_failure_is_never_a_500_and_never_leaks_its_text(env, caplog):
     client, _, _ = env
     caplog.set_level(logging.DEBUG)
@@ -435,7 +461,7 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
     assert body == {
         "hardware": {"ram_gb": 15.9, "gpus": [{"name": "NVIDIA RTX 4070", "vram_mb": 12282}]},
         "recommended_tier": "medium",
-        "active": {"mode": "local", "label": "fake-model"},
+        "active": {"mode": "local", "label": "Small-Q4", "id": "small"},
         "gpu_offload": None,
         "local": [
             {
@@ -478,7 +504,7 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
     }
     core.apply_settings({"mode": "api", "api_model": "claude-x"})
     active = client.get("/api/models", headers=AUTH).json()["active"]
-    assert active == {"mode": "api", "label": "claude-x"}
+    assert active == {"mode": "api", "label": "claude-x", "id": "small"}  # local mode's model
 
 
 def test_get_models_probes_the_hardware_once_and_reports_gpu_offload(env):
@@ -502,17 +528,41 @@ def test_get_models_never_hashes_a_file(env, monkeypatch):
     assert client.get("/api/models", headers=AUTH).json()["local"][0]["installed"] is True
 
 
-def test_active_label_is_null_when_no_local_model_is_installed(env, monkeypatch):
+def active_of(client):
+    return client.get("/api/models", headers=AUTH).json()["active"]
+
+
+def test_active_model_is_the_selected_one_when_it_is_installed(env):
+    client, _, _ = env
+    (client.models_dir / "Small-Q4.gguf").write_bytes(SMALL)
+    (client.models_dir / "Medium-Q4.gguf").write_bytes(MEDIUM)
+    (client.models_dir / "Mine.gguf").write_bytes(b"GGUF1234")
+    assert active_of(client)["id"] == "small"  # nothing selected: the first installed
+    client.put("/api/settings", headers=AUTH, json={"local_model_id": "medium"})
+    assert active_of(client) == {"mode": "local", "label": "Medium-Q4", "id": "medium"}
+    client.put("/api/settings", headers=AUTH, json={"local_model_id": "import:mine.GGUF"})
+    assert active_of(client) == {"mode": "local", "label": "Mine", "id": "import:Mine.gguf"}
+    client.put("/api/settings", headers=AUTH, json={"local_model_id": "import:gone.gguf"})
+    assert active_of(client)["id"] == "small"  # the selection is not installed: the fallback
+
+
+def test_active_model_with_one_catalog_model_installed_and_none_selected(env):
+    client, _, _ = env
+    (client.models_dir / "Medium-Q4.gguf").write_bytes(MEDIUM)
+    assert active_of(client) == {"mode": "local", "label": "Medium-Q4", "id": "medium"}
+
+
+def test_active_model_is_the_import_id_when_only_an_uncatalogued_file_is_installed(env):
+    client, _, _ = env
+    (client.models_dir / "Mine.gguf").write_bytes(b"GGUF1234")
+    assert active_of(client) == {"mode": "local", "label": "Mine", "id": "import:Mine.gguf"}
+
+
+def test_active_model_is_null_when_no_local_model_is_installed(env):
     client, core, _ = env
-
-    def missing():
-        raise ProviderError("No local model is installed.", "model_missing")
-
-    monkeypatch.setattr(FakeLocalLLM, "label", property(lambda self: missing()))
-    assert client.get("/api/models", headers=AUTH).json()["active"] == {
-        "mode": "local",
-        "label": None,
-    }
+    assert active_of(client) == {"mode": "local", "label": None, "id": None}
+    core.apply_settings({"mode": "api", "api_model": "claude-x"})
+    assert active_of(client) == {"mode": "api", "label": "claude-x", "id": None}
 
 
 def test_a_model_downloads_reports_progress_and_can_be_cancelled(env):
@@ -560,6 +610,17 @@ def test_a_finished_download_shows_as_installed(env):
             break
         time.sleep(0.01)
     assert (entry["installed"], entry["state"]) == (True, "idle")
+
+
+def test_an_installed_model_is_not_downloaded_again(env):
+    client, core, _ = env
+    (client.models_dir / "Small-Q4.gguf").write_bytes(SMALL)
+    started = []
+    core.models.start_download = started.append
+    response = client.post("/api/models/small/download", headers=AUTH)
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Already installed."}
+    assert started == []
 
 
 def test_unknown_models_are_404_for_download_and_cancel(env):
@@ -612,6 +673,62 @@ def test_import_validates_the_path_and_reports_refusals(env):
         assert response.json()["detail"]
     assert client.post("/api/models/import", headers=AUTH, json={"path": ""}).status_code == 422
     assert list(client.models_dir.iterdir()) == []
+
+
+def test_import_echoes_the_trimmed_path_in_its_400s(env):
+    client, _, tmp_path = env
+    missing = str(tmp_path / "missing.gguf")
+    response = client.post("/api/models/import", headers=AUTH, json={"path": f"  {missing}  "})
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"File not found: {missing}"
+    relative = client.post("/api/models/import", headers=AUTH, json={"path": " m.gguf "})
+    assert relative.status_code == 400
+
+
+@pytest.mark.parametrize("prefix", ["\\\\?\\", "\\\\.\\"])
+def test_import_refuses_device_and_extended_length_paths(env, prefix):
+    client, _, tmp_path = env
+    source = tmp_path / "m.gguf"
+    source.write_bytes(b"GGUF-custom")
+    path = prefix + str(source)
+    response = client.post("/api/models/import", headers=AUTH, json={"path": path})
+    assert response.status_code == 400
+    assert path in response.json()["detail"]
+    assert list(client.models_dir.iterdir()) == []
+
+
+def test_import_accepts_a_unc_path_shape(env, monkeypatch):
+    client, core, _ = env
+    seen = []
+    monkeypatch.setattr(Path, "is_file", lambda self: True)
+    monkeypatch.setattr(core.models, "import_file", lambda path: seen.append(path) or _imported())
+    response = client.post("/api/models/import", headers=AUTH, json={"path": UNC})
+    assert response.status_code == 200
+    assert str(seen[0]) == UNC
+
+
+UNC = r"\\host\share\m.gguf"
+
+
+def _imported():
+    return ImportResult(id="import:m.gguf", path=Path("m.gguf"), catalogued=False)
+
+
+def test_a_destination_error_is_a_json_500_with_a_fixed_message(env, monkeypatch, caplog):
+    client, core, tmp_path = env
+    source = tmp_path / "m.gguf"
+    source.write_bytes(b"GGUF-custom")
+
+    def full_disk(path):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(core.models, "import_file", full_disk)
+    response = client.post("/api/models/import", headers=AUTH, json={"path": str(source)})
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "The model file could not be copied. "
+        "Check free disk space and that the model is not in use."
+    }
 
 
 # --- pickers and the data folder ---------------------------------------------------------

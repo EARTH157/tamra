@@ -379,7 +379,10 @@ def _add_settings_routes(app: FastAPI, core: Core) -> None:
             return {"ok": False, "reason": "other", "message": "The connection test failed."}
         finally:
             if generator is not None:
-                generator.close()
+                try:
+                    generator.close()
+                except Exception as e:  # the route must never answer 500
+                    log.warning("closing the connection test failed: %s", type(e).__name__)
         return {"ok": True, "reason": None, "message": "Connected."}
 
 
@@ -428,20 +431,21 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
             )
         embedding = catalog.embedding()
         settings = core.settings
-        if settings.mode == "api":
-            label: str | None = settings.api_model
-        else:
-            try:
-                label = core.local.label
-            except ProviderError:  # no local model is installed
-                label = None
+        # The local model that local mode would serve now; the same resolution LocalLLM uses.
+        try:
+            local_id: str | None
+            local_id, local_path = core.resolve_local_model()
+            local_label: str | None = local_path.stem
+        except ProviderError:  # no local model is installed
+            local_id = local_label = None
+        label = settings.api_model if settings.mode == "api" else local_label
         return {
             "hardware": {
                 "ram_gb": round(hardware.ram_gb, 1),
                 "gpus": [{"name": g.name, "vram_mb": g.vram_mb} for g in hardware.gpus],
             },
             "recommended_tier": tier,
-            "active": {"mode": settings.mode, "label": label},
+            "active": {"mode": settings.mode, "label": label, "id": local_id},
             "gpu_offload": core.local.gpu_offload,
             "local": local,
             "uncatalogued": uncatalogued,
@@ -450,17 +454,27 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
 
     @app.post("/api/models/import")
     def import_model(body: ImportBody) -> dict:
-        path = Path(body.path.strip())
+        raw = body.path.strip()
+        if raw.startswith(("\\\\?\\", "\\\\.\\")):  # device and extended-length paths
+            raise HTTPException(status_code=400, detail=f"Choose an ordinary file path: {raw}")
+        path = Path(raw)
         if not path.is_absolute():
             raise HTTPException(
                 status_code=400, detail="Choose a full file path, for example C:\\Models\\m.gguf."
             )
         if not path.is_file():
-            raise HTTPException(status_code=400, detail=f"File not found: {body.path}")
+            raise HTTPException(status_code=400, detail=f"File not found: {raw}")
         try:
             result = core.models.import_file(path)
         except ImportRefused as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except OSError as e:  # the destination: a full disk, or the model file is in use
+            log.warning("model import failed: %s", e)
+            raise HTTPException(
+                status_code=500,
+                detail="The model file could not be copied. "
+                "Check free disk space and that the model is not in use.",
+            ) from e
         return {
             "id": result.id,
             "path": str(result.path),
@@ -470,6 +484,12 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
 
     @app.post("/api/models/{model_id}/download", status_code=202)
     def download_model(model_id: str) -> dict:
+        try:
+            entry = core.models.catalog.get(model_id)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="Model not found.") from e
+        if entry.id in core.models.catalog.installed(core.models.models_dir):
+            raise HTTPException(status_code=409, detail="Already installed.")
         try:
             core.models.start_download(model_id)
         except KeyError as e:

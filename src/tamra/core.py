@@ -170,25 +170,32 @@ class Core:
             self.answers.when_idle(replaced.close)
         return provider
 
-    def _local_model_path(self) -> Path:
-        """The model file to serve: the selected one if installed, else the first installed
-        catalog model, else the first GGUF that is not in the catalog."""
+    def resolve_local_model(self) -> tuple[str, Path]:
+        """The local model to serve, as (id, file): the selected one if installed, else the first
+        installed catalog model, else the first GGUF that is not in the catalog. The id is a
+        catalog id or "import:<file name>", so it is a valid `local_model_id`.
+
+        Raises ProviderError (model_missing) when no model is installed.
+        """
         installed = self._catalog.installed(self._models_dir)
         llm_ids = [m.id for m in self._catalog.llms() if m.id in installed]
         uncatalogued = self._catalog.uncatalogued(self._models_dir)
         wanted = self._settings.local_model_id
         if wanted in llm_ids:
-            return installed[wanted]
+            return wanted, installed[wanted]
         if wanted and wanted.startswith("import:"):
             name = wanted.removeprefix("import:").lower()
             for path in uncatalogued:
                 if path.name.lower() == name:
-                    return path
+                    return f"import:{path.name}", path
         if llm_ids:
-            return installed[llm_ids[0]]
+            return llm_ids[0], installed[llm_ids[0]]
         if uncatalogued:
-            return uncatalogued[0]
+            return f"import:{uncatalogued[0].name}", uncatalogued[0]
         raise ProviderError("No local model is installed.", "model_missing")
+
+    def _local_model_path(self) -> Path:
+        return self.resolve_local_model()[1]
 
     # --- documents ---
 
