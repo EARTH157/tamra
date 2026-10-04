@@ -54,4 +54,16 @@ describe("Setup", () => {
     await press(view.container.querySelector("input"), "Escape");
     expect(onCancel).toHaveBeenCalledTimes(2);
   });
+
+  it("closes with Esc even when focus has left the dialog", async () => {
+    mockFetch({});
+    const onCancel = vi.fn();
+    view = await mount(<Setup onDone={vi.fn()} onCancel={onCancel} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(view.container.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(
+      false,
+    );
+    await press(document.body, "Escape");
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });

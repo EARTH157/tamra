@@ -35,6 +35,18 @@ function sourceOf(sources: Source[], n: number): Source | null {
   return sources.find((source) => source.n === n) ?? null;
 }
 
+/**
+ * A source opened while its answer was streaming stays open once the answer is saved, when the
+ * saved answer still has that source; it then belongs to the saved message.
+ */
+function reopen(source: Source, saved: ChatDetail | null): Opened | null {
+  const answer = [...(saved?.messages ?? [])].reverse().find((m) => m.role === "assistant");
+  const same = answer?.sources.find(
+    (s) => s.n === source.n && s.file === source.file && s.text === source.text,
+  );
+  return answer && same ? { owner: answer.id, source: same } : null;
+}
+
 /** One chat: its messages, the answer being streamed, the question box, and a source panel. */
 export default function ChatView({
   chatId,
@@ -109,25 +121,28 @@ export default function ChatView({
     } catch (e) {
       state = { ...state, error: (e as Error).message };
     } finally {
-      if (usedId !== null) await reload(usedId);
+      const saved = usedId !== null ? await reload(usedId) : null;
       asking.current = false;
       setNotice(state.error);
       setPending(null);
-      setOpened((open) => (open?.owner === "pending" ? null : open));
+      setOpened((open) => (open?.owner === "pending" ? reopen(open.source, saved) : open));
       onBusyChange(false);
       onAnswered();
     }
   }
 
   /** Show what the core saved for this chat. A chat with nothing loaded stays usable, but empty. */
-  async function reload(id: number) {
+  async function reload(id: number): Promise<ChatDetail | null> {
     try {
-      setDetail(await api<ChatDetail>("GET", `/api/chats/${id}`));
+      const loaded = await api<ChatDetail>("GET", `/api/chats/${id}`);
+      setDetail(loaded);
+      return loaded;
     } catch {
       setDetail(
         (current) =>
           current ?? { id, title: "", created_at: "", updated_at: "", messages: [] },
       );
+      return null;
     }
   }
 

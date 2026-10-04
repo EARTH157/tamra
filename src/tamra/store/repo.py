@@ -290,7 +290,7 @@ class Store:
 
     def rename_chat(self, chat_id: int, title: str) -> bool:
         """Set a chat's title (whitespace collapsed, at most 60 characters); False if unknown."""
-        cleaned = " ".join(title.split())[:60]
+        cleaned = " ".join(title.split())[:60].rstrip()  # the cut may land on a space
         if not cleaned:
             raise ValueError("The chat title must not be empty.")
         with self._lock, self._conn:

@@ -11,7 +11,11 @@ type Props = {
   onDelete: (chat: Chat) => void;
 };
 
-type MenuState = { id: number; top: number; left: number };
+/** The open menu: its chat and the ⋯ button's edges (viewport pixels). */
+type MenuState = { id: number; above: number; below: number; left: number };
+
+const GAP = 3; // between the ⋯ button and the menu
+const MARGIN = 8; // the menu keeps this far from the window edges
 
 const untitled = (chat: Chat) => chat.title || "New chat";
 
@@ -35,8 +39,7 @@ export default function ChatList({
     }
     trigger.current = button;
     const rect = button.getBoundingClientRect();
-    const left = Math.min(rect.left + 3, window.innerWidth - 226);
-    setMenu({ id: chat.id, top: rect.bottom + 3, left: Math.max(8, left) });
+    setMenu({ id: chat.id, above: rect.top, below: rect.bottom, left: rect.left + GAP });
   }
 
   const menuChat = menu ? chats.find((chat) => chat.id === menu.id) : undefined;
@@ -79,7 +82,8 @@ export default function ChatList({
       </ul>
       {menu && menuChat && (
         <ChatMenu
-          top={menu.top}
+          above={menu.above}
+          below={menu.below}
           left={menu.left}
           onClose={(refocus) => {
             setMenu(null);
@@ -100,15 +104,32 @@ export default function ChatList({
 }
 
 type MenuProps = {
-  top: number;
+  above: number;
+  below: number;
   left: number;
   onClose: (refocus: boolean) => void;
   onRename: () => void;
   onDelete: () => void;
 };
 
-function ChatMenu({ top, left, onClose, onRename, onDelete }: MenuProps) {
+function ChatMenu({ above, below, left, onClose, onRename, onDelete }: MenuProps) {
   const box = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState({ top: below + GAP, left });
+
+  // Keep the whole menu on screen: open below the ⋯ button, or above it when there is no
+  // room, and clamp to the window in both directions.
+  useLayoutEffect(() => {
+    const rect = box.current?.getBoundingClientRect();
+    if (!rect) return;
+    const maxTop = window.innerHeight - rect.height - MARGIN;
+    const maxLeft = window.innerWidth - rect.width - MARGIN;
+    let top = below + GAP;
+    if (top > maxTop) top = above - GAP - rect.height;
+    setPlace({
+      top: Math.max(MARGIN, Math.min(top, maxTop)),
+      left: Math.max(MARGIN, Math.min(left, maxLeft)),
+    });
+  }, [above, below, left]);
   const close = useRef(onClose);
   useEffect(() => {
     close.current = onClose;
@@ -145,7 +166,7 @@ function ChatMenu({ top, left, onClose, onRename, onDelete }: MenuProps) {
       className="menu"
       role="menu"
       aria-label="Chat options"
-      style={{ top, left }}
+      style={place}
       onKeyDown={onKeyDown}
     >
       <button type="button" role="menuitem" className="menu-item" onClick={onRename}>

@@ -1062,6 +1062,10 @@ svg.lucide {
   box-shadow: var(--shadow-dialog);
 }
 
+.dialog:focus {
+  outline: none; /* focused only as a fallback target; Esc works from anywhere */
+}
+
 .dialog.small {
   width: 420px;
 }

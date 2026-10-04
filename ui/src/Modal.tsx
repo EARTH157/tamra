@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 type Props = {
   labelledBy: string;
@@ -7,34 +7,39 @@ type Props = {
   children: ReactNode;
 };
 
-/** A centered dialog over a dimmed backdrop. Esc or a click on the backdrop closes it. */
+/** A centered dialog over a dimmed backdrop. Esc (wherever focus is) or a backdrop click closes it. */
 export default function Modal({ labelledBy, onClose, small, children }: Props) {
   const box = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
 
   useEffect(() => {
     const previous = document.activeElement;
     const first =
       box.current?.querySelector<HTMLElement>("[data-autofocus]") ??
-      box.current?.querySelector<HTMLElement>("input, button");
+      box.current?.querySelector<HTMLElement>("input, button") ??
+      box.current;
     first?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close.current();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
     return () => {
+      document.removeEventListener("keydown", onKeyDown);
       if (previous instanceof HTMLElement) previous.focus();
     };
   }, []);
 
-  function onKeyDown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.stopPropagation();
-      onClose();
-    }
-  }
-
   return (
     <div
       className="overlay"
-      onKeyDown={onKeyDown}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) close.current();
       }}
     >
       <div
@@ -43,6 +48,7 @@ export default function Modal({ labelledBy, onClose, small, children }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}
+        tabIndex={-1}
       >
         {children}
       </div>

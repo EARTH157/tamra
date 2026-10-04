@@ -189,4 +189,41 @@ describe("App", () => {
     expect(view.container.textContent).not.toContain("Tamra core is unreachable");
     expect(view.container.textContent).toContain("2 files indexed");
   });
+
+  it("closes the delete dialog with Esc wherever focus is", async () => {
+    const calls = withChats();
+    view = await mount(<App />);
+    const menu = await openMenu(view.container);
+    await click(buttonByText(menu!, "Delete chat"));
+    expect(dialog()).not.toBeNull();
+    (document.activeElement as HTMLElement | null)?.blur();
+    await press(document.body, "Escape");
+    expect(dialog()).toBeNull();
+    expect(calls.some((c) => c.key.startsWith("DELETE"))).toBe(false);
+  });
+
+  it("keeps the chat menu on screen near the bottom of the window", async () => {
+    withChats();
+    vi.stubGlobal("innerHeight", 300);
+    vi.stubGlobal("innerWidth", 400);
+    const rect = (top: number, left: number, width: number, height: number) =>
+      ({ top, left, width, height, bottom: top + height, right: left + width, x: left, y: top }) as DOMRect;
+    const spy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        if (this.getAttribute("role") === "menu") return rect(0, 0, 218, 90);
+        return rect(266, 211, 28, 28); // the ⋯ button, 6 px above the window's bottom
+      });
+    try {
+      view = await mount(<App />);
+      const menu = (await openMenu(view.container)) as HTMLElement | null;
+      const top = parseFloat(menu?.style.top ?? "NaN");
+      const left = parseFloat(menu?.style.left ?? "NaN");
+      expect(top + 90).toBeLessThanOrEqual(300 - 8); // fits above the bottom edge
+      expect(top).toBe(266 - 3 - 90); // flipped above the ⋯ button
+      expect(left + 218).toBeLessThanOrEqual(400 - 8);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

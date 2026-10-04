@@ -273,4 +273,69 @@ describe("ChatView", () => {
     finish();
     await settle();
   });
+
+  it("keeps a source opened while streaming open once the answer is saved", async () => {
+    const encoder = new TextEncoder();
+    let push: (event: unknown) => void = () => {};
+    let finish: () => void = () => {};
+    let saved = false;
+    const open = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (event) =>
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        finish = () => controller.close();
+      },
+    });
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: saved
+            ? [
+                {
+                  id: 1,
+                  role: "user",
+                  content: "How long?",
+                  provider: null,
+                  model: null,
+                  created_at: "t",
+                  sources: [],
+                },
+                {
+                  id: 2,
+                  role: "assistant",
+                  content: "Three years [1].",
+                  provider: "local",
+                  model: "qwen",
+                  created_at: "t",
+                  sources: [source],
+                },
+              ]
+            : [],
+        }),
+      "POST /api/chats/5/messages": () =>
+        new Response(open, { headers: { "Content-Type": "text/event-stream" } }),
+    });
+    view = await mount(
+      <ChatView chatId={5} createChat={vi.fn()} onBusyChange={vi.fn()} onAnswered={vi.fn()} />,
+    );
+    await typeInto(view.container.querySelector("textarea"), "How long?");
+    await click(view.container.querySelector('button[type="submit"]'));
+    push({ type: "sources", sources: [source] });
+    push({ type: "token", text: "Three years [1]." });
+    await settle();
+    await click(view.container.querySelector("button.cite"));
+    expect(view.container.querySelector(".source-panel")?.textContent).toContain(
+      "The lease term is three years.",
+    );
+    saved = true;
+    push({ type: "done", message_id: 2 });
+    finish();
+    await settle();
+    expect(view.container.querySelector('button[aria-label="Send"]')).not.toBeNull(); // done
+    expect(view.container.querySelector(".source-panel")?.textContent).toContain(
+      "The lease term is three years.",
+    );
+    expect(view.container.querySelector("button.cite")?.classList.contains("active")).toBe(true);
+  });
 });
