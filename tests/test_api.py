@@ -120,3 +120,27 @@ def test_data_routes_need_the_token(api):
     client, _ = api
     assert client.get("/api/chats").status_code == 401
     assert client.post("/api/chats/1/messages", json={"content": "q"}).status_code == 401
+
+
+def test_rename_a_chat(api):
+    client, _ = api
+    chat_id = client.post("/api/chats", headers=AUTH).json()["id"]
+    renamed = client.patch(f"/api/chats/{chat_id}", headers=AUTH, json={"title": "  Lease  terms "})
+    assert renamed.status_code == 200
+    assert renamed.json()["id"] == chat_id
+    assert renamed.json()["title"] == "Lease terms"
+    assert client.get(f"/api/chats/{chat_id}", headers=AUTH).json()["title"] == "Lease terms"
+
+
+def test_rename_rejects_bad_titles_and_unknown_chats(api):
+    client, _ = api
+    chat_id = client.post("/api/chats", headers=AUTH).json()["id"]
+    blank = client.patch(f"/api/chats/{chat_id}", headers=AUTH, json={"title": "   "})
+    assert blank.status_code == 400
+    assert (
+        client.patch(f"/api/chats/{chat_id}", headers=AUTH, json={"title": ""}).status_code == 422
+    )
+    too_long = client.patch(f"/api/chats/{chat_id}", headers=AUTH, json={"title": "x" * 201})
+    assert too_long.status_code == 422
+    assert client.patch("/api/chats/999", headers=AUTH, json={"title": "x"}).status_code == 404
+    assert client.patch(f"/api/chats/{chat_id}", json={"title": "x"}).status_code == 401

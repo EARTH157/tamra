@@ -288,6 +288,17 @@ class Store:
             ).fetchall()
         return [Chat(*row) for row in rows]
 
+    def rename_chat(self, chat_id: int, title: str) -> bool:
+        """Set a chat's title (whitespace collapsed, at most 60 characters); False if unknown."""
+        cleaned = " ".join(title.split())[:60].rstrip()  # the cut may land on a space
+        if not cleaned:
+            raise ValueError("The chat title must not be empty.")
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE chats SET title = ? WHERE id = ?", (cleaned, chat_id)
+            )
+        return cursor.rowcount > 0
+
     def delete_chat(self, chat_id: int) -> bool:
         with self._lock, self._conn:
             cursor = self._conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))

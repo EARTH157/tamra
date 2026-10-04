@@ -107,3 +107,28 @@ def test_message_sources_outlive_the_indexed_file(store):
     store.delete_file(file_id)
     kept = store.list_messages(chat.id)[1].sources[0]
     assert (kept.rel_path, kept.text, kept.chunk_id) == ("a.md", "lease text", chunk.id)
+
+
+def test_renaming_a_chat_normalizes_the_title(store):
+    first = store.create_chat("First")
+    second = store.create_chat("Second")
+    assert store.rename_chat(first.id, "  Lease \n  terms\tsummary  ") is True
+    assert store.get_chat(first.id).title == "Lease terms summary"
+    assert store.rename_chat(first.id, "y" * 80) is True
+    assert store.get_chat(first.id).title == "y" * 60
+    assert [c.id for c in store.list_chats()] == [second.id, first.id]  # order is kept
+
+
+def test_a_renamed_title_cut_on_a_space_has_no_trailing_space(store):
+    chat = store.create_chat()
+    title = "a" * 59 + " tail"  # character 60 is the space
+    assert store.rename_chat(chat.id, title) is True
+    assert store.get_chat(chat.id).title == "a" * 59
+
+
+def test_renaming_rejects_an_empty_title_and_unknown_chats(store):
+    chat = store.create_chat("Kept")
+    with pytest.raises(ValueError):
+        store.rename_chat(chat.id, " \n\t ")
+    assert store.get_chat(chat.id).title == "Kept"
+    assert store.rename_chat(999, "Anything") is False

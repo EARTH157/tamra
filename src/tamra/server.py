@@ -82,6 +82,10 @@ class CollectionBody(BaseModel):
     folder_path: str = Field(min_length=1, max_length=1000)
 
 
+class RenameBody(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
 class QuestionBody(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
 
@@ -207,6 +211,17 @@ def _add_routes(app: FastAPI, core: Core) -> None:
             for m in core.store.list_messages(chat_id)
         ]
         return {**_chat_payload(chat), "messages": messages}
+
+    @app.patch("/api/chats/{chat_id}")
+    def rename_chat(chat_id: int, body: RenameBody) -> dict:
+        try:
+            renamed = core.store.rename_chat(chat_id, body.title)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        chat = core.store.get_chat(chat_id) if renamed else None
+        if chat is None:
+            raise HTTPException(status_code=404, detail="Chat not found.")
+        return _chat_payload(chat)
 
     @app.delete("/api/chats/{chat_id}", status_code=204)
     def delete_chat(chat_id: int) -> Response:

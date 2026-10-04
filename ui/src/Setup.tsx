@@ -1,12 +1,26 @@
+import { Folder, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { api } from "./api";
+import Modal from "./Modal";
 import type { CollectionState } from "./types";
 
-type Props = { onDone: (state: CollectionState) => void; onCancel?: () => void };
+type Props = {
+  onDone: (state: CollectionState) => void;
+  onCancel: () => void;
+  title?: string;
+  description?: string;
+  initialFolder?: string;
+};
 
-/** Choose the folder of documents to index. */
-export default function Setup({ onDone, onCancel }: Props) {
-  const [folder, setFolder] = useState("");
+/** The folder dialog: choose the folder of documents to index. */
+export default function Setup({
+  onDone,
+  onCancel,
+  title = "Change documents folder",
+  description = "Tamra will index the new folder and answer from it. Your files are never changed.",
+  initialFolder = "",
+}: Props) {
+  const [folder, setFolder] = useState(initialFolder);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
 
@@ -38,38 +52,44 @@ export default function Setup({ onDone, onCancel }: Props) {
   }
 
   return (
-    <form className="setup" onSubmit={submit}>
-      <h2>Choose a folder of documents</h2>
-      <p className="muted">
-        Tamra indexes the PDF, Word, text, and Markdown files in this folder and its subfolders.
-        It never changes them.
-      </p>
-      <div className="setup-row">
-        <input
-          aria-label="Folder path"
-          placeholder="Full folder path"
-          value={folder}
-          onChange={(e) => setFolder(e.target.value)}
-        />
-        <button type="button" onClick={browse}>
-          Browse…
-        </button>
-      </div>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="setup-row">
-        <button type="submit" disabled={working || !folder.trim()}>
-          Use this folder
-        </button>
-        {onCancel && (
-          <button type="button" onClick={onCancel}>
+    <Modal labelledBy="folder-dialog-title" onClose={onCancel}>
+      <form onSubmit={submit}>
+        <div className="dialog-header">
+          <h2 id="folder-dialog-title">{title}</h2>
+          <button type="button" className="icon-button" aria-label="Close" onClick={onCancel}>
+            <X size={16} />
+          </button>
+        </div>
+        <p className="dialog-text">{description}</p>
+        <div className="path-row">
+          <label className="path-field">
+            <Folder size={16} />
+            <input
+              aria-label="Folder path"
+              placeholder="Full folder path, like D:\Work\Documents"
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              data-autofocus
+            />
+          </label>
+          <button type="button" className="btn" onClick={browse}>
+            Browse…
+          </button>
+        </div>
+        {error && (
+          <p className="field-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button type="button" className="btn" onClick={onCancel}>
             Cancel
           </button>
-        )}
-      </div>
-    </form>
+          <button type="submit" className="btn primary" disabled={working || !folder.trim()}>
+            Use this folder
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
