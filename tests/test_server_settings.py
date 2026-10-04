@@ -476,6 +476,7 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
                 "languages": ["th", "en"],
                 "context_length": 4096,
                 "thinking": True,
+                "min_vram_gb": 0,
             },
             {
                 "id": "medium",
@@ -489,6 +490,7 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
                 "languages": [],
                 "context_length": 0,
                 "thinking": False,
+                "min_vram_gb": 6,
             },
         ],
         "uncatalogued": [

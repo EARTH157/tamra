@@ -207,9 +207,7 @@ export default function ChatView({
 
   /** Save the model choice. The menu follows the settings; a refusal is shown as a notice. */
   function chooseModel(changes: SettingsChanges) {
-    update(changes)
-      .then(refreshModels)
-      .catch((e: Error) => setNotice({ message: e.message }));
+    update(changes).catch((e: Error) => setNotice({ message: e.message }));
   }
 
   const messages: Message[] = detail?.messages ?? [];

@@ -57,7 +57,7 @@ export type AnswerEvent =
   | { type: "error"; message: string; reason?: ErrorReason }
   | { type: "done"; message_id: number };
 
-// GET /api/models (the parts the chat uses; Settings reads the rest).
+// GET /api/models.
 export type ModelState = "idle" | "downloading" | "verifying" | "error";
 
 export type LocalModel = {
@@ -75,11 +75,16 @@ export type LocalModel = {
   languages: string[];
   context_length: number;
   thinking: boolean;
+  /** The video memory the model needs to run well; 0 for a model that runs on the CPU. */
+  min_vram_gb: number;
 };
 
 export type UncataloguedModel = { id: string; name: string; file: string; size: number };
 
+export type Gpu = { name: string; vram_mb: number };
+
 export type ModelsInfo = {
+  hardware: { ram_gb: number; gpus: Gpu[] };
   recommended_tier: "small" | "medium" | "large";
   /** `id` is the local model that local mode would use, in either mode. */
   active: { mode: Mode; label: string | null; id: string | null };
@@ -113,6 +118,12 @@ export type Settings = {
   api_key_set: boolean;
   api_key_hint: string | null;
 };
+
+/** The answer of POST /api/settings/test-connection (always 200). */
+export type ConnectionTest = { ok: boolean; reason: ErrorReason | null; message: string };
+
+/** The answer of POST /api/models/import. */
+export type ImportResult = { id: string; path: string; catalogued: boolean; warning: string | null };
 
 /** What PUT /api/settings accepts: any of the saved settings (never the key state). */
 export type SettingsChanges = Partial<Omit<Settings, "api_key_set" | "api_key_hint">>;

@@ -1,4 +1,4 @@
-import { AlertTriangle, BookOpen, Plus, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import ChatList from "./ChatList";
@@ -6,6 +6,8 @@ import ChatView from "./ChatView";
 import DeleteChatDialog from "./DeleteChatDialog";
 import { useT } from "./i18n";
 import IndexStatus from "./IndexStatus";
+import SettingsPage from "./SettingsPage";
+import { useSettings } from "./settings";
 import Setup from "./Setup";
 import type { Chat, CollectionState, SettingsTab } from "./types";
 import Welcome from "./Welcome";
@@ -14,6 +16,7 @@ const POLL_MS = 2000;
 
 export default function App() {
   const t = useT();
+  const { settings } = useSettings();
   const [state, setState] = useState<CollectionState | null>(null);
   const [offline, setOffline] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -22,6 +25,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [deleting, setDeleting] = useState<Chat | null>(null);
+  // The chat stays mounted (but hidden) while Settings is open, so a streaming answer carries on.
+  const [view, setView] = useState<"chat" | "settings">("chat");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
 
   const wasOffline = useRef(false);
 
@@ -95,9 +101,21 @@ export default function App() {
     }
   }
 
-  /** Placeholder: the Settings page (Task 9) replaces this with a switch to that page and tab. */
   function openSettings(tab: SettingsTab) {
-    void tab;
+    setSettingsTab(tab);
+    setView("settings");
+  }
+
+  /** Every chat was deleted from Settings: reload the list and leave the open chat. */
+  async function chatsDeleted() {
+    setActiveId(null);
+    await refreshChats();
+  }
+
+  /** Delete a chat: after the dialog, or at once when the setting says not to ask. */
+  function requestDelete(chat: Chat) {
+    if (settings.ask_before_delete) setDeleting(chat);
+    else void deleteChat(chat.id);
   }
 
   const collection = state?.collection ?? null;
@@ -119,6 +137,7 @@ export default function App() {
           onClick={() => {
             setProblem(null);
             setActiveId(null);
+            setView("chat");
           }}
           disabled={busy || collection === null}
         >
@@ -138,9 +157,10 @@ export default function App() {
             onSelect={(id) => {
               setProblem(null);
               setActiveId(id);
+              setView("chat");
             }}
             onRename={renameChat}
-            onDelete={setDeleting}
+            onDelete={requestDelete}
           />
         )}
         <div className="sidebar-fill" />
@@ -153,6 +173,15 @@ export default function App() {
             onRebuild={() => void rebuild()}
           />
         )}
+        <button
+          type="button"
+          className="sidebar-settings"
+          aria-current={view === "settings" ? "page" : undefined}
+          onClick={() => openSettings("general")}
+        >
+          <SlidersHorizontal size={16} />
+          {t("settings.open")}
+        </button>
       </aside>
       <main className="main">
         {offline ? (
@@ -182,18 +211,33 @@ export default function App() {
             </div>
           )
         )}
-        {state === null ? (
-          <div className="connecting">{offline ? null : t("app.connecting")}</div>
-        ) : collection === null ? (
-          <Welcome onChoose={() => setChoosingFolder(true)} />
-        ) : (
-          <ChatView
-            chatId={activeId}
-            collectionName={collection.name}
-            createChat={createChat}
-            onBusyChange={setBusy}
-            onAnswered={() => void refreshChats()}
-            onOpenSettings={openSettings}
+        <div className="view-slot" hidden={view === "settings"}>
+          {state === null ? (
+            <div className="connecting">{offline ? null : t("app.connecting")}</div>
+          ) : collection === null ? (
+            <Welcome onChoose={() => setChoosingFolder(true)} />
+          ) : (
+            <ChatView
+              chatId={activeId}
+              collectionName={collection.name}
+              createChat={createChat}
+              onBusyChange={setBusy}
+              onAnswered={() => void refreshChats()}
+              onOpenSettings={openSettings}
+            />
+          )}
+        </div>
+        {view === "settings" && (
+          <SettingsPage
+            tab={settingsTab}
+            onTabChange={setSettingsTab}
+            collection={collection}
+            index={state?.index ?? null}
+            chatCount={chats.length}
+            busy={busy}
+            onChangeFolder={() => setChoosingFolder(true)}
+            onRebuild={() => void rebuild()}
+            onChatsDeleted={chatsDeleted}
           />
         )}
       </main>

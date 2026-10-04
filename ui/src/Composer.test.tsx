@@ -1,7 +1,8 @@
+import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ChatView from "./ChatView";
 import { LanguageContext } from "./i18n";
-import { DEFAULT_SETTINGS, SettingsProvider } from "./settings";
+import { SettingsProvider } from "./settings";
 import Thinking from "./Thinking";
 import {
   buttonByText,
@@ -16,7 +17,8 @@ import {
   sse,
   typeInto,
 } from "./test-utils";
-import type { LocalModel, ModelsInfo, Settings } from "./types";
+import { localModel, modelsInfo, saved } from "./test-models";
+import type { ModelsInfo, Settings } from "./types";
 
 let view: Mounted | undefined;
 
@@ -35,52 +37,6 @@ const source = {
   text: "The lease term is three years.",
   location: { kind: "pdf" },
 };
-
-function localModel(over: Partial<LocalModel>): LocalModel {
-  return {
-    id: "qwen3-4b",
-    name: "Qwen3-4B",
-    size: 2_500_000_000,
-    installed: true,
-    state: "idle",
-    done: 0,
-    total: 0,
-    error: null,
-    tier: "small",
-    recommended: true,
-    license: "apache-2.0",
-    languages: ["th", "en"],
-    context_length: 32768,
-    thinking: true,
-    ...over,
-  };
-}
-
-/** Qwen3-4B installed and active, Qwen3-8B downloading at 62%, and one imported file. */
-function modelsInfo(over: Partial<ModelsInfo> = {}): ModelsInfo {
-  return {
-    recommended_tier: "small",
-    active: { mode: "local", label: "Qwen3-4B-Q4_K_M", id: "qwen3-4b" },
-    local: [
-      localModel({}),
-      localModel({
-        id: "qwen3-8b",
-        name: "Qwen3-8B",
-        tier: "medium",
-        recommended: false,
-        installed: false,
-        state: "downloading",
-        done: 62,
-        total: 100,
-      }),
-      localModel({ id: "qwen3-14b", name: "Qwen3-14B", tier: "large", installed: false }),
-    ],
-    uncatalogued: [{ id: "import:mine.gguf", name: "mine", file: "mine.gguf", size: 8 }],
-    ...over,
-  };
-}
-
-const saved = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
 
 type Setup = {
   settings?: Settings;
@@ -193,7 +149,7 @@ describe("mode menu", () => {
     expect(questionBody(calls)).toEqual({ content: "How long?", mode: "search", think: false });
   });
 
-  it("closes on Escape and on a click outside", async () => {
+  it("closes on Escape and when its chip is clicked again", async () => {
     await mountChat();
     await click(chip("How Tamra responds"));
     expect(menu()).not.toBeNull();
@@ -202,6 +158,48 @@ describe("mode menu", () => {
     await click(chip("How Tamra responds"));
     await click(chip("How Tamra responds")); // the chip toggles it
     expect(menu()).toBeNull();
+  });
+
+  it("closes on a mouse press outside the menu, but not inside it", async () => {
+    await mountChat();
+    await click(chip("How Tamra responds"));
+    await act(async () => {
+      menu()!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(menu()).not.toBeNull(); // on the menu's own padding
+    await act(async () => {
+      document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(menu()).toBeNull();
+  });
+
+  it("closes on Escape pressed anywhere, such as after a click on the menu's padding", async () => {
+    await mountChat();
+    await click(chip("How Tamra responds"));
+    (document.activeElement as HTMLElement | null)?.blur();
+    await press(document.body, "Escape");
+    expect(menu()).toBeNull();
+    expect(document.activeElement).toBe(chip("How Tamra responds"));
+  });
+
+  it("moves between the items with ArrowDown and ArrowUp, wrapping around", async () => {
+    await mountChat();
+    await click(chip("How Tamra responds"));
+    expect(document.activeElement).toBe(entry("Answer")); // the checked item has focus
+    await press(menu(), "ArrowDown");
+    expect(document.activeElement).toBe(entry("Search only"));
+    await press(menu(), "ArrowDown");
+    expect(document.activeElement).toBe(entry("Answer")); // wraps to the first
+    await press(menu(), "ArrowUp");
+    expect(document.activeElement).toBe(entry("Search only")); // and back to the last
+  });
+
+  it("closes on Tab and puts focus back on the chip", async () => {
+    await mountChat();
+    await click(chip("How Tamra responds"));
+    await press(menu(), "Tab");
+    expect(menu()).toBeNull();
+    expect(document.activeElement).toBe(chip("How Tamra responds"));
   });
 });
 
@@ -341,7 +339,7 @@ describe("Think longer", () => {
     expect(thinkChip().disabled).toBe(false);
   });
 
-  it("is enabled in API mode, whatever the local model is", async () => {
+  it("is enabled in API mode with Anthropic, whatever the local model is", async () => {
     await mountChat({
       settings: saved({ mode: "api", api_key_set: true }),
       models: modelsInfo({
@@ -350,6 +348,17 @@ describe("Think longer", () => {
       }),
     });
     expect(thinkChip().disabled).toBe(false);
+  });
+
+  it("is disabled, with the tooltip, for an OpenAI-compatible server, which ignores it", async () => {
+    const calls = await mountChat({
+      settings: saved({ mode: "api", api_provider: "openai", api_key_set: true }),
+      routes: { "POST /api/chats/5/messages": () => sse([{ type: "sources", sources: [] }]) },
+    });
+    expect(thinkChip().disabled).toBe(true);
+    expect(thinkChip().title).toBe("This model cannot think longer.");
+    await ask();
+    expect(questionBody(calls)).toMatchObject({ think: false });
   });
 });
 

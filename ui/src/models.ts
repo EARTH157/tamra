@@ -79,10 +79,12 @@ export function activeName(models: ModelsInfo | null, settings: Settings): strin
 
 /**
  * Whether "Think longer" can be used. A local model whose catalog entry says `thinking: false`
- * cannot; an import has no entry to say so, and the cloud models can think.
+ * cannot; an import has no entry to say so. In API mode only Anthropic can think: the
+ * OpenAI-compatible provider ignores the request.
  */
 export function canThink(models: ModelsInfo | null, settings: Settings): boolean {
-  if (settings.mode === "api" || !models) return true;
+  if (settings.mode === "api") return settings.api_provider === "anthropic";
+  if (!models) return true;
   const { entry } = activeLocal(models);
   return entry ? entry.thinking : true;
 }

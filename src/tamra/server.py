@@ -417,6 +417,7 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
                 "languages": list(m.languages),
                 "context_length": m.context_length,
                 "thinking": m.thinking,
+                "min_vram_gb": m.min_vram_gb,
             }
             for m in catalog.llms()
         ]

@@ -14,8 +14,9 @@ type Props = {
 };
 
 /**
- * A popover menu for the composer chips. It opens upward, closes on Esc, Tab or a click outside,
- * and moves between its enabled items with the arrow keys. Items are `role="menuitem*"` buttons.
+ * A popover menu for the composer chips. It opens upward, closes on Esc (wherever focus is), Tab
+ * or a click outside, and moves between its enabled items with the arrow keys. Items are
+ * `role="menuitem*"` buttons.
  */
 export default function PopMenu({ anchor, label, className, onClose, children }: Props) {
   const box = useRef<HTMLDivElement>(null);
@@ -37,12 +38,22 @@ export default function PopMenu({ anchor, label, className, onClose, children }:
       if (box.current?.contains(target) || anchor.contains(target)) return; // the chip toggles it
       close.current(false);
     }
+    // Esc closes the menu wherever focus is, e.g. after a click on the menu's padding.
+    function escape(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      close.current(true);
+    }
     document.addEventListener("mousedown", outside);
-    return () => document.removeEventListener("mousedown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", outside);
+      document.removeEventListener("keydown", escape);
+    };
   }, [anchor]);
 
   function onKeyDown(event: KeyboardEvent) {
-    if (event.key === "Escape" || event.key === "Tab") {
+    if (event.key === "Tab") {
       event.preventDefault();
       onClose(true);
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
