@@ -11,6 +11,12 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+const base = {
+  createChat: vi.fn(),
+  onBusyChange: vi.fn(),
+  onAnswered: vi.fn(),
+  onOpenSettings: vi.fn(),
+};
 const chat = { id: 5, title: "", created_at: "t", updated_at: "t" };
 const source = {
   n: 1,
@@ -26,13 +32,12 @@ function Host({ id }: { id: number }) {
   const [chatId, setChatId] = useState<number | null>(null);
   return (
     <ChatView
+      {...base}
       chatId={chatId}
       createChat={async () => {
         setChatId(id);
         return id;
       }}
-      onBusyChange={vi.fn()}
-      onAnswered={vi.fn()}
     />
   );
 }
@@ -79,7 +84,7 @@ describe("ChatView", () => {
     });
     const onAnswered = vi.fn();
     view = await mount(
-      <ChatView chatId={5} createChat={vi.fn()} onBusyChange={vi.fn()} onAnswered={onAnswered} />,
+      <ChatView {...base} chatId={5} onAnswered={onAnswered} />,
     );
     await typeInto(view.container.querySelector("textarea"), "How long?");
     await click(view.container.querySelector('button[type="submit"]'));
@@ -109,12 +114,15 @@ describe("ChatView", () => {
     });
     const createChat = vi.fn(async () => 9);
     view = await mount(
-      <ChatView chatId={null} createChat={createChat} onBusyChange={vi.fn()} onAnswered={vi.fn()} />,
+      <ChatView {...base} chatId={null} createChat={createChat} />,
     );
     await typeInto(view.container.querySelector("textarea"), "first question");
     await click(view.container.querySelector('button[type="submit"]'));
     expect(createChat).toHaveBeenCalledTimes(1);
-    expect(calls.map((c) => c.key)).toEqual(["POST /api/chats/9/messages", "GET /api/chats/9"]);
+    expect(calls.map((c) => c.key).filter((key) => key !== "GET /api/models")).toEqual([
+      "POST /api/chats/9/messages",
+      "GET /api/chats/9",
+    ]);
   });
 
   it("stays usable when the answer of a new chat fails", async () => {
@@ -158,7 +166,7 @@ describe("ChatView", () => {
       "POST /api/answer/cancel": () => json({ cancelled: true }),
     });
     view = await mount(
-      <ChatView chatId={5} createChat={vi.fn()} onBusyChange={vi.fn()} onAnswered={vi.fn()} />,
+      <ChatView {...base} chatId={5} />,
     );
     await typeInto(view.container.querySelector("textarea"), "q");
     await click(view.container.querySelector('button[type="submit"]'));
@@ -176,7 +184,7 @@ describe("ChatView", () => {
         sse([{ type: "error", message: "Choose a folder of documents first." }]),
     });
     view = await mount(
-      <ChatView chatId={5} createChat={vi.fn()} onBusyChange={vi.fn()} onAnswered={vi.fn()} />,
+      <ChatView {...base} chatId={5} />,
     );
     await typeInto(view.container.querySelector("textarea"), "q");
     await click(view.container.querySelector('button[type="submit"]'));
@@ -188,7 +196,7 @@ describe("ChatView", () => {
   it("shows the empty state of a new chat", async () => {
     mockFetch({});
     view = await mount(
-      <ChatView chatId={null} createChat={vi.fn()} onBusyChange={vi.fn()} onAnswered={vi.fn()} />,
+      <ChatView {...base} chatId={null} />,
     );
     expect(view.container.textContent).toContain("Ask your documents");
     expect(view.container.textContent).toContain(
@@ -216,13 +224,7 @@ describe("ChatView", () => {
         }),
     });
     view = await mount(
-      <ChatView
-        chatId={5}
-        collectionName="HR Documents"
-        createChat={vi.fn()}
-        onBusyChange={vi.fn()}
-        onAnswered={vi.fn()}
-      />,
+      <ChatView {...base} chatId={5} collectionName="HR Documents" />,
     );
     const card = view.container.querySelector(".not-found");
     expect(card?.textContent).toContain("Not found in HR Documents");
@@ -249,13 +251,7 @@ describe("ChatView", () => {
         new Response(open, { headers: { "Content-Type": "text/event-stream" } }),
     });
     view = await mount(
-      <ChatView
-        chatId={5}
-        collectionName="Contracts"
-        createChat={vi.fn()}
-        onBusyChange={vi.fn()}
-        onAnswered={vi.fn()}
-      />,
+      <ChatView {...base} chatId={5} collectionName="Contracts" />,
     );
     await typeInto(view.container.querySelector("textarea"), "notice period?");
     await click(view.container.querySelector('button[type="submit"]'));
@@ -317,7 +313,7 @@ describe("ChatView", () => {
         new Response(open, { headers: { "Content-Type": "text/event-stream" } }),
     });
     view = await mount(
-      <ChatView chatId={5} createChat={vi.fn()} onBusyChange={vi.fn()} onAnswered={vi.fn()} />,
+      <ChatView {...base} chatId={5} />,
     );
     await typeInto(view.container.querySelector("textarea"), "How long?");
     await click(view.container.querySelector('button[type="submit"]'));

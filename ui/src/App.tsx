@@ -7,7 +7,7 @@ import DeleteChatDialog from "./DeleteChatDialog";
 import { useT } from "./i18n";
 import IndexStatus from "./IndexStatus";
 import Setup from "./Setup";
-import type { Chat, CollectionState } from "./types";
+import type { Chat, CollectionState, SettingsTab } from "./types";
 import Welcome from "./Welcome";
 
 const POLL_MS = 2000;
@@ -93,6 +93,11 @@ export default function App() {
     } catch (e) {
       setProblem((e as Error).message);
     }
+  }
+
+  /** Placeholder: the Settings page (Task 9) replaces this with a switch to that page and tab. */
+  function openSettings(tab: SettingsTab) {
+    void tab;
   }
 
   const collection = state?.collection ?? null;
@@ -188,6 +193,7 @@ export default function App() {
             createChat={createChat}
             onBusyChange={setBusy}
             onAnswered={() => void refreshChats()}
+            onOpenSettings={openSettings}
           />
         )}
       </main>

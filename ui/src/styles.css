@@ -1030,12 +1030,139 @@ svg.lucide {
 }
 
 .chat-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin: 0 0 24px;
   padding: 10px 14px;
   border-radius: var(--radius);
   background: var(--error-bg);
   color: var(--error-text);
   font-size: 13px;
+}
+
+.chat-error span {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-error .btn {
+  flex: none;
+  height: 30px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Thinking block: the model's reasoning, open while it streams and collapsed after */
+
+.thinking {
+  max-width: 800px;
+  margin-bottom: 14px;
+}
+
+.thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.thinking-toggle:hover {
+  color: var(--text);
+}
+
+.thinking.live .thinking-title {
+  color: var(--primary-ink);
+  font-weight: 500;
+}
+
+.thinking-body {
+  max-height: 280px;
+  margin: 8px 0 0 7px;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--border-strong);
+  overflow-y: auto;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Search-only result: the passages are the reply */
+
+.passages-label {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.passages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 800px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.passage {
+  display: block;
+  width: 100%;
+  padding: 12px 14px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  text-align: left;
+}
+
+.passage:hover {
+  border-color: var(--border-strong);
+}
+
+.passage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.passage-file {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.passage-label {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.passage-text {
+  display: -webkit-box;
+  margin-top: 6px;
+  overflow: hidden;
+  font-size: var(--paper-size);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
 }
 
 /* Composer */
@@ -1083,8 +1210,151 @@ svg.lucide {
 
 .composer-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 13px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* A composer chip: the mode, the model, and the Think longer toggle */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--faint);
+}
+
+.chip.open,
+.chip.on {
+  border-color: var(--primary-ink);
+}
+
+.chip.on {
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+}
+
+.chip:disabled {
+  opacity: 0.5;
+}
+
+.chip svg:first-child {
+  color: var(--muted);
+}
+
+.chip.on svg:first-child {
+  color: var(--primary-ink);
+}
+
+.chip-chevron {
+  margin-right: -2px;
+  color: var(--muted);
+}
+
+/* The chips' menus open upward from the chip (PopMenu sets bottom and left) */
+.pop-menu {
+  width: 330px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 120px);
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.pop-menu.wider {
+  width: 340px;
+}
+
+.menu-heading {
+  padding: 9px 10px 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.menu-empty {
+  margin: 0;
+  padding: 4px 10px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.menu-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  text-align: left;
+}
+
+.menu-entry:hover:not(:disabled),
+.menu-entry:focus-visible {
+  outline: none;
+  background: var(--bg);
+}
+
+.menu-entry[aria-checked="true"] {
+  background: var(--primary-soft);
+}
+
+.menu-entry:disabled {
+  color: var(--muted);
+}
+
+.entry-icon {
+  display: inline-flex;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.entry-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.entry-name {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.entry-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.entry-check {
+  flex: none;
+  margin-top: 2px;
+  color: var(--primary-ink);
 }
 
 .send {

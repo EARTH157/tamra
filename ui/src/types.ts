@@ -44,11 +44,51 @@ export type Message = {
 
 export type ChatDetail = Chat & { messages: Message[] };
 
+/** How Tamra responds: write an answer, or only show the matching passages. */
+export type AnswerMode = "answer" | "search";
+
+/** Why a model call failed (ProviderError.reason); errors that are not the model's carry none. */
+export type ErrorReason = "offline" | "auth" | "quota" | "model_missing" | "other";
+
 export type AnswerEvent =
   | { type: "sources"; sources: Source[] }
+  | { type: "thinking"; text: string }
   | { type: "token"; text: string }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; reason?: ErrorReason }
   | { type: "done"; message_id: number };
+
+// GET /api/models (the parts the chat uses; Settings reads the rest).
+export type ModelState = "idle" | "downloading" | "verifying" | "error";
+
+export type LocalModel = {
+  id: string;
+  name: string;
+  size: number;
+  installed: boolean;
+  state: ModelState;
+  done: number;
+  total: number;
+  error: string | null;
+  tier: "small" | "medium" | "large";
+  recommended: boolean;
+  license: string;
+  languages: string[];
+  context_length: number;
+  thinking: boolean;
+};
+
+export type UncataloguedModel = { id: string; name: string; file: string; size: number };
+
+export type ModelsInfo = {
+  recommended_tier: "small" | "medium" | "large";
+  /** `id` is the local model that local mode would use, in either mode. */
+  active: { mode: Mode; label: string | null; id: string | null };
+  local: LocalModel[];
+  uncatalogued: UncataloguedModel[];
+};
+
+/** The tabs of the Settings page. */
+export type SettingsTab = "general" | "model" | "style";
 
 // GET and PUT /api/settings: every saved setting, plus the key state of the selected provider.
 export type Mode = "local" | "api";
