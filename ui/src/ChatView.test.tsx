@@ -87,10 +87,19 @@ describe("ChatView", () => {
     expect(view.container.querySelector(".message.assistant")?.textContent).toContain(
       "Three years 1.",
     );
+    const answer = view.container.querySelector(".message.assistant");
+    expect(answer?.textContent).toContain("qwen · local");
+    expect(answer?.textContent).toContain("Click a number to see the passage it came from.");
+    expect(answer?.querySelector(".source-card")?.textContent).toContain("lease.pdf");
+    expect(answer?.querySelector(".source-card")?.textContent).toContain("p. 2");
     await click(view.container.querySelector("button.cite"));
     expect(view.container.querySelector(".source-panel")?.textContent).toContain(
       "The lease term is three years.",
     );
+    expect(view.container.querySelector("button.cite")?.classList.contains("active")).toBe(true);
+    await click(view.container.querySelector('button[aria-label="Close source"]'));
+    expect(view.container.querySelector(".source-panel")).toBeNull();
+    expect(view.container.querySelector("button.cite")?.classList.contains("active")).toBe(false);
   });
 
   it("creates the chat on the first question", async () => {
@@ -153,10 +162,8 @@ describe("ChatView", () => {
     );
     await typeInto(view.container.querySelector("textarea"), "q");
     await click(view.container.querySelector('button[type="submit"]'));
-    const stopButton = [...view.container.querySelectorAll("button")].find(
-      (b) => b.textContent === "Stop",
-    );
-    await click(stopButton);
+    expect(view.container.querySelector('button[type="submit"]')).toBeNull();
+    await click(view.container.querySelector('button[aria-label="Stop"]'));
     expect(calls.map((c) => c.key)).toContain("POST /api/answer/cancel");
     finish();
     await settle();
@@ -176,5 +183,94 @@ describe("ChatView", () => {
     expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
       "Choose a folder of documents first.",
     );
+  });
+
+  it("shows the empty state of a new chat", async () => {
+    mockFetch({});
+    view = await mount(
+      <ChatView chatId={null} createChat={vi.fn()} onBusyChange={vi.fn()} onAnswered={vi.fn()} />,
+    );
+    expect(view.container.textContent).toContain("Ask your documents");
+    expect(view.container.textContent).toContain(
+      "Every answer cites the passage it came from, so you can check it.",
+    );
+    expect(view.container.textContent).toContain("Enter to send · Shift+Enter for a new line");
+  });
+
+  it("shows a saved not-found reply as a card", async () => {
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [
+            {
+              id: 2,
+              role: "assistant",
+              content: "ไม่พบข้อมูลนี้ในเอกสาร",
+              provider: null,
+              model: null,
+              created_at: "t",
+              sources: [],
+            },
+          ],
+        }),
+    });
+    view = await mount(
+      <ChatView
+        chatId={5}
+        collectionName="HR Documents"
+        createChat={vi.fn()}
+        onBusyChange={vi.fn()}
+        onAnswered={vi.fn()}
+      />,
+    );
+    const card = view.container.querySelector(".not-found");
+    expect(card?.textContent).toContain("Not found in HR Documents");
+    expect(card?.textContent).toContain(
+      "Tamra answers only from your documents, so it will not guess.",
+    );
+    expect(view.container.textContent).not.toContain("ไม่พบข้อมูลนี้ในเอกสาร");
+  });
+
+  it("shows searching, then the not-found card once the stream is done", async () => {
+    const encoder = new TextEncoder();
+    let push: (event: unknown) => void = () => {};
+    let finish: () => void = () => {};
+    const open = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (event) =>
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        finish = () => controller.close();
+      },
+    });
+    mockFetch({
+      "GET /api/chats/5": () => json({ ...chat, messages: [] }),
+      "POST /api/chats/5/messages": () =>
+        new Response(open, { headers: { "Content-Type": "text/event-stream" } }),
+    });
+    view = await mount(
+      <ChatView
+        chatId={5}
+        collectionName="Contracts"
+        createChat={vi.fn()}
+        onBusyChange={vi.fn()}
+        onAnswered={vi.fn()}
+      />,
+    );
+    await typeInto(view.container.querySelector("textarea"), "notice period?");
+    await click(view.container.querySelector('button[type="submit"]'));
+    expect(view.container.textContent).toContain("Searching your documents…");
+    push({ type: "sources", sources: [] });
+    push({ type: "token", text: "Not found in the documents." });
+    await settle();
+    expect(view.container.querySelector(".not-found")).toBeNull();
+    push({ type: "done", message_id: 3 });
+    await settle();
+    expect(view.container.textContent).not.toContain("Searching your documents…");
+    expect(view.container.querySelector(".not-found")?.textContent).toContain(
+      "Not found in Contracts",
+    );
+    finish();
+    await settle();
   });
 });
