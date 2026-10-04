@@ -34,7 +34,12 @@ def main(argv: list[str] | None = None) -> int:
 
     from tamra.app import run
 
-    run(dev=args.dev)
+    try:
+        run(dev=args.dev)
+    except Exception:
+        if args.dev:
+            raise  # the developer wants the traceback
+        return 1  # already logged and shown in a message box; no second dialog
     return 0
 
 

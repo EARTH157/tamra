@@ -164,6 +164,26 @@ def test_an_unavailable_model_pauses_indexing_without_failing_files(tmp_path):
         store.close()
 
 
+def test_stopping_between_embedding_batches_requeues_the_file(env):
+    docs, store, _, indexer = env
+
+    class StoppingEmbedder(FakeEmbedder):
+        def embed(self, texts, batch_size=16):
+            indexer._stopping.set()
+            return super().embed(texts, batch_size)
+
+    stopping = StoppingEmbedder()
+    indexer._embedder = lambda: stopping
+    # With the default 450-token limit, 300-word paragraphs cannot share a chunk: 20 chunks.
+    paragraphs = [f"Paragraph{i} " + "word " * 299 for i in range(20)]
+    (docs / "big.md").write_text("\n\n".join(paragraphs), encoding="utf-8")
+    run(indexer)
+    record = files(store)["big.md"]
+    assert record.status == "pending"
+    assert stopping.calls == 1
+    assert store.search_keyword(store.get_collection().id, '"Par"', 10) == []
+
+
 def test_a_lookup_error_while_indexing_fails_the_file_instead_of_hiding_it(env):
     docs, store, _, indexer = env
 

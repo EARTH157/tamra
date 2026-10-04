@@ -18,6 +18,8 @@ from tamra.store import Store
 
 log = logging.getLogger(__name__)
 
+EMBED_BATCH = 16  # texts per embedder call; stop() is honored between calls
+
 
 class EmbedderLike(Protocol):
     def embed(self, texts: list[str], batch_size: int = 16) -> np.ndarray: ...
@@ -206,7 +208,14 @@ class Indexer:
             if not chunks:
                 self._store.set_file_status(file_id, "skipped", doc.note or "no text found")
                 return
-            vectors = embedder.embed([chunk.text for chunk in chunks])
+            texts = [chunk.text for chunk in chunks]
+            batches = []
+            for start in range(0, len(texts), EMBED_BATCH):
+                if self._stopping.is_set():  # shutting down: leave the file for the next start
+                    self._store.set_file_status(file_id, "pending")
+                    return
+                batches.append(embedder.embed(texts[start : start + EMBED_BATCH]))
+            vectors = np.concatenate(batches)
             try:
                 self._store.replace_file_chunks(
                     file_id, chunks, vectors, content_hash=content_hash, note=doc.note

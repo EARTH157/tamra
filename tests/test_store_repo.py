@@ -67,6 +67,19 @@ def test_replace_collection_drops_the_old_index(store, coll):
     assert store.search_dense(coll.id, unit(1), 10) == []
 
 
+def test_ids_are_not_reused_after_the_collection_is_replaced(store, coll):
+    old_file = store.add_file(coll.id, "a.md", 10, 1.0)
+    index(store, old_file, ["alpha beta"], [unit(1)])
+    old_chunk = store.search_keyword(coll.id, '"alp"', 10)[0]
+    new = store.replace_collection("Other", "D:/other", MODEL)
+    new_file = store.add_file(new.id, "b.md", 10, 1.0)
+    index(store, new_file, ["gamma delta"], [unit(2)])
+    new_chunk = store.search_keyword(new.id, '"gam"', 10)[0]
+    assert new.id > coll.id
+    assert new_file > old_file
+    assert new_chunk > old_chunk
+
+
 def test_file_lifecycle_and_counts(store, coll):
     a = store.add_file(coll.id, "a.md", 10, 1.0)
     b = store.add_file(coll.id, "sub/b.txt", 20, 2.0)

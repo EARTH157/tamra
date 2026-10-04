@@ -152,3 +152,15 @@ def test_llm_check_reports_timings_from_a_stub_server(tmp_path, monkeypatch):
 def test_document_libraries_are_checked(tmp_path):
     report = run_selfcheck(None, None, tmp_path / "x.exe", tmp_path)
     assert report["checks"]["documents"] == {"ok": True}
+
+
+def test_a_startup_failure_returns_exit_code_1_without_raising(monkeypatch):
+    import tamra.app
+
+    def boom(dev):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(tamra.app, "run", boom)
+    assert main([]) == 1
+    with pytest.raises(RuntimeError, match="boom"):
+        main(["--dev"])

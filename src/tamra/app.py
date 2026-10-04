@@ -80,6 +80,7 @@ def run(dev: bool = False) -> None:
             port=port,
             log_level="warning",
             log_config=None,
+            timeout_graceful_shutdown=3,  # an open SSE stream must not hold shutdown
         )
         server = uvicorn.Server(config)
         thread = threading.Thread(target=server.run, name="tamra-api", daemon=True)

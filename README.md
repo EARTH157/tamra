@@ -36,9 +36,10 @@ You need Windows 10 or 11, [uv](https://docs.astral.sh/uv/), and Node.js 24.
     uv run tamra
 
 Choose a folder of PDF, Word, text, or Markdown files, wait for indexing, and ask a question.
-`./scripts/build.ps1` packages the same app as `dist\Tamra\Tamra.exe`. M1 uses Qwen2.5-0.5B,
-a very small model, so expect rough answers, especially in Thai and Chinese; M2 adds larger
-models and cloud APIs.
+`./scripts/build.ps1` packages the same app as `dist\Tamra\Tamra.exe`. The packaged
+`Tamra.exe` looks for models in `%LOCALAPPDATA%\Tamra\models` (copy the contents of `.models`
+there) or in the folder named by `TAMRA_MODELS_DIR`. M1 uses Qwen2.5-0.5B, a very small model,
+so expect rough answers, especially in Thai and Chinese; M2 adds larger models and cloud APIs.
 
 ## Roadmap
 

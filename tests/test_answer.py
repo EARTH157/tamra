@@ -157,12 +157,37 @@ def test_problems_before_answering_are_single_error_events(tmp_path):
     store.close()
 
 
+def test_asking_before_anything_is_indexed_saves_nothing(tmp_path):
+    store = Store.open(tmp_path / "t.db")
+    service = AnswerService(
+        store, lambda t: None, lambda: FakeLLM(), model_id="m", llm_label=lambda: "x"
+    )
+    store.replace_collection("Docs", "C:/docs", "m")
+    store.add_file(store.get_collection().id, "a.md", 1, 1.0)  # pending, not indexed
+    chat = store.create_chat()
+    assert list(service.ask(chat.id, "q")) == [
+        {
+            "type": "error",
+            "message": "No documents are indexed yet. Wait for indexing to finish, then ask again.",
+        }
+    ]
+    assert store.list_messages(chat.id) == []
+    store.close()
+
+
 def test_detect_language():
     assert detect_language("ลาพักร้อนได้กี่วัน") == "th"
     assert detect_language("沙发保修几年？") == "zh"
     assert detect_language("How many days?") == "en"
     assert detect_language("1234 ?") == "en"
     assert detect_language("Tamra ตอบคำถามจากเอกสาร") == "th"
+
+
+def test_detect_language_counts_latin_words_not_letters():
+    assert detect_language("ChatGPT可以用吗？") == "zh"
+    assert detect_language("iPhone保修多久") == "zh"
+    assert detect_language("ลา sick leave ได้กี่วัน") == "th"
+    assert detect_language("How many days of leave?") == "en"
 
 
 def test_location_labels():

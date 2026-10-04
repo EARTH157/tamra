@@ -4,14 +4,14 @@ SCHEMA_VERSION = 1
 
 _V1 = """
 CREATE TABLE collections (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     folder_path TEXT NOT NULL,
     embedding_model_id TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 CREATE TABLE files (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
     rel_path TEXT NOT NULL,
     size INTEGER NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE files (
     UNIQUE (collection_id, rel_path)
 );
 CREATE TABLE chunks (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     ord INTEGER NOT NULL,
     text TEXT NOT NULL,

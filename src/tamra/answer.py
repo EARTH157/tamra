@@ -13,6 +13,7 @@ from tamra.llm.openai_compat import LLMError, Message
 from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
 from tamra.store import SourceRecord, Store
 
+_LATIN_WORD = re.compile(r"[A-Za-z]+")
 LANGUAGE_NAMES = {"th": "Thai", "en": "English", "zh": "Chinese"}
 NOT_FOUND = {
     "th": "ไม่พบข้อมูลนี้ในเอกสาร",
@@ -49,10 +50,14 @@ class AnswerSettings:
 
 
 def detect_language(text: str) -> str:
-    """'th', 'zh', or 'en': whichever script dominates (English when there is no script)."""
+    """'th', 'zh', or 'en': whichever script dominates (English when there is no script).
+
+    Thai and CJK are counted by character, Latin by word: a Latin brand name inside a Chinese
+    or Thai question ("iPhone保修多久") must not outweigh the characters around it.
+    """
     thai = sum(1 for c in text if 0x0E00 <= ord(c) <= 0x0E7F)
     cjk = sum(1 for c in text if 0x4E00 <= ord(c) <= 0x9FFF or 0x3400 <= ord(c) <= 0x4DBF)
-    latin = sum(1 for c in text if c.isascii() and c.isalpha())
+    latin = len(_LATIN_WORD.findall(text))
     count, language = max((thai, "th"), (cjk, "zh"), (latin, "en"))
     return language if count else "en"
 
@@ -180,6 +185,13 @@ class AnswerService:
             return
         if self._store.get_chat(chat_id) is None:
             yield {"type": "error", "message": f"Chat {chat_id} not found."}
+            return
+        if self._store.status_counts(collection.id)["indexed"] == 0:
+            yield {
+                "type": "error",
+                "message": "No documents are indexed yet. Wait for indexing to finish, "
+                "then ask again.",
+            }
             return
         previous = self._store.last_exchange(chat_id)
         self._store.add_user_message(chat_id, question)
