@@ -108,9 +108,8 @@ describe("streamAnswer", () => {
   });
 
   it("asks for an answer without thinking by default", async () => {
-    const fetchImpl = vi.fn(async () => new Response("data: {\"type\":\"done\",\"message_id\":1}
-
-"));
+    const done = 'data: {"type":"done","message_id":1}\n\n';
+    const fetchImpl = vi.fn(async () => new Response(done));
     await streamAnswer(3, "q", () => {}, undefined, fetchImpl);
     expect(fetchImpl).toHaveBeenCalledWith(
       "/api/chats/3/messages",
