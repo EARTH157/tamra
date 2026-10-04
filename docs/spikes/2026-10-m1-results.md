@@ -44,9 +44,9 @@ int8 and Qwen2.5-0.5B-instruct Q4_K_M; the system prompt includes the example ci
 
 | Measure | Value |
 |---|---|
-| Embedding (packaged) | 4.88 passages/s, model load 2.15 s |
-| Local LLM start | 4.51 s, first token 0.05 s |
-| Local LLM speed | 230.95 tokens/s (64 tokens) |
+| Embedding (packaged) | 5.09 passages/s, model load 2.0 s |
+| Local LLM start | 4.78 s, first token 0.03 s |
+| Local LLM speed | 255.45 tokens/s (64 tokens) |
 | GPU used (Vulkan) | yes |
 
 **Smoke test** (the exe in `--dev` mode, scratch data folder, the 10-file eval corpus; exit
@@ -54,11 +54,11 @@ code 0, no problems, 3 of 3 answerable questions cited):
 
 | Step | Seconds |
 |---|---|
-| Startup to healthy API | 2.1 |
-| Indexing 10 files (10 indexed, 0 failed, 0 skipped) | 4.7 |
-| Thai question | 7.5 (includes the first model use) |
-| English question | 0.3 |
-| Chinese question | 0.1 |
+| Startup to healthy API | 2.0 |
+| Indexing 10 files (10 indexed, 0 failed, 0 skipped) | 4.0 |
+| Thai question | 4.9 (includes the first model use) |
+| English question | 0.2 |
+| Chinese question | 0.2 |
 | Off-topic question | 0.0 (the not-found reply never calls the model) |
 | Folder watcher indexes a new file | 2.5 |
 
@@ -66,12 +66,16 @@ code 0, no problems, 3 of 3 answerable questions cited):
 |---|---|---|---|
 | `th-leave-annual` | พนักงานที่ผ่านการทดลองงานแล้วมีสิทธิลาพักร้อนปีละ 12 วัน [1] | hr-leave-policy.docx, travel-expenses.pdf, canteen-rules.txt, company-history.txt | yes |
 | `en-lease-rent` | The monthly rent is 18,500 baht, and it is due on the 5th day of each month. [1] | apartment-lease.pdf, meeting-notes-2026-09.md, it-security-policy.md, canteen-rules.txt | yes |
-| `zh-warranty-sofa` | 沙发框架保修五年。 [1] | furniture-warranty.txt, apartment-lease.pdf, shipping-policy.pdf, it-security-policy.md | yes |
+| `zh-warranty-sofa` | 沙发框架保修 [1] 五年。 | furniture-warranty.txt, apartment-lease.pdf, shipping-policy.pdf, it-security-policy.md | yes |
 | `none-world-cup` | Not found in the documents. | none | n/a |
 
 Each answerable question had its expected file among the sources, the answer and its sources were
 saved in the chat, and the off-topic question got the not-found reply with no sources.
 All answers were correct and short.
+
+The final-review fix wave (language detection, batched embedding with a stop check, exit
+and startup fixes, stable ids) rebuilt the exe and re-ran the selfcheck and the smoke test; the
+numbers above are from that re-run.
 
 **Automatic citation.** The dev model rarely writes `[n]` once it sees real passages: probes
 found 0 of 5 answers cited with the plan's prompt and 1 of 5 with an extra reminder. The answer
