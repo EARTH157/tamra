@@ -26,7 +26,7 @@ npm --prefix ui test                      # UI unit tests (Vitest)
 npm --prefix ui run build                 # build UI into ui/dist (bundled by PyInstaller)
 uv run python scripts/fetch_assets.py     # download pinned llama.cpp + dev models (~1.1 GB, gitignored)
 uv run python scripts/eval_retrieval.py   # retrieval eval: hit@k and the not-found threshold (needs .models)
-uv run python scripts/exe_smoke.py        # end-to-end check of dist/Tamra/Tamra.exe (needs .models)
+uv run python scripts/exe_smoke.py        # end-to-end check of dist/Tamra/Tamra.exe: import, local, API mode (needs .models)
 ./scripts/build.ps1                       # UI build + PyInstaller → dist/Tamra/Tamra.exe
 # windowed exe: get output via --report and Start-Process -Wait
 Start-Process dist\Tamra\Tamra.exe -ArgumentList "selfcheck","--report","r.json" -Wait

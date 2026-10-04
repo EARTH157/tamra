@@ -7,7 +7,7 @@ app for Windows. Point it at a folder of documents and ask questions in Thai, En
 Chinese. Answers cite the passages they came from, and you can select any part of an
 answer to see the exact source text that supports it.
 
-> **Status: pre-alpha.** Milestone M1 works: index a folder, ask in Thai, English, or Chinese, and get answers with [n] citations from a small local model. There is no installer yet (M6). See the [roadmap](#roadmap).
+> **Status: pre-alpha.** Milestone M2 works: index a folder, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, with a Settings page and an English or Thai interface. There is no installer yet (M6). See the [roadmap](#roadmap).
 
 ## Planned features
 
@@ -37,9 +37,58 @@ You need Windows 10 or 11, [uv](https://docs.astral.sh/uv/), and Node.js 24.
 
 Choose a folder of PDF, Word, text, or Markdown files, wait for indexing, and ask a question.
 `./scripts/build.ps1` packages the same app as `dist\Tamra\Tamra.exe`. The packaged
-`Tamra.exe` looks for models in `%LOCALAPPDATA%\Tamra\models` (copy the contents of `.models`
-there) or in the folder named by `TAMRA_MODELS_DIR`. M1 uses Qwen2.5-0.5B, a very small model,
-so expect rough answers, especially in Thai and Chinese; M2 adds larger models and cloud APIs.
+`Tamra.exe` looks for models in `%LOCALAPPDATA%\Tamra\models` or in the folder named by
+`TAMRA_MODELS_DIR`; see [Models](#models). The Qwen2.5-0.5B test model that `fetch_assets.py`
+downloads is very small, so expect rough answers from it, especially in Thai and Chinese.
+
+## Models
+
+Open **Settings > AI model**. Tamra detects your RAM and GPU and recommends a model size:
+
+| Tier | Model | Download | For |
+|---|---|---|---|
+| Small | Qwen3-4B (Q4_K_M) | 2.5 GB | CPU-only machines |
+| Medium | Qwen3-8B (Q4_K_M) | 5.0 GB | a GPU with 6 GB VRAM or more |
+| Large | Qwen3-14B (Q4_K_M) | 9.0 GB | a GPU with 10 GB VRAM or more |
+
+- **Download.** Press **Download** next to a model. Tamra downloads the file once, resumes an
+  interrupted download, and checks its sha256 before use.
+- **Import for offline use.** On a computer without internet, press **Import model file...** and
+  choose a `.gguf` file (when you run Tamra from source in the browser, there is no file dialog:
+  enter the full path instead). Tamra copies it into its models folder. A file that
+  matches a catalog model is recognised as that model. Any other GGUF is imported as an
+  *uncatalogued* model: it works, but Tamra warns that its answer quality is unknown. Files that
+  are not GGUF, or that share a catalog file's name but not its content, are refused.
+- **Think longer.** Models that can reason (the Qwen3 family) offer a "think longer" switch in
+  the message box. It makes answers slower and usually better.
+
+Models are stored in `%LOCALAPPDATA%\Tamra\models` (or `TAMRA_MODELS_DIR`). Search and
+indexing always run locally with the bge-m3 embedding model, whichever AI mode you choose.
+
+## Cloud API
+
+For better answers on a computer that cannot run a large model, switch to **Cloud API** in
+**Settings > AI model**. Pick a provider:
+
+- **Anthropic** (default model `claude-sonnet-5-5`), or
+- **OpenAI-compatible**: OpenAI, or any server that speaks the same API, such as Ollama or LM
+  Studio. Enter its Base URL, for example `http://localhost:11434`.
+
+Paste your API key and press **Test connection**.
+
+- **What leaves your computer.** In API mode, the passages found for each question, and the
+  question itself, are sent to the provider. Your files and the search index stay on your
+  computer. Use a local model if your documents must not leave it.
+- **Where the key is stored.** In Windows Credential Manager, under the name `Tamra` (the user
+  name is the provider: `anthropic` or `openai`). It is never written to Tamra's files, database,
+  or logs. To remove it, clear the key field in Settings and save, or delete the `Tamra` entry in
+  Credential Manager.
+
+## Thai interface
+
+Choose **Settings > General > Interface language > ไทย** to switch every screen between
+English and Thai. Answers always follow the language of your question, whatever the interface
+language is.
 
 ## Roadmap
 
@@ -65,7 +114,14 @@ pywebview · [llama.cpp](https://github.com/ggml-org/llama.cpp) ·
 
 Tamra คือแอปบน Windows สำหรับถามคำถามจากเอกสารของคุณเอง รองรับภาษาไทย อังกฤษ และจีน
 ใช้งานแบบ offline ได้ และทุกคำตอบอ้างอิงแหล่งที่มา คลุมข้อความในคำตอบเพื่อดูต้นฉบับที่ใช้ตอบได้ทันที
-ตอนนี้ (M1) ใช้งานจากซอร์สโค้ดได้แล้ว: เลือกโฟลเดอร์เอกสาร ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n] ยังไม่มีตัวติดตั้ง
+ตอนนี้ (M2) ใช้งานจากซอร์สโค้ดได้แล้ว: เลือกโฟลเดอร์เอกสาร ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n]
+จากโมเดลในเครื่องหรือ API บนคลาวด์ มีหน้าตั้งค่าและเปลี่ยนภาษาของแอปเป็นไทยได้ ยังไม่มีตัวติดตั้ง
+
+- **โมเดล:** ที่ ตั้งค่า > โมเดล AI ดาวน์โหลดโมเดลที่แนะนำตามเครื่องของคุณ หรือกด "นำเข้าไฟล์โมเดล"
+  เพื่อใช้ไฟล์ .gguf ที่มีอยู่แล้วโดยไม่ต้องต่ออินเทอร์เน็ต
+- **API บนคลาวด์:** รองรับ Anthropic และเซิร์ฟเวอร์ที่เข้ากันได้กับ OpenAI เมื่อใช้โหมดนี้
+  ข้อความที่ค้นพบสำหรับแต่ละคำถามจะถูกส่งไปยังผู้ให้บริการ ส่วนไฟล์และดัชนีค้นหายังอยู่ในเครื่อง
+- **ที่เก็บ API key:** Windows Credential Manager ภายใต้ชื่อ Tamra ไม่เขียนลงไฟล์ของ Tamra
 
 ## License
 
