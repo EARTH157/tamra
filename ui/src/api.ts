@@ -1,4 +1,4 @@
-import { t } from "./i18n";
+import { translateNow } from "./i18n";
 import { createSseParser } from "./sse";
 import type { AnswerEvent } from "./types";
 
@@ -87,7 +87,7 @@ export async function streamAnswer(
     body: JSON.stringify({ content }),
   });
   if (!response.ok) throw await errorOf(response);
-  if (!response.body) throw new ApiError(response.status, t("chat.streamEmpty"));
+  if (!response.body) throw new ApiError(response.status, translateNow("chat.streamEmpty"));
   const feed = createSseParser((data) => onEvent(JSON.parse(data) as AnswerEvent));
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

@@ -23,8 +23,8 @@ export const th: Record<TranslationKey, string> = {
   "folder.chooseText":
     "Tamra จะสร้างดัชนีของไฟล์ PDF, Word, ข้อความ และ Markdown ในโฟลเดอร์นี้และโฟลเดอร์ย่อยทั้งหมด ไฟล์ของคุณจะไม่ถูกแก้ไข",
   "folder.pathLabel": "ที่อยู่โฟลเดอร์",
-  "folder.pathPlaceholder": "ใส่ที่อยู่โฟลเดอร์แบบเต็ม เช่น D:\Work\Documents",
-  "folder.browse": "เลือกโฟลเดอร์…",
+  "folder.pathPlaceholder": "ใส่ที่อยู่โฟลเดอร์แบบเต็ม เช่น D:\\Work\\Documents",
+  "folder.browse": "เรียกดู…",
   "folder.use": "ใช้โฟลเดอร์นี้",
 
   "welcome.title": "ยินดีต้อนรับสู่ Tamra",
@@ -36,7 +36,7 @@ export const th: Record<TranslationKey, string> = {
   "welcome.cites": "คำตอบอ้างอิงแหล่งที่มา",
   "welcome.languages": "รองรับไทย อังกฤษ และจีน",
 
-  "deleteChat.title": "ลบแชทนี้ไหม",
+  "deleteChat.title": "ลบแชทนี้หรือไม่",
   "deleteChat.text": "“{title}” จะถูกลบออกจากคอมพิวเตอร์เครื่องนี้ เอกสารของคุณจะไม่ถูกแก้ไข",
   "deleteChat.confirm": "ลบแชท",
 
@@ -44,6 +44,7 @@ export const th: Record<TranslationKey, string> = {
   "chatList.options": "ตัวเลือกของ {title}",
   "chatList.menu": "ตัวเลือกแชท",
   "chatList.rename": "เปลี่ยนชื่อ",
+  "chatList.delete": "ลบแชท",
   "chatList.renameLabel": "ชื่อแชท",
   "chatList.renameHint": "กด Enter เพื่อบันทึก · กด Esc เพื่อยกเลิก",
 
@@ -68,7 +69,7 @@ export const th: Record<TranslationKey, string> = {
   "index.changeFolder": "เปลี่ยนโฟลเดอร์",
   "index.rebuild": "สร้างดัชนีใหม่",
   "index.stale":
-    "ดัชนีนี้สร้างด้วยโมเดลฝังข้อความตัวอื่น ต้องสร้างใหม่จึงจะค้นหาได้อีกครั้ง",
+    "ดัชนีนี้สร้างด้วยโมเดล embedding ตัวอื่น ต้องสร้างใหม่จึงจะค้นหาได้อีกครั้ง",
   "index.checking": "กำลังตรวจสอบไฟล์…",
   "index.none": "ยังไม่พบเอกสาร",
   "index.progress": "ความคืบหน้าการสร้างดัชนี",

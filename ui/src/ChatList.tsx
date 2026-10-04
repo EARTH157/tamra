@@ -18,7 +18,6 @@ type MenuState = { id: number; above: number; below: number; left: number };
 const GAP = 3; // between the ⋯ button and the menu
 const MARGIN = 8; // the menu keeps this far from the window edges
 
-
 /** The sidebar's chats, each with a ⋯ menu (Rename, Delete chat) and an inline rename. */
 export default function ChatList({
   chats,
@@ -179,7 +178,7 @@ function ChatMenu({ above, below, left, onClose, onRename, onDelete }: MenuProps
       <div className="menu-divider" role="separator" />
       <button type="button" role="menuitem" className="menu-item danger" onClick={onDelete}>
         <Trash2 size={16} />
-        {t("deleteChat.confirm")}
+        {t("chatList.delete")}
       </button>
     </div>
   );

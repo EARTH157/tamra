@@ -1,7 +1,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import { setLanguage, t } from "./i18n";
+import { setLanguage, translateNow } from "./i18n";
 import { applyAppearance, DEFAULT_SETTINGS, resolveTheme, SettingsProvider, useSettings, type SettingsApi } from "./settings";
 import { json, type Mounted, mockFetch, mount, settle } from "./test-utils";
 import type { Settings } from "./types";
@@ -111,9 +111,25 @@ describe("SettingsProvider", () => {
     query.matches = false;
     await act(async () => listener?.());
     expect(html.dataset.theme).toBe("light");
+    await view.unmount();
+    view = undefined;
+    expect(query.removeEventListener).toHaveBeenCalledTimes(1);
   });
 
-  it("translates through t() and useT() in the saved language", async () => {
+  it("follows a dark operating system until the settings arrive", async () => {
+    const query = { matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+    vi.stubGlobal("matchMedia", () => query);
+    vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
+    view = await mount(
+      <SettingsProvider>
+        <Probe />
+      </SettingsProvider>,
+    );
+    expect(current.loaded).toBe(false);
+    expect(html.dataset.theme).toBe("dark");
+  });
+
+  it("translates through translateNow() and useT() in the saved language", async () => {
     mockFetch({ "GET /api/settings": () => json(saved({ language: "th" })) });
     view = await mount(
       <SettingsProvider>
@@ -121,7 +137,7 @@ describe("SettingsProvider", () => {
       </SettingsProvider>,
     );
     expect(view.container.querySelector("h1")?.textContent).toBe("ยินดีต้อนรับสู่ Tamra");
-    expect(t("common.cancel")).toBe("ยกเลิก");
+    expect(translateNow("common.cancel")).toBe("ยกเลิก");
   });
 
   it("switches language for components without re-mounting them", async () => {
@@ -247,6 +263,72 @@ describe("update", () => {
       await second;
     });
     expect(current.settings).toMatchObject({ accent: "slate", theme: "dark" });
+  });
+
+  it("shows the confirmed value when two overlapping updates both fail", async () => {
+    const pending: ((r: Response) => void)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string, init?: RequestInit) => {
+        if (init?.method === "PUT") return new Promise<Response>((resolve) => pending.push(resolve));
+        return json(saved());
+      }),
+    );
+    view = await mount(
+      <SettingsProvider>
+        <Probe />
+      </SettingsProvider>,
+    );
+    let first: Promise<unknown> = Promise.resolve();
+    let second: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      first = current.update({ theme: "dark" }).catch(() => "failed");
+      second = current.update({ theme: "system" }).catch(() => "failed");
+    });
+    expect(current.settings.theme).toBe("system");
+    await act(async () => {
+      pending[0](json({ detail: "no" }, 400));
+      await first;
+    });
+    expect(current.settings.theme).toBe("system"); // the newer change is still pending
+    await act(async () => {
+      pending[1](json({ detail: "no" }, 400));
+      await second;
+    });
+    expect(current.settings.theme).toBe("light"); // what the core has
+    expect(html.dataset.theme).toBe("light");
+  });
+
+  it("keeps a pending change visible when a reload arrives, and confirms it afterwards", async () => {
+    let finish: (r: Response) => void = () => {};
+    let server = saved({ theme: "light" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string, init?: RequestInit) => {
+        if (init?.method === "PUT") return new Promise<Response>((resolve) => (finish = resolve));
+        return json(server);
+      }),
+    );
+    view = await mount(
+      <SettingsProvider>
+        <Probe />
+      </SettingsProvider>,
+    );
+    let done: Promise<void> = Promise.resolve();
+    await act(async () => {
+      done = current.update({ theme: "dark" });
+    });
+    server = saved({ theme: "light", api_key_set: true, api_key_hint: "9999" });
+    await act(async () => {
+      await current.reload();
+    });
+    expect(current.settings).toMatchObject({ theme: "dark", api_key_set: true }); // not clobbered
+    await act(async () => {
+      server = saved({ theme: "dark", api_key_set: true, api_key_hint: "9999" });
+      finish(json(server));
+      await done;
+    });
+    expect(current.settings.theme).toBe("dark");
   });
 
   it("sends nothing for an empty change", async () => {

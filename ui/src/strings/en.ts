@@ -21,7 +21,7 @@ export const en = {
   "folder.chooseText":
     "Tamra indexes the PDF, Word, text, and Markdown files in this folder and its subfolders. Your files are never changed.",
   "folder.pathLabel": "Folder path",
-  "folder.pathPlaceholder": "Full folder path, like D:\Work\Documents",
+  "folder.pathPlaceholder": "Full folder path, like D:\\Work\\Documents",
   "folder.browse": "Browse…",
   "folder.use": "Use this folder",
 
@@ -44,6 +44,7 @@ export const en = {
   "chatList.options": "Options for {title}",
   "chatList.menu": "Chat options",
   "chatList.rename": "Rename",
+  "chatList.delete": "Delete chat",
   "chatList.renameLabel": "Chat title",
   "chatList.renameHint": "Enter to save · Esc to cancel",
 

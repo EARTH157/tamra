@@ -9,7 +9,7 @@ export type Params = Record<string, string | number>;
 const en_: Record<string, string> = en;
 const tables: Record<Language, Record<string, string>> = { en: en_, th };
 
-/** The language `t()` uses; the settings provider keeps it in step with the saved setting. */
+/** The language `translateNow()` uses; the settings provider keeps it in step with the setting. */
 let current: Language = "en";
 
 export function setLanguage(language: Language): void {
@@ -35,8 +35,8 @@ export function translate(language: Language, key: string, params?: Params): str
   );
 }
 
-/** Translate with the current language. Components should prefer useT(), which re-renders them. */
-export function t(key: TranslationKey, params?: Params): string {
+/** Translate with the current language. Not reactive: use useT() in components. */
+export function translateNow(key: TranslationKey, params?: Params): string {
   return translate(current, key, params);
 }
 

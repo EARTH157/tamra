@@ -80,7 +80,7 @@ function prefersDark(): boolean {
   return typeof window.matchMedia === "function" && window.matchMedia(DARK_QUERY).matches;
 }
 
-/** Loads the settings once, applies the style settings, and provides t()'s language. */
+/** Loads the settings once, applies the style settings, and provides the language. */
 export function SettingsProvider({
   children,
   retryMs = RETRY_MS,
@@ -91,19 +91,21 @@ export function SettingsProvider({
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [systemDark, setSystemDark] = useState(prefersDark);
-  const latest = useRef(settings);
+  // What the core has confirmed, and the changes still waiting for its answer. The settings
+  // shown are the confirmed ones with every pending change on top, so a failed or finished
+  // update just leaves the list and nothing needs to be "put back" by hand.
+  const confirmed = useRef(DEFAULT_SETTINGS);
+  const pending = useRef<SettingsChanges[]>([]);
 
-  /** Change the settings from the latest value, so overlapping updates do not undo each other. */
-  const commit = useCallback((change: (current: Settings) => Settings) => {
-    latest.current = change(latest.current);
-    setSettings(latest.current);
+  const show = useCallback(() => {
+    setSettings(Object.assign({}, confirmed.current, ...pending.current));
   }, []);
 
   const fetchSettings = useCallback(async () => {
-    const loadedSettings = await api<Settings>("GET", "/api/settings");
-    commit(() => loadedSettings);
+    confirmed.current = await api<Settings>("GET", "/api/settings");
     setLoaded(true);
-  }, [commit]);
+    show();
+  }, [show]);
 
   // Load once; while the core is unreachable, try again until it answers.
   useEffect(() => {
@@ -133,39 +135,39 @@ export function SettingsProvider({
     return () => query.removeEventListener("change", onChange);
   }, []);
 
-  setLanguage(settings.language); // before the children render, so a plain t() agrees
+  setLanguage(settings.language); // before the children render, so translateNow() agrees
 
+  // Until the core answers, follow the operating system so a dark one does not flash light.
   useLayoutEffect(() => {
-    applyAppearance(document.documentElement, settings, systemDark);
-  }, [settings, systemDark]);
+    const shown = loaded ? settings : { ...settings, theme: "system" as const };
+    applyAppearance(document.documentElement, shown, systemDark);
+  }, [settings, loaded, systemDark]);
 
   const update = useCallback(
     async (changes: SettingsChanges) => {
       const keys = Object.keys(changes) as (keyof SettingsChanges)[];
       if (keys.length === 0) return;
-      const before = { ...latest.current };
-      commit((current) => ({ ...current, ...changes }));
+      const entry = { ...changes }; // its own identity, even if the caller reuses the object
+      pending.current.push(entry);
+      show();
       try {
         const saved = await api<Settings>("PUT", "/api/settings", changes);
-        // Take the core's values for what changed, and the key state that follows the provider.
-        commit((current) => {
-          const next = { ...current, api_key_set: saved.api_key_set, api_key_hint: saved.api_key_hint };
-          for (const key of keys) Object.assign(next, { [key]: saved[key] });
-          return next;
-        });
-      } catch (error) {
-        // Put back what this call changed, unless a newer update has changed it again.
-        commit((current) => {
-          const next = { ...current };
-          for (const key of keys) {
-            if (current[key] === changes[key]) Object.assign(next, { [key]: before[key] });
-          }
-          return next;
-        });
-        throw error;
+        // Confirm the core's values for what changed, and the key state that follows the provider.
+        const next = {
+          ...confirmed.current,
+          api_key_set: saved.api_key_set,
+          api_key_hint: saved.api_key_hint,
+        };
+        for (const key of keys) Object.assign(next, { [key]: saved[key] });
+        confirmed.current = next;
+      } finally {
+        // Done or refused: either way this change is no longer pending. A refused one disappears
+        // and the confirmed value (or a newer pending change) shows again.
+        pending.current = pending.current.filter((other) => other !== entry);
+        show();
       }
     },
-    [commit],
+    [show],
   );
 
   const value = useMemo(

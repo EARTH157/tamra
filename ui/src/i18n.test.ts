@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getLanguage, setLanguage, t, translate } from "./i18n";
+import { getLanguage, setLanguage, translate, translateNow } from "./i18n";
 import { en } from "./strings/en";
 import { th } from "./strings/th";
 
@@ -21,6 +21,12 @@ describe("string tables", () => {
   it("use the same placeholders in both languages", () => {
     for (const key of Object.keys(en) as (keyof typeof en)[]) {
       expect(placeholders(th[key]), key).toEqual(placeholders(en[key]));
+    }
+  });
+
+  it("keep the backslashes of the Windows path example", () => {
+    for (const language of ["en", "th"] as const) {
+      expect(translate(language, "folder.pathPlaceholder"), language).toContain("D:\\Work\\Documents");
     }
   });
 
@@ -65,15 +71,15 @@ describe("translate", () => {
   });
 });
 
-describe("t", () => {
+describe("translateNow", () => {
   it("is English until a language is set", () => {
     expect(getLanguage()).toBe("en");
-    expect(t("common.close")).toBe("Close");
+    expect(translateNow("common.close")).toBe("Close");
   });
 
   it("follows setLanguage", () => {
     setLanguage("th");
-    expect(t("common.close")).toBe("ปิด");
-    expect(t("chat.notFoundTitle", { name: "HR Documents" })).toBe("ไม่พบใน HR Documents");
+    expect(translateNow("common.close")).toBe("ปิด");
+    expect(translateNow("chat.notFoundTitle", { name: "HR Documents" })).toBe("ไม่พบใน HR Documents");
   });
 });
