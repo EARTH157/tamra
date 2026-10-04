@@ -1,6 +1,6 @@
 import sqlite3
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _V1 = """
 CREATE TABLE collections (
@@ -76,17 +76,32 @@ CREATE TABLE message_sources (
 """
 
 
+_V2 = """
+CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL
+);
+"""
+
+
+def _run_in_transaction(conn: sqlite3.Connection, script: str, version: int) -> None:
+    try:
+        conn.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {version};\nCOMMIT;")
+    except BaseException:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+
+
 def migrate(conn: sqlite3.Connection) -> None:
-    """Bring the schema to SCHEMA_VERSION. Each step runs in one transaction."""
+    """Bring the schema to SCHEMA_VERSION in one transaction: a new database is created at the
+    latest version, and an older one is upgraded in place."""
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version > SCHEMA_VERSION:
         raise RuntimeError(
             f"database schema {version} is newer than this version of Tamra ({SCHEMA_VERSION})"
         )
-    if version < 1:
-        try:
-            conn.executescript("BEGIN;\n" + _V1 + "\nPRAGMA user_version = 1;\nCOMMIT;")
-        except BaseException:
-            if conn.in_transaction:
-                conn.rollback()
-            raise
+    if version == 0:
+        _run_in_transaction(conn, _V1 + _V2, 2)
+    elif version == 1:
+        _run_in_transaction(conn, _V2, 2)
