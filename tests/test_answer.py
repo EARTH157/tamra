@@ -9,8 +9,8 @@ from tamra.answer import (
     detect_language,
     location_label,
 )
+from tamra.llm.base import Chunk, LLMError
 from tamra.llm.llama_server import LlamaServerError
-from tamra.llm.openai_compat import LLMError
 from tamra.store import ChunkInput, SourceRecord, Store
 
 
@@ -120,8 +120,8 @@ def test_llm_errors_are_reported_and_partial_text_kept(env):
     store, make, chat = env
 
     class Broken:
-        def generate(self, messages, max_tokens=1024):
-            yield "partial "
+        def generate(self, messages, max_tokens=1024, *, think=False):
+            yield Chunk("text", "partial ")
             raise LLMError("HTTP 500: boom")
 
     events = list(make(Broken()).ask(chat.id, "How long is the lease term?"))
@@ -260,3 +260,17 @@ def test_a_cancelled_answer_gets_no_automatic_citation(env):
     service.cancel()
     assert [e["type"] for e in stream] == ["done"]
     assert store.list_messages(chat.id)[1].content == "The lease term "
+
+
+def test_thinking_chunks_are_not_part_of_the_answer(env):
+    store, make, chat = env
+
+    class Thinker:
+        def generate(self, messages, max_tokens=1024, *, think=False):
+            yield Chunk("thinking", "Let me check the lease.")
+            yield Chunk("text", "Three years [1].")
+
+    events = list(make(Thinker()).ask(chat.id, "How long is the lease term?"))
+    tokens = [e["text"] for e in events if e["type"] == "token"]
+    assert "".join(tokens) == "Three years [1]."
+    assert store.list_messages(chat.id)[1].content == "Three years [1]."

@@ -13,7 +13,9 @@ a = Analysis(
         (str(ROOT / "ui" / "dist"), "ui/dist"),
         (str(ROOT / "vendor" / "llama"), "vendor/llama"),
     ],
-    hiddenimports=collect_submodules("uvicorn") + ["tamra.app", "tamra.selfcheck", "tamra.embedder"],
+    hiddenimports=collect_submodules("uvicorn")
+    + collect_submodules("keyring.backends")  # the Windows Credential Manager backend
+    + ["tamra.app", "tamra.selfcheck", "tamra.embedder"],
 )
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Tamra", console=False)

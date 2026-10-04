@@ -5,6 +5,7 @@ import sys
 import pytest
 
 from tamra.__main__ import main
+from tamra.llm.base import Chunk
 from tamra.selfcheck import run_selfcheck
 
 
@@ -129,11 +130,16 @@ def test_llm_check_reports_timings_from_a_stub_server(tmp_path, monkeypatch):
     class StubClient:
         closed = False
 
-        def __init__(self, base_url, model):
+        def __init__(self, base_url, model, **kwargs):
             pass
 
-        def generate(self, messages, max_tokens=1024):
-            yield from ["1", ",", " 2"]
+        def generate(self, messages, max_tokens=1024, *, think=False):
+            yield from [
+                Chunk("text", "1"),
+                Chunk("thinking", "hm"),
+                Chunk("text", ","),
+                Chunk("text", " 2"),
+            ]
 
         def close(self):
             StubClient.closed = True

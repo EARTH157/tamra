@@ -119,3 +119,40 @@ def test_invalid_stored_values_fall_back_to_defaults(store):
     assert settings.accent == "green"
     assert settings.ask_before_delete is True
     assert settings.theme == "dark"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "https://api.example.com",
+        "https://api.example.com/v1/",
+        "http://localhost:11434/v1",
+        "http://127.0.0.1:1234",
+    ],
+)
+def test_valid_api_base_urls_are_accepted(store, url):
+    assert save_settings(store, {"api_base_url": url}).api_base_url == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "api.example.com",
+        "ftp://api.example.com",
+        "file:///C:/models",
+        "https://",
+        "https:///v1",
+        "https://user:pass@api.example.com/v1",
+        "https://user@api.example.com",
+        "https://api.example.com/v1?key=abc",
+        "https://api.example.com/v1?",
+        "https://api.example.com/v1#frag",
+        "https://api.example.com:notaport",
+        "  ",
+    ],
+)
+def test_invalid_api_base_urls_are_rejected(store, url):
+    with pytest.raises(ValueError, match="api_base_url"):
+        save_settings(store, {"api_base_url": url})
+    assert store.all_settings() == {}

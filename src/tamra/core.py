@@ -41,7 +41,9 @@ class Core:
         self._embedder_lock = threading.Lock()
         spans_factory = token_spans_factory or (lambda: bge_token_spans(bge / "tokenizer.json"))
         self.llm = llm or LocalLLM(
-            llama_exe, models_dir / DEV_LLM_FILE, data_dir / "logs" / "llama-server.log"
+            llama_exe,
+            lambda: models_dir / DEV_LLM_FILE,
+            data_dir / "logs" / "llama-server.log",
         )
         self.indexer = Indexer(self.store, self.embedder, spans_factory, MODEL_ID)
         self.watcher = FolderWatcher(self.indexer.request_reconcile, debounce=debounce)

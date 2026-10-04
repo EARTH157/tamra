@@ -122,13 +122,15 @@ def _check_llm(llama_exe: Path, model: Path, log_dir: Path | None) -> dict:
     t0 = time.perf_counter()
     with LlamaServer(llama_exe, model, log_file) as srv:
         start_s = time.perf_counter() - t0
-        llm = OpenAICompatibleLLM(srv.base_url, "local")
+        llm = OpenAICompatibleLLM(srv.base_url, "local", kind="local")
         try:
             t1 = time.perf_counter()
             first_token_s, tokens = None, 0
-            for _ in llm.generate(
+            for chunk in llm.generate(
                 [{"role": "user", "content": "Count from 1 to 20."}], max_tokens=64
             ):
+                if chunk.kind != "text":
+                    continue
                 first_token_s = first_token_s or time.perf_counter() - t1
                 tokens += 1
             gen_s = time.perf_counter() - t1

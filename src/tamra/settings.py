@@ -3,6 +3,7 @@
 import dataclasses
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import urlparse
 
 from tamra.store import Store
 
@@ -42,6 +43,30 @@ _CHOICES: dict[str, tuple[str, ...]] = {
 }
 
 
+def _is_valid_base_url(value: object) -> bool:
+    """Empty (the provider's default), or an http(s) URL with a host and no credentials, query
+    or fragment."""
+    if not isinstance(value, str):
+        return False
+    if value == "":
+        return True
+    try:
+        parts = urlparse(value)
+        host = parts.hostname
+        _ = parts.port  # raises ValueError on a malformed port
+    except ValueError:
+        return False
+    return (
+        parts.scheme in ("http", "https")
+        and bool(host)
+        and "@" not in parts.netloc  # user:pass@host
+        and not parts.query
+        and not parts.fragment
+        and "?" not in value
+        and "#" not in value
+    )
+
+
 def _is_valid(field: str, value: object) -> bool:
     if field in _CHOICES:
         return isinstance(value, str) and value in _CHOICES[field]
@@ -51,7 +76,9 @@ def _is_valid(field: str, value: object) -> bool:
         return value is None or (isinstance(value, str) and value != "")
     if field == "api_model":
         return isinstance(value, str) and value != ""
-    return isinstance(value, str)  # api_base_url: empty means the provider's default
+    if field == "api_base_url":
+        return _is_valid_base_url(value)
+    return isinstance(value, str)
 
 
 _FIELDS = tuple(f.name for f in dataclasses.fields(Settings))

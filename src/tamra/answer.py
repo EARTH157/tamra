@@ -8,8 +8,8 @@ from typing import Protocol
 
 import numpy as np
 
+from tamra.llm.base import Chunk, LLMError, Message
 from tamra.llm.llama_server import LlamaServerError
-from tamra.llm.openai_compat import LLMError, Message
 from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
 from tamra.store import SourceRecord, Store
 
@@ -38,7 +38,9 @@ _MARKER = re.compile(r"\[(\d+)\]")
 
 
 class LLMLike(Protocol):
-    def generate(self, messages: list[Message], max_tokens: int = 1024) -> Iterator[str]: ...
+    def generate(
+        self, messages: list[Message], max_tokens: int = 1024, *, think: bool = False
+    ) -> Iterator[Chunk]: ...
 
 
 @dataclass(frozen=True)
@@ -226,12 +228,14 @@ class AnswerService:
             try:
                 client = self._llm()
                 cancelled = False
-                for token in client.generate(messages, self._settings.max_tokens):
+                for chunk in client.generate(messages, self._settings.max_tokens):
                     if self._cancel.is_set():
                         cancelled = True
                         break
-                    parts.append(token)
-                    yield {"type": "token", "text": token}
+                    if chunk.kind != "text":  # thinking is surfaced in Task 5
+                        continue
+                    parts.append(chunk.text)
+                    yield {"type": "token", "text": chunk.text}
                 if not cancelled:
                     n = auto_citation("".join(parts), sources)
                     if n is not None:

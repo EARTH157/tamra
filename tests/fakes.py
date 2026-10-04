@@ -6,6 +6,8 @@ from collections.abc import Iterator
 
 import numpy as np
 
+from tamra.llm.base import Chunk
+
 
 class FakeEmbedder:
     """Bag-of-words hashing embedder: texts that share words get similar unit vectors."""
@@ -41,9 +43,16 @@ class FakeLLM:
         self.tokens = tokens
         self.calls: list[list[dict]] = []
 
-    def generate(self, messages, max_tokens: int = 1024) -> Iterator[str]:
+    kind = "local"
+    label = "fake-llm"
+
+    def generate(self, messages, max_tokens: int = 1024, *, think: bool = False) -> Iterator[Chunk]:
         self.calls.append(list(messages))
-        yield from self.tokens
+        for token in self.tokens:
+            yield Chunk("text", token)
+
+    def close(self) -> None:
+        pass
 
 
 class FakeLocalLLM:
