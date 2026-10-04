@@ -84,3 +84,17 @@ export function mockFetch(routes: Record<string, () => Response>): Call[] {
   );
   return calls;
 }
+
+/** Press a key on an element (keydown, bubbling, as React listens for it). */
+export async function press(element: Element | null | undefined, key: string): Promise<void> {
+  if (!(element instanceof HTMLElement)) throw new Error("nothing to press a key on");
+  await act(async () => {
+    element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  });
+  await settle();
+}
+
+/** The first button (or menu item) inside root whose visible text is exactly text. */
+export function buttonByText(root: ParentNode, text: string): HTMLButtonElement | undefined {
+  return [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
+}

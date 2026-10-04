@@ -1,3 +1,5 @@
+import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Chat } from "./types";
 
 type Props = {
@@ -5,39 +7,221 @@ type Props = {
   activeId: number | null;
   disabled: boolean;
   onSelect: (id: number) => void;
-  onNew: () => void;
-  onDelete: (id: number) => void;
+  onRename: (id: number, title: string) => Promise<void>;
+  onDelete: (chat: Chat) => void;
 };
 
-export default function ChatList({ chats, activeId, disabled, onSelect, onNew, onDelete }: Props) {
+type MenuState = { id: number; top: number; left: number };
+
+const untitled = (chat: Chat) => chat.title || "New chat";
+
+/** The sidebar's chats, each with a ⋯ menu (Rename, Delete chat) and an inline rename. */
+export default function ChatList({
+  chats,
+  activeId,
+  disabled,
+  onSelect,
+  onRename,
+  onDelete,
+}: Props) {
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
+  const trigger = useRef<HTMLElement | null>(null);
+
+  function openMenu(chat: Chat, button: HTMLElement) {
+    if (menu?.id === chat.id) {
+      setMenu(null);
+      return;
+    }
+    trigger.current = button;
+    const rect = button.getBoundingClientRect();
+    const left = Math.min(rect.left + 3, window.innerWidth - 226);
+    setMenu({ id: chat.id, top: rect.bottom + 3, left: Math.max(8, left) });
+  }
+
+  const menuChat = menu ? chats.find((chat) => chat.id === menu.id) : undefined;
   return (
-    <nav className="chat-list">
-      <button type="button" className="new-chat" onClick={onNew} disabled={disabled}>
-        New chat
-      </button>
+    <nav className="chat-list" aria-label="Chats">
       <ul>
-        {chats.map((chat) => (
-          <li key={chat.id} className={chat.id === activeId ? "active" : undefined}>
-            <button
-              type="button"
-              className="chat-title"
-              onClick={() => onSelect(chat.id)}
-              disabled={disabled}
-            >
-              {chat.title || "New chat"}
-            </button>
-            <button
-              type="button"
-              className="delete"
-              aria-label={`Delete ${chat.title || "chat"}`}
-              onClick={() => onDelete(chat.id)}
-              disabled={disabled}
-            >
-              ×
-            </button>
-          </li>
-        ))}
+        {chats.map((chat) =>
+          chat.id === editing ? (
+            <RenameRow
+              key={chat.id}
+              chat={chat}
+              onDone={() => setEditing(null)}
+              onSave={(title) => onRename(chat.id, title)}
+            />
+          ) : (
+            <li key={chat.id} className={chat.id === activeId ? "chat-row active" : "chat-row"}>
+              <button
+                type="button"
+                className="chat-title"
+                title={untitled(chat)}
+                onClick={() => onSelect(chat.id)}
+                disabled={disabled}
+              >
+                {untitled(chat)}
+              </button>
+              <button
+                type="button"
+                className="icon-button row-more"
+                aria-label={`Options for ${untitled(chat)}`}
+                aria-haspopup="menu"
+                aria-expanded={menu?.id === chat.id}
+                onClick={(event) => openMenu(chat, event.currentTarget)}
+                disabled={disabled}
+              >
+                <MoreHorizontal size={16} />
+              </button>
+            </li>
+          ),
+        )}
       </ul>
+      {menu && menuChat && (
+        <ChatMenu
+          top={menu.top}
+          left={menu.left}
+          onClose={(refocus) => {
+            setMenu(null);
+            if (refocus) trigger.current?.focus();
+          }}
+          onRename={() => {
+            setMenu(null);
+            setEditing(menuChat.id);
+          }}
+          onDelete={() => {
+            setMenu(null);
+            onDelete(menuChat);
+          }}
+        />
+      )}
     </nav>
+  );
+}
+
+type MenuProps = {
+  top: number;
+  left: number;
+  onClose: (refocus: boolean) => void;
+  onRename: () => void;
+  onDelete: () => void;
+};
+
+function ChatMenu({ top, left, onClose, onRename, onDelete }: MenuProps) {
+  const box = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
+
+  useEffect(() => {
+    box.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    function outside(event: MouseEvent) {
+      const target = event.target as Node;
+      if (box.current?.contains(target)) return;
+      if (target instanceof Element && target.closest(".row-more")) return; // the toggle
+      close.current(false);
+    }
+    document.addEventListener("mousedown", outside);
+    return () => document.removeEventListener("mousedown", outside);
+  }, []);
+
+  function onKeyDown(event: KeyboardEvent) {
+    const items = [...(box.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (event.key === "Escape" || event.key === "Tab") {
+      event.preventDefault();
+      onClose(true); // back to the ⋯ button
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      items[(at + step + items.length) % items.length]?.focus();
+    }
+  }
+
+  return (
+    <div
+      ref={box}
+      className="menu"
+      role="menu"
+      aria-label="Chat options"
+      style={{ top, left }}
+      onKeyDown={onKeyDown}
+    >
+      <button type="button" role="menuitem" className="menu-item" onClick={onRename}>
+        <Pencil size={16} />
+        Rename
+      </button>
+      <div className="menu-divider" role="separator" />
+      <button type="button" role="menuitem" className="menu-item danger" onClick={onDelete}>
+        <Trash2 size={16} />
+        Delete chat
+      </button>
+    </div>
+  );
+}
+
+type RenameProps = { chat: Chat; onSave: (title: string) => Promise<void>; onDone: () => void };
+
+/** Inline rename: Enter saves, Esc (or leaving the field) cancels. */
+function RenameRow({ chat, onSave, onDone }: RenameProps) {
+  const [draft, setDraft] = useState(chat.title);
+  const [tip, setTip] = useState<{ top: number; left: number } | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const saving = useRef(false);
+
+  useLayoutEffect(() => {
+    const field = input.current;
+    if (!field) return;
+    field.focus();
+    field.select();
+    const rect = field.getBoundingClientRect();
+    setTip({ top: rect.bottom + 6, left: rect.left });
+  }, []);
+
+  async function save() {
+    const title = draft.trim();
+    if (saving.current) return;
+    if (!title || title === chat.title) {
+      onDone();
+      return;
+    }
+    saving.current = true;
+    try {
+      await onSave(title);
+    } finally {
+      saving.current = false;
+      onDone();
+    }
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void save();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onDone();
+    }
+  }
+
+  return (
+    <li className="chat-row renaming">
+      <input
+        ref={input}
+        className="rename-input"
+        aria-label="Chat title"
+        value={draft}
+        maxLength={200}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={onKeyDown}
+        onBlur={() => {
+          if (!saving.current) onDone();
+        }}
+      />
+      <span className="tooltip" role="note" style={tip ?? undefined}>
+        Enter to save · Esc to cancel
+      </span>
+    </li>
   );
 }
