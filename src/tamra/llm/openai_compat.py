@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Iterator
 from typing import Literal
 from urllib.parse import urlparse, urlunparse
@@ -12,6 +13,7 @@ __all__ = ["LLMError", "Message", "OpenAICompatibleLLM", "normalise_base_url"]
 CONNECT_TIMEOUT = 10.0
 READ_TIMEOUT = {"local": 300.0, "api": 120.0}  # seconds between bytes, not the whole answer
 _LOOPBACK = ("127.0.0.1", "localhost", "::1")
+_SECRET = re.compile(r"sk-[A-Za-z0-9_-]+")  # API-key-shaped tokens
 
 
 def _sse_lines(chunks: Iterator[bytes]) -> Iterator[str]:
@@ -110,10 +112,12 @@ class OpenAICompatibleLLM:
                         and "max_tokens" in response.text
                     ):
                         raise _MaxTokensRejected
-                    raise ProviderError(
-                        f"HTTP {response.status_code}: {response.text[:500]}",
-                        _http_reason(response.status_code),
-                    )
+                    reason = _http_reason(response.status_code)
+                    if reason == "auth":  # the body can echo a (masked) key
+                        detail = "The API key was rejected."
+                    else:
+                        detail = _SECRET.sub("[redacted]", response.text[:500])
+                    raise ProviderError(f"HTTP {response.status_code}: {detail}", reason)
 
                 found_completion = False  # [DONE] or truthy finish_reason
 
@@ -167,7 +171,9 @@ class OpenAICompatibleLLM:
                 if not found_completion:
                     raise ProviderError("Stream ended without [DONE] or finish_reason")
 
-        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        except httpx.ReadTimeout as e:  # connected but slow: not "offline"
+            raise ProviderError(f"{type(e).__name__}: {e}") from e
+        except httpx.TransportError as e:  # connect, read, protocol and network failures
             raise ProviderError(f"{type(e).__name__}: {e}", "offline") from e
         except (httpx.HTTPError, UnicodeDecodeError) as e:
             raise ProviderError(f"{type(e).__name__}: {e}") from e

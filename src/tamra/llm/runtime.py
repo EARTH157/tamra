@@ -33,17 +33,20 @@ class LocalLLM:
     def label(self) -> str:
         return self._model_path().stem
 
+    # base_url and gpu_offload read one snapshot of `_server` without taking the lock: a UI poll
+    # must not wait behind client(), which holds it for the whole llama-server start. `_server`
+    # is only ever assigned (never mutated), once the server is up, so the read is atomic.
     @property
     def base_url(self) -> str | None:
-        with self._lock:
-            return self._server.base_url if self._server is not None else None
+        server = self._server
+        return server.base_url if server is not None else None
 
     @property
     def gpu_offload(self) -> bool | None:
         """Whether the running server offloaded layers to the GPU: True, False (it fell back to
         the CPU), or None when there is no server or its log does not say."""
-        with self._lock:
-            return self._server.gpu_offload if self._server is not None else None
+        server = self._server
+        return server.gpu_offload if server is not None else None
 
     def client(self) -> OpenAICompatibleLLM:
         """A client for the running server, starting (or restarting) llama-server if needed.

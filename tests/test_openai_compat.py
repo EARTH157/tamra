@@ -535,3 +535,48 @@ def test_timeouts_depend_on_the_kind(kind, read):
 def test_the_label_defaults_to_the_model_name():
     assert make(lambda r: httpx.Response(200)).label == "m"
     assert make(lambda r: httpx.Response(200), label="Qwen").label == "Qwen"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_auth_errors_do_not_echo_the_response_body(status):
+    llm = make(lambda r: httpx.Response(status, text="Bad key: sk-proj-****abcd"))
+    with pytest.raises(ProviderError) as info:
+        list(llm.generate(USER))
+    assert "sk-" not in str(info.value)
+    assert str(status) in str(info.value)
+    assert info.value.reason == "auth"
+
+
+def test_key_shaped_tokens_are_redacted_from_other_error_bodies():
+    llm = make(lambda r: httpx.Response(500, text="boom for sk-ant-api03-AbC_dEf-123 retry"))
+    with pytest.raises(ProviderError) as info:
+        list(llm.generate(USER))
+    assert "sk-ant" not in str(info.value) and "AbC" not in str(info.value)
+    assert "boom for [redacted] retry" in str(info.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ReadError("reset"), httpx.RemoteProtocolError("closed early"), httpx.WriteError("x")],
+)
+def test_other_transport_errors_map_to_offline(error):
+    def handler(request):
+        raise error
+
+    with pytest.raises(ProviderError) as info:
+        list(make(handler).generate(USER))
+    assert info.value.reason == "offline"
+
+
+def test_a_connection_dropped_mid_stream_is_offline():
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"a"}}]}\n\n'
+            raise httpx.ReadError("connection reset")
+
+    llm = make(lambda r: httpx.Response(200, stream=Body()))
+    stream = llm.generate(USER)
+    assert next(stream) == Chunk("text", "a")
+    with pytest.raises(ProviderError) as info:
+        list(stream)
+    assert info.value.reason == "offline"

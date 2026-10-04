@@ -18,8 +18,16 @@ class LlamaServerError(Exception):
 
 
 LOG_VERBOSITY = "4"
+MAX_LOG_BYTES = 1024 * 1024  # a larger log is restarted instead of appended to
 _OFFLOADED = re.compile(r"offloaded\s+(\d+)\s*/\s*(\d+)\s+layers\s+to\s+GPU", re.IGNORECASE)
 _MODEL_BUFFER = re.compile(r"load_tensors:\s+(\w+)\s+model buffer size\s*=\s*([\d.]+)\s*MiB")
+
+
+def _log_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
 
 
 def parse_gpu_offload(log_text: str) -> bool | None:
@@ -89,7 +97,9 @@ class LlamaServer:
             budget = remaining * 0.6 if gpu and len(attempts) > 1 else remaining
             try:
                 try:
-                    self._log = self.log_file.open("ab")
+                    self._log = self.log_file.open(
+                        "wb" if _log_size(self.log_file) > MAX_LOG_BYTES else "ab"
+                    )
                     self._log_start = self._log.tell()
                 except OSError as e:
                     raise LlamaServerError(f"cannot write the log at {self.log_file}: {e}") from e

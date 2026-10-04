@@ -43,6 +43,7 @@ class StubClient:
     """Stands in for anthropic.Anthropic: records the stream() arguments."""
 
     def __init__(self, events=(), error=None):
+        self.closed = False
         self.calls: list[dict] = []
         self.stream_obj = StubStream(list(events), error)
         self.messages = SimpleNamespace(stream=self._stream)
@@ -50,6 +51,9 @@ class StubClient:
     def _stream(self, **kwargs):
         self.calls.append(kwargs)
         return self.stream_obj
+
+    def close(self):
+        self.closed = True
 
 
 def status_error(cls, status: int, message: str = "nope"):
@@ -75,7 +79,7 @@ def test_text_deltas_stream_as_text_chunks_and_the_system_prompt_is_separate():
     [call] = client.calls
     assert call["model"] == "claude-sonnet-5-5"
     assert call["system"] == "Be brief."
-    assert call["max_tokens"] == 500
+    assert call["max_tokens"] == 500 + THINKING_HEADROOM  # Claude 5 thinks even when not asked
     assert call["messages"] == [
         {"role": "user", "content": "Hi"},
         {"role": "assistant", "content": "Hello"},
@@ -173,3 +177,48 @@ def test_the_key_is_not_shown_in_repr():
 def test_provider_attributes():
     llm = llm_for(StubClient())
     assert (llm.kind, llm.label) == ("api", "claude-sonnet-5-5")
+
+
+def test_close_closes_the_sdk_client():
+    client = StubClient()
+    llm = llm_for(client)
+    llm.close()
+    assert client.closed
+
+
+def test_thinking_headroom_is_reserved_without_thinking_and_summaries_only_with_it():
+    plain, thinking = StubClient(), StubClient()
+    list(llm_for(plain).generate(MESSAGES, max_tokens=1024))
+    list(llm_for(thinking).generate(MESSAGES, max_tokens=1024, think=True))
+    assert plain.calls[0]["max_tokens"] == 1024 + THINKING_HEADROOM
+    assert "thinking" not in plain.calls[0]
+    assert thinking.calls[0]["max_tokens"] == 1024 + THINKING_HEADROOM
+    assert thinking.calls[0]["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+def test_running_out_of_room_before_any_text_is_an_error():
+    client = StubClient([delta_event("thinking_delta", "hmm"), stop_event("max_tokens")])
+    with pytest.raises(ProviderError, match="ran out of room") as info:
+        list(llm_for(client).generate(MESSAGES, think=True))
+    assert info.value.reason == "other"
+
+
+def test_a_partial_answer_cut_off_at_max_tokens_stands_with_a_warning(caplog):
+    client = StubClient([delta_event("text_delta", "Three years"), stop_event("max_tokens")])
+    with caplog.at_level("WARNING", logger="tamra.llm.anthropic_api"):
+        chunks = list(llm_for(client).generate(MESSAGES))
+    assert chunks == [Chunk("text", "Three years")]
+    assert "max_tokens" in caplog.text
+
+
+def test_a_normal_stop_is_not_an_error():
+    client = StubClient([delta_event("text_delta", "ok"), stop_event("end_turn")])
+    assert list(llm_for(client).generate(MESSAGES)) == [Chunk("text", "ok")]
+
+
+@pytest.mark.parametrize("key", ["", None])
+def test_a_missing_key_is_refused_before_the_sdk_can_look_elsewhere(key, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "from-the-environment")
+    with pytest.raises(ProviderError) as info:
+        AnthropicLLM("claude-sonnet-5-5", key)
+    assert info.value.reason == "auth"

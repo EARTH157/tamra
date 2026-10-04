@@ -150,6 +150,9 @@ def test_valid_api_base_urls_are_accepted(store, url):
         "https://api.example.com/v1#frag",
         "https://api.example.com:notaport",
         "  ",
+        " https://api.example.com",
+        "https://api.example.com ",
+        "https://api.example.com\n",
     ],
 )
 def test_invalid_api_base_urls_are_rejected(store, url):

@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from tamra.llm.llama_server import LlamaServerError
@@ -101,6 +103,33 @@ def test_gpu_offload_comes_from_the_running_server(model, tmp_path):
     assert llm.gpu_offload is False
     llm.close()
     assert llm.gpu_offload is None
+
+
+def test_polling_does_not_wait_for_a_server_that_is_still_starting(model, tmp_path):
+    started, release = threading.Event(), threading.Event()
+
+    class SlowServer(FakeServer):
+        def start(self):
+            started.set()
+            release.wait(10)
+            return super().start()
+
+    llm = LocalLLM(tmp_path / "x.exe", lambda: model, tmp_path / "l.log", server_factory=SlowServer)
+    worker = threading.Thread(target=llm.client)
+    worker.start()
+    try:
+        assert started.wait(5)
+        polled = []
+        poller = threading.Thread(target=lambda: polled.append((llm.base_url, llm.gpu_offload)))
+        poller.start()
+        poller.join(2)
+        assert not poller.is_alive(), "base_url/gpu_offload blocked behind the server start"
+        assert polled == [(None, None)]
+    finally:
+        release.set()
+        worker.join(5)
+    assert llm.base_url == "http://127.0.0.1:9" and llm.gpu_offload is True
+    llm.close()
 
 
 @pytest.mark.assets

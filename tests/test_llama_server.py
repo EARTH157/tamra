@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from tamra.llm.llama_server import LlamaServer, LlamaServerError, parse_gpu_offload
+from tamra.llm.llama_server import (
+    MAX_LOG_BYTES,
+    LlamaServer,
+    LlamaServerError,
+    parse_gpu_offload,
+)
 from tamra.llm.openai_compat import OpenAICompatibleLLM
 from tamra.net import free_port
 
@@ -104,6 +109,25 @@ def test_gpu_offload_is_read_from_this_runs_log_only(tmp_path, spawned):
     loud.start(timeout=5)
     assert loud.gpu_offload is True
     loud.stop()
+
+
+def test_an_oversized_log_is_restarted_but_a_small_one_is_appended_to(tmp_path, spawned):
+    stub_script = tmp_path / "stub.py"
+    stub_script.write_text(_STUB_SERVER)
+    log = tmp_path / "log.txt"
+
+    log.write_text("old line\n")
+    first = _StubLlamaServer(stub_script, Path("dummy.gguf"), log, modes={"gpu": "offload"})
+    first.start(timeout=5)
+    first.stop()
+    assert log.read_text().startswith("old line\n")
+
+    log.write_bytes(b"x" * (MAX_LOG_BYTES + 1))
+    second = _StubLlamaServer(stub_script, Path("dummy.gguf"), log, modes={"gpu": "offload"})
+    second.start(timeout=5)
+    assert second.gpu_offload is True
+    second.stop()
+    assert log.stat().st_size < 1000  # truncated, then only the new run's output
 
 
 def test_gpu_offload_is_unknown_without_a_log(tmp_path):

@@ -50,6 +50,8 @@ def _is_valid_base_url(value: object) -> bool:
         return False
     if value == "":
         return True
+    if value != value.strip():
+        return False
     try:
         parts = urlparse(value)
         host = parts.hostname
