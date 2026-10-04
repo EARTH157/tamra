@@ -31,7 +31,7 @@ class ImportRefused(ValueError):
 
 @dataclass(frozen=True)
 class ImportResult:
-    id: str  # catalog id, or the file's stem for an uncatalogued model
+    id: str  # catalog id, or "import:<file name>" if uncatalogued; both are valid local_model_id
     path: Path  # where the file now lives, inside the models directory
     catalogued: bool
     warning: str | None = None
@@ -186,7 +186,7 @@ class ModelManager:
             dest = self.models_dir / path.name
             self._copy(path, dest, expected=None)
             return ImportResult(
-                id=path.stem, path=dest, catalogued=False, warning=UNCATALOGUED_WARNING
+                id=f"import:{path.name}", path=dest, catalogued=False, warning=UNCATALOGUED_WARNING
             )
 
     def _refuse_if_downloading(self, entry: ModelEntry) -> None:

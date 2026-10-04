@@ -207,11 +207,16 @@ class AnswerService:
         try:
             yield from self._ask(chat_id, question, mode, think)
         finally:
-            with self._state:
-                self._answering = False
-                after, self._after = self._after, []
-            for action in after:
-                _run(action)
+            # Stay "answering" until the deferred actions are done: a new answer must not start
+            # (and read a provider) while one of them is about to close it.
+            while True:
+                with self._state:
+                    after, self._after = self._after, []
+                    if not after:
+                        self._answering = False
+                        break
+                for action in after:
+                    _run(action)
 
     def _ask(self, chat_id: int, question: str, mode: str, think: bool) -> Iterator[dict]:
         collection = self._store.get_collection()
@@ -288,6 +293,8 @@ class AnswerService:
                         continue
                     parts.append(chunk.text)
                     yield {"type": "token", "text": chunk.text}
+                if not cancelled and not parts:  # e.g. only thinking came back
+                    error = "The model returned no answer."
                 if not cancelled:
                     n = auto_citation("".join(parts), sources)
                     if n is not None:

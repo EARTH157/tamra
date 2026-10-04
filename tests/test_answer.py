@@ -438,3 +438,39 @@ def test_a_failing_deferred_action_does_not_stop_the_others(env):
     service.when_idle(lambda: ran.append("second"))
     assert [e["type"] for e in stream][-1] == "done"
     assert ran == ["second"]
+
+
+def test_a_new_answer_cannot_start_while_deferred_actions_are_running(env):
+    store, make, chat = env
+    service = make(FakeLLM())
+    stream = service.ask(chat.id, "How long is the lease term?")
+    next(stream)
+    seen = []
+    service.when_idle(lambda: seen.append(list(service.ask(chat.id, "lease?"))))
+    list(stream)
+    assert seen == [[{"type": "error", "message": "Another answer is still being written."}]]
+    assert [e["type"] for e in service.ask(chat.id, "lease term?")][-1] == "done"  # then free
+
+
+def test_an_action_deferred_while_draining_still_runs(env):
+    store, make, chat = env
+    service = make(FakeLLM())
+    stream = service.ask(chat.id, "How long is the lease term?")
+    next(stream)
+    ran = []
+    service.when_idle(lambda: service.when_idle(lambda: ran.append("nested")))
+    list(stream)
+    assert ran == ["nested"]
+
+
+def test_an_answer_with_only_thinking_is_reported_not_silent(env):
+    store, make, chat = env
+    llm = FakeLLM((Chunk("thinking", "Hmm."),))
+    events = list(make(llm).ask(chat.id, "How long is the lease term?", think=True))
+    assert [e["type"] for e in events] == ["sources", "thinking", "error"]
+    assert events[-1] == {
+        "type": "error",
+        "message": "The model returned no answer.",
+        "reason": "other",
+    }
+    assert [m.role for m in store.list_messages(chat.id)] == ["user"]

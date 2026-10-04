@@ -1,12 +1,12 @@
 """Core: owns the store, the indexer and watcher, the answer service, and the LLM providers."""
 
+import hashlib
 import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
-from keyring.errors import KeyringError
 
 from tamra import secrets
 from tamra.answer import AnswerService, AnswerSettings, Route
@@ -77,7 +77,7 @@ class Core:
         self._provider_lock = threading.Lock()  # guards the settings swap and the API cache
         self._api_factory = api_factory
         self._api: Provider | None = None  # built on the first API answer, not at startup
-        self._api_identity: tuple | None = None  # what _api was built from, including the key
+        self._api_identity: tuple | None = None  # what _api was built from (the key as a sha256)
         self.local = llm or LocalLLM(
             llama_exe, self._local_model_path, data_dir / "logs" / "llama-server.log"
         )
@@ -105,18 +105,25 @@ class Core:
         builds what it needs: nothing here starts llama-server or reads the API key.
         """
         with self._provider_lock:
+            before = self._settings
             settings = save_settings(self.store, changes)
             self._settings = settings
-            retired: list[Provider] = []
-            if changes.keys() & _PROVIDER_FIELDS:
-                if self._api is not None:
-                    retired.append(self._api)
-                    self._api, self._api_identity = None, None
-                if settings.mode == "api":
-                    retired.append(self.local)  # stop llama-server to free its memory
-        for provider in retired:
-            self.answers.when_idle(provider.close)
+            # Compare values: a client may send the whole form with only one field changed.
+            swapped = any(getattr(before, f) != getattr(settings, f) for f in _PROVIDER_FIELDS)
+            retired_api = None
+            if swapped:
+                retired_api, self._api, self._api_identity = self._api, None, None
+        if retired_api is not None:
+            self.answers.when_idle(retired_api.close)
+        if swapped and settings.mode == "api":
+            self.answers.when_idle(self._close_local_if_unused)  # free the model's memory
         return settings
+
+    def _close_local_if_unused(self) -> None:
+        # Runs after an answer ends, so the mode is read now: if the user switched back to
+        # local in the meantime, the server must stay up.
+        if self._settings.mode == "api":
+            self.local.close()
 
     def hardware(self) -> Hardware:
         """RAM and GPUs, probed on the first call (it runs llama-server) and then remembered."""
@@ -139,12 +146,16 @@ class Core:
         """
         try:
             key = secrets.get_api_key(settings.api_provider)
-        except KeyringError as e:
+        except Exception as e:  # any keyring backend failure; the key is never in the message
+            log.warning("cannot read the API key: %s", type(e).__name__)
             raise ProviderError("The API key could not be read from the system.", "auth") from e
         if not key:
             raise ProviderError("No API key is set.", "auth")
-        identity = (settings.api_provider, settings.api_model, settings.api_base_url, key)
+        key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()  # no plaintext key kept here
+        identity = (settings.api_provider, settings.api_model, settings.api_base_url, key_hash)
         with self._provider_lock:
+            # `settings` can be older than the cache (they changed after this answer started):
+            # the cache is then replaced, and the next answer rebuilds from the current ones.
             if self._api is not None and self._api_identity == identity:
                 return self._api
             replaced = self._api

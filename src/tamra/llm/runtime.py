@@ -6,7 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-from tamra.llm.llama_server import LlamaServer, LlamaServerError
+from tamra.llm.base import ProviderError
+from tamra.llm.llama_server import LlamaServer
 from tamra.llm.openai_compat import OpenAICompatibleLLM
 
 
@@ -61,7 +62,7 @@ class LocalLLM:
                 self._close_locked()
             if self._client is None:
                 if not model.is_file():
-                    raise LlamaServerError(f"Local model not found: {model}")
+                    raise ProviderError("The local model file is missing.", "model_missing")
                 key = secrets.token_urlsafe(32)
                 server = self._factory(
                     self._exe, model, self._log_file, ctx_size=self._ctx_size, api_key=key

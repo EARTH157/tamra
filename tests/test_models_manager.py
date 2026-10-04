@@ -264,6 +264,7 @@ def test_import_of_an_unknown_gguf_is_copied_as_is_with_a_warning(tmp_path):
     src.write_bytes(b"GGUF" + b"some other weights")
     result = manager.import_file(src)
     assert result.catalogued is False
+    assert result.id == "import:my-own-model.gguf"  # accepted as Settings.local_model_id
     assert result.warning == "This model is not in Tamra's catalog; answer quality is unknown."
     assert result.warning == UNCATALOGUED_WARNING
     assert result.path == models / "my-own-model.gguf"

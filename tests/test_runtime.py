@@ -2,7 +2,7 @@ import threading
 
 import pytest
 
-from tamra.llm.llama_server import LlamaServerError
+from tamra.llm.base import ProviderError
 from tamra.llm.runtime import LocalLLM
 
 
@@ -68,8 +68,9 @@ def test_a_missing_model_is_reported(tmp_path):
         tmp_path / "l.log",
         server_factory=FakeServer,
     )
-    with pytest.raises(LlamaServerError, match="Local model not found"):
+    with pytest.raises(ProviderError, match="model file is missing") as e:
         llm.client()
+    assert e.value.reason == "model_missing"
 
 
 def test_a_changed_model_restarts_the_server_on_the_next_question(tmp_path):

@@ -399,3 +399,55 @@ def test_a_provider_is_not_closed_under_an_answer_that_is_streaming(tmp_path, mo
         assert c.store.list_messages(chat.id)[1].provider == "local"
     finally:
         c.shutdown()
+
+
+def test_switching_back_to_local_before_the_stream_ends_keeps_the_local_model(
+    tmp_path, monkeypatch
+):
+    Keys(monkeypatch, anthropic="test-key")
+    local = FakeLocalLLM(FakeLLM(("one ", "two ", "three")))
+    c = indexed_core(tmp_path, api_factory=ApiFactory(), llm=local)
+    try:
+        chat = c.store.create_chat()
+        stream = c.answers.ask(chat.id, "How long is the lease term?")
+        next(stream)
+        next(stream)
+        c.apply_settings({"mode": "api"})
+        c.apply_settings({"mode": "local"})
+        assert [e["type"] for e in stream][-1] == "done"
+        assert not local.closed  # the mode is local again, so llama-server stays up
+        _, events = ask(c)
+        assert events[-1]["type"] == "done"
+        assert not local.closed
+    finally:
+        c.shutdown()
+
+
+def test_unchanged_provider_settings_swap_nothing(tmp_path, monkeypatch):
+    Keys(monkeypatch, anthropic="test-key")
+    factory = ApiFactory()
+    c = indexed_core(tmp_path, api_factory=factory)
+    try:
+        c.apply_settings({"mode": "api"})
+        ask(c)
+        c.apply_settings({"mode": "api", "api_model": c.settings.api_model, "theme": "dark"})
+        assert not factory.built[0][2].closed
+    finally:
+        c.shutdown()
+
+
+@pytest.mark.parametrize("error", [RuntimeError("backend exploded"), OSError("locked")])
+def test_a_keyring_failure_is_an_auth_error_event_without_the_key(tmp_path, monkeypatch, error):
+    def broken(provider):
+        raise error
+
+    monkeypatch.setattr("tamra.core.secrets.get_api_key", broken)
+    c = indexed_core(tmp_path, api_factory=ApiFactory())
+    try:
+        c.apply_settings({"mode": "api"})
+        _, events = ask(c)
+        assert events[-1]["type"] == "error"
+        assert events[-1]["reason"] == "auth"
+        assert "exploded" not in events[-1]["message"]
+    finally:
+        c.shutdown()
