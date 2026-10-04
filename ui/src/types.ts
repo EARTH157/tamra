@@ -81,7 +81,8 @@ export type LocalModel = {
 
 export type UncataloguedModel = { id: string; name: string; file: string; size: number };
 
-export type Gpu = { name: string; vram_mb: number };
+/** `integrated` is a GPU that shares the computer's memory (an iGPU). */
+export type Gpu = { name: string; vram_mb: number; integrated: boolean };
 
 export type ModelsInfo = {
   hardware: { ram_gb: number; gpus: Gpu[] };
@@ -117,6 +118,8 @@ export type Settings = {
   ask_before_delete: boolean;
   api_key_set: boolean;
   api_key_hint: string | null;
+  /** Where Tamra keeps its data (read-only; the core's `data_dir`). */
+  data_dir: string;
 };
 
 /** The answer of POST /api/settings/test-connection (always 200). */
@@ -125,5 +128,5 @@ export type ConnectionTest = { ok: boolean; reason: ErrorReason | null; message:
 /** The answer of POST /api/models/import. */
 export type ImportResult = { id: string; path: string; catalogued: boolean; warning: string | null };
 
-/** What PUT /api/settings accepts: any of the saved settings (never the key state). */
-export type SettingsChanges = Partial<Omit<Settings, "api_key_set" | "api_key_hint">>;
+/** What PUT /api/settings accepts: any of the saved settings (never the key state or data_dir). */
+export type SettingsChanges = Partial<Omit<Settings, "api_key_set" | "api_key_hint" | "data_dir">>;

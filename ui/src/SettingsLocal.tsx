@@ -6,7 +6,7 @@ import { type TranslationKey, useT } from "./i18n";
 import { isDownloading, percent, useModels } from "./models";
 import { useSettings } from "./settings";
 import { RadioMark, Section } from "./SettingsControls";
-import type { ImportResult, LocalModel, ModelsInfo, UncataloguedModel } from "./types";
+import type { Gpu, ImportResult, LocalModel, ModelsInfo, UncataloguedModel } from "./types";
 
 const POLL_MS = 1000;
 
@@ -18,12 +18,22 @@ function formatSize(bytes: number, t: Translate): string {
   return t("settings.sizeMb", { size: Math.max(1, Math.round(bytes / 1e6)) });
 }
 
-/** "Detected 16 GB RAM · NVIDIA RTX 3060, 12 GB VRAM": the GPU with the most memory. */
+/**
+ * The GPU that runs the model: the discrete one with the most memory. An integrated GPU only
+ * counts when there is no discrete one (it reports shared system memory, often more than a card).
+ */
+export function bestGpu(gpus: Gpu[]): Gpu | null {
+  const most = (list: Gpu[]) =>
+    list.reduce<Gpu | null>(
+      (top, gpu) => (top === null || gpu.vram_mb > top.vram_mb ? gpu : top),
+      null,
+    );
+  return most(gpus.filter((gpu) => !gpu.integrated)) ?? most(gpus);
+}
+
+/** "Detected 16 GB RAM · NVIDIA RTX 3060, 12 GB VRAM". */
 function detected(hardware: ModelsInfo["hardware"], t: Translate): string {
-  const best = hardware.gpus.reduce<ModelsInfo["hardware"]["gpus"][number] | null>(
-    (top, gpu) => (top === null || gpu.vram_mb > top.vram_mb ? gpu : top),
-    null,
-  );
+  const best = bestGpu(hardware.gpus);
   const gpu = best
     ? t("settings.gpu", { name: best.name, vram: Math.round(best.vram_mb / 1024) })
     : t("settings.noGpu");
@@ -59,11 +69,23 @@ export default function SettingsLocal() {
   function select(id: string) {
     if (id === models?.active.id) return;
     setError(null);
-    update({ local_model_id: id }).catch((e: Error) => setError(e.message));
+    // Refresh once the core has answered, so the radio never shows an older active model.
+    update({ local_model_id: id })
+      .then(refresh)
+      .catch((e: Error) => setError(e.message));
   }
 
   async function startDownload(model: LocalModel) {
-    await api("POST", `/api/models/${model.id}/download`); // a refusal shows in the dialog
+    try {
+      await api("POST", `/api/models/${model.id}/download`);
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 409) throw e; // shown in the dialog
+      // Already installed, or another download is running: the list was out of date.
+      setConfirming(null);
+      setError(e.message === "Already installed." ? t("settings.alreadyInstalled") : e.message);
+      await refresh();
+      return;
+    }
     setConfirming(null);
     await refresh();
   }

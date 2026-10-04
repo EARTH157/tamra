@@ -61,6 +61,7 @@ class Core:
         """`llm` replaces the local runtime and `api_factory` builds the API provider from the
         settings and the key; both exist so tests can use fakes."""
         data_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir = data_dir
         bge = models_dir / "bge-m3"
         self.store = Store.open(data_dir / "tamra.db")
         self._embedder_factory = embedder_factory or (lambda: Embedder.load(bge))

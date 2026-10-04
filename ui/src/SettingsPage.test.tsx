@@ -245,6 +245,12 @@ describe("General tab", () => {
     expect(buttonByText(view!.container, "Delete all chats")?.disabled).toBe(true);
   });
 
+  it("shows the data folder the core reports", async () => {
+    await mountPage({ settings: { data_dir: "D:\\Tamra data" } });
+    expect(text()).toContain("D:\\Tamra data");
+    expect(text()).not.toContain("%LOCALAPPDATA%");
+  });
+
   it("opens the data folder", async () => {
     const { calls } = await mountPage({
       routes: { "POST /api/open-data-folder": noContent },
@@ -391,8 +397,8 @@ describe("AI model tab: local", () => {
     expect(dialog()).toBeNull();
   });
 
-  it("shows the core's reason when a download is refused", async () => {
-    await mountPage({
+  it("closes the dialog, reloads the list and shows the reason when a download is refused", async () => {
+    const { calls } = await mountPage({
       tab: "model",
       routes: {
         "POST /api/models/qwen3-14b/download": () =>
@@ -400,10 +406,59 @@ describe("AI model tab: local", () => {
       },
     });
     await click(find('button[aria-label="Download Qwen3-14B"]'));
+    const before = calls.filter((c) => c.key === "GET /api/models").length;
     await click(buttonByText(dialog()!, "Download"));
-    expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe(
-      "Another download is already running.",
-    );
+    expect(dialog()).toBeNull();
+    expect(find('[role="alert"]').textContent).toBe("Another download is already running.");
+    expect(calls.filter((c) => c.key === "GET /api/models").length).toBeGreaterThan(before);
+  });
+
+  it("explains in the user's language that a model is already installed", async () => {
+    await mountPage({
+      tab: "model",
+      settings: { language: "th" },
+      routes: {
+        "POST /api/models/qwen3-14b/download": () =>
+          json({ detail: "Already installed." }, 409),
+      },
+    });
+    await click(find('button[aria-label="ดาวน์โหลด Qwen3-14B"]'));
+    await click(buttonByText(dialog()!, "ดาวน์โหลด"));
+    expect(dialog()).toBeNull();
+    expect(find('[role="alert"]').textContent).toBe("ติดตั้งโมเดลนี้แล้ว");
+  });
+
+  it("shows the discrete GPU, not an integrated one that reports more memory", async () => {
+    await mountPage({
+      tab: "model",
+      models: modelsInfo({
+        hardware: {
+          ram_gb: 15,
+          gpus: [
+            { name: "AMD Radeon(TM) 780M Graphics", vram_mb: 8094, integrated: true },
+            { name: "NVIDIA GeForce RTX 5060 Laptop GPU", vram_mb: 7899, integrated: false },
+          ],
+        },
+      }),
+    });
+    expect(text()).toContain("Detected 15 GB RAM · NVIDIA GeForce RTX 5060 Laptop GPU, 8 GB VRAM");
+    expect(text()).not.toContain("Radeon");
+  });
+
+  it("falls back to the largest integrated GPU when there is no discrete one", async () => {
+    await mountPage({
+      tab: "model",
+      models: modelsInfo({
+        hardware: {
+          ram_gb: 15,
+          gpus: [
+            { name: "Intel(R) UHD Graphics", vram_mb: 1024, integrated: true },
+            { name: "AMD Radeon(TM) 780M Graphics", vram_mb: 8094, integrated: true },
+          ],
+        },
+      }),
+    });
+    expect(text()).toContain("AMD Radeon(TM) 780M Graphics, 8 GB VRAM");
   });
 
   it("shows a failed download and lets it be tried again", async () => {
@@ -471,6 +526,9 @@ describe("AI model tab: local", () => {
     expect(radio("Gamma").disabled).toBe(true);
     await click(radio("Beta"));
     expect(calls).toContainEqual({ key: "PUT /api/settings", body: { local_model_id: "b" } });
+    // The list is loaded again after the core has saved the choice, never before.
+    const order = keys(calls);
+    expect(order.lastIndexOf("GET /api/models")).toBeGreaterThan(order.indexOf("PUT /api/settings"));
   });
 
   it("lists an uncatalogued import with its warning, and lets it be chosen", async () => {
@@ -666,6 +724,11 @@ describe("AI model tab: Cloud API", () => {
       "The API key could not be saved to the system.",
     );
     expect(input("API key").value).toBe("test-key-1234"); // kept, so it can be tried again
+  });
+
+  it("says that Test connection saves first", async () => {
+    await mountPage({ tab: "model", settings: cloud });
+    expect(text()).toContain("Test connection saves your changes, then tests them.");
   });
 
   it("tests the connection after saving what was typed", async () => {

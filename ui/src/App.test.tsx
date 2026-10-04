@@ -277,6 +277,42 @@ describe("Settings in the app", () => {
     expect((box() as HTMLTextAreaElement).value).toBe("How long is the lease?");
   });
 
+  it("lets you return to the chat from Settings while an answer is streaming", async () => {
+    const never = new ReadableStream<Uint8Array>({ start() {} }); // an answer that never ends
+    await mountWithSettings(
+      {},
+      {
+        "POST /api/chats": () => json(lease),
+        "GET /api/chats/3": () => json({ ...lease, messages: [] }),
+        "POST /api/chats/3/messages": () =>
+          new Response(never, { headers: { "Content-Type": "text/event-stream" } }),
+      },
+    );
+    await typeInto(view!.container.querySelector("textarea"), "How long is the lease?");
+    await click(view!.container.querySelector('button[type="submit"]'));
+    expect(buttonByText(view!.container, "New chat")?.disabled).toBe(true); // busy
+    await click(settingsButton());
+    expect(view!.container.querySelector(".settings")).not.toBeNull();
+    expect(buttonByText(view!.container, "New chat")?.disabled).toBe(true);
+    await click(settingsButton()); // the same button goes back
+    expect(view!.container.querySelector(".settings")).toBeNull();
+    expect(view!.container.querySelector(".view-slot")?.hasAttribute("hidden")).toBe(false);
+    expect(view!.container.querySelector(".chat-view")).not.toBeNull();
+    expect(settingsButton()?.hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("reloads the models when the chat shows again, so the model chip is current", async () => {
+    let models = modelsInfo();
+    await mountWithSettings({}, { "GET /api/models": () => json(models) });
+    const chip = () => view!.container.querySelector('button[aria-label^="Model"]');
+    expect(chip()?.getAttribute("aria-label")).toBe("Model: Qwen3-4B");
+    await click(settingsButton());
+    // A model is imported and chosen in Settings meanwhile.
+    models = modelsInfo({ active: { mode: "local", label: "mine", id: "import:mine.gguf" } });
+    await click(settingsButton());
+    expect(chip()?.getAttribute("aria-label")).toBe("Model: mine");
+  });
+
   it("opens the AI model tab from Manage models in the chat", async () => {
     await mountWithSettings();
     await click(view!.container.querySelector('button[aria-label^="Model"]'));

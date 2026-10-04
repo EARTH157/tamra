@@ -143,6 +143,7 @@ export default function SettingsCloud() {
           </label>
         </div>
         <p className="field-note">{t("settings.apiKeyNote")}</p>
+        <p className="field-note">{t("settings.testHint")}</p>
         <div className="cloud-actions">
           <button
             type="button"

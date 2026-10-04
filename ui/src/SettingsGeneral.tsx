@@ -18,7 +18,7 @@ type Props = {
   onChatsDeleted: () => Promise<void> | void;
 };
 
-const DATA_FOLDER = "%LOCALAPPDATA%\\Tamra";
+const DEFAULT_DATA_FOLDER = "%LOCALAPPDATA%\\Tamra"; // until the core reports the real path
 
 /** The General tab: language, deleting chats, the documents folder and index, and the data. */
 export default function SettingsGeneral({
@@ -33,7 +33,8 @@ export default function SettingsGeneral({
   const t = useT();
   const { settings, update } = useSettings();
   const [error, setError] = useState<string | null>(null);
-  // Opening the data folder is refused outside the Tamra window (the dev server): hide the button.
+  // Opening the data folder is refused outside the Tamra window (the dev server): the button is
+  // then replaced by a note.
   const [canOpenData, setCanOpenData] = useState(true);
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
 
@@ -120,7 +121,7 @@ export default function SettingsGeneral({
 
       <Section title={t("settings.data")}>
         <div className="card">
-          <Row title={t("settings.dataFolder")} hint={DATA_FOLDER}>
+          <Row title={t("settings.dataFolder")} hint={settings.data_dir || DEFAULT_DATA_FOLDER}>
             {canOpenData ? (
               <button type="button" className="btn" onClick={() => void openDataFolder()}>
                 {t("settings.openFolder")}

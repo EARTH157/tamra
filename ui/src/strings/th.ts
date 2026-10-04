@@ -184,6 +184,7 @@ export const th: Record<TranslationKey, string> = {
   "settings.downloadTitle": "ดาวน์โหลด {name} ({size}) หรือไม่",
   "settings.downloadText":
     "Tamra จะดาวน์โหลดไฟล์ครั้งเดียวและตรวจสอบก่อนใช้งาน ต้องเชื่อมต่ออินเทอร์เน็ตและมีพื้นที่ดิสก์ว่างเพียงพอ",
+  "settings.alreadyInstalled": "ติดตั้งโมเดลนี้แล้ว",
   "settings.sizeGb": "{size} GB",
   "settings.sizeMb": "{size} MB",
   "settings.uncatalogued": "ไม่อยู่ในแคตตาล็อกของ Tamra จึงไม่ทราบคุณภาพของคำตอบ",
@@ -211,6 +212,7 @@ export const th: Record<TranslationKey, string> = {
   "settings.saved": "บันทึกแล้ว",
   "settings.test": "ทดสอบการเชื่อมต่อ",
   "settings.testing": "กำลังทดสอบ…",
+  "settings.testHint": "การทดสอบการเชื่อมต่อจะบันทึกการเปลี่ยนแปลงของคุณก่อน แล้วจึงทดสอบ",
   "settings.connected": "เชื่อมต่อได้",
   "settings.test.offline": "เชื่อมต่อผู้ให้บริการไม่ได้ ตรวจสอบอินเทอร์เน็ตและ Base URL",
   "settings.test.auth": "ยังไม่ได้ตั้งค่าคีย์ API หรือผู้ให้บริการไม่รับคีย์นี้",

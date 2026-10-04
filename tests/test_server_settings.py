@@ -192,7 +192,7 @@ def test_every_new_route_needs_the_token(env, method, path, body):
 
 
 def test_get_settings_has_every_setting_and_the_key_state(env):
-    client, _, _ = env
+    client, _, tmp_path = env
     response = client.get("/api/settings", headers=AUTH)
     assert response.status_code == 200
     assert response.json() == {
@@ -209,6 +209,7 @@ def test_get_settings_has_every_setting_and_the_key_state(env):
         "ask_before_delete": True,
         "api_key_set": False,
         "api_key_hint": None,
+        "data_dir": str(tmp_path / "data"),
     }
 
 
@@ -459,7 +460,10 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
     body = response.json()
     idle = {"state": "idle", "done": 0, "total": 0, "error": None}
     assert body == {
-        "hardware": {"ram_gb": 15.9, "gpus": [{"name": "NVIDIA RTX 4070", "vram_mb": 12282}]},
+        "hardware": {
+            "ram_gb": 15.9,
+            "gpus": [{"name": "NVIDIA RTX 4070", "vram_mb": 12282, "integrated": False}],
+        },
         "recommended_tier": "medium",
         "active": {"mode": "local", "label": "Small-Q4", "id": "small"},
         "gpu_offload": None,
@@ -507,6 +511,28 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
     core.apply_settings({"mode": "api", "api_model": "claude-x"})
     active = client.get("/api/models", headers=AUTH).json()["active"]
     assert active == {"mode": "api", "label": "claude-x", "id": "small"}  # local mode's model
+
+
+def test_get_models_marks_integrated_gpus(env):
+    client, core, _ = env
+    core._hardware = Hardware(
+        15.0,
+        [
+            Gpu("AMD Radeon(TM) 780M Graphics", 8094),
+            Gpu("NVIDIA GeForce RTX 5060 Laptop GPU", 7899),
+        ],
+    )
+    gpus = client.get("/api/models", headers=AUTH).json()["hardware"]["gpus"]
+    assert [(g["name"], g["integrated"]) for g in gpus] == [
+        ("AMD Radeon(TM) 780M Graphics", True),
+        ("NVIDIA GeForce RTX 5060 Laptop GPU", False),
+    ]
+
+
+def test_put_settings_refuses_the_read_only_data_dir(env):
+    client, _, _ = env
+    response = client.put("/api/settings", headers=AUTH, json={"data_dir": "C:/elsewhere"})
+    assert response.status_code == 400
 
 
 def test_get_models_probes_the_hardware_once_and_reports_gpu_offload(env):

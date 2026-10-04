@@ -2080,8 +2080,7 @@ svg.lucide {
 }
 
 .field-input:focus {
-  border-color: var(--primary-ink);
-  outline: none;
+  border-color: var(--primary-ink); /* the global focus ring still shows */
 }
 
 .field-input:disabled {

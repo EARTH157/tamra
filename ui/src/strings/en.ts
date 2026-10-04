@@ -184,6 +184,7 @@ export const en = {
   "settings.downloadTitle": "Download {name} ({size})?",
   "settings.downloadText":
     "Tamra downloads the file once and checks it before use. This needs an internet connection and free disk space.",
+  "settings.alreadyInstalled": "This model is already installed.",
   "settings.sizeGb": "{size} GB",
   "settings.sizeMb": "{size} MB",
   "settings.uncatalogued": "Not in Tamra's catalog; answer quality is unknown.",
@@ -212,6 +213,7 @@ export const en = {
   "settings.saved": "Saved",
   "settings.test": "Test connection",
   "settings.testing": "Testing…",
+  "settings.testHint": "Test connection saves your changes, then tests them.",
   "settings.connected": "Connected",
   "settings.test.offline":
     "Could not reach the provider. Check your internet connection and the Base URL.",

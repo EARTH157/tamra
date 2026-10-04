@@ -23,7 +23,7 @@ from tamra.answer import source_payload
 from tamra.core import Core
 from tamra.llm.base import LLMError, ProviderError
 from tamra.models.catalog import ModelEntry
-from tamra.models.hardware import recommend
+from tamra.models.hardware import _is_integrated, recommend
 from tamra.models.manager import DownloadBusy, ImportRefused
 from tamra.store import Chat, Collection
 
@@ -323,6 +323,7 @@ def _settings_payload(core: Core) -> dict:
     key = _stored_key(settings.api_provider)
     return {
         **dataclasses.asdict(settings),
+        "data_dir": str(core.data_dir),  # read-only: shown in Settings, never a setting
         "api_key_set": key is not None,
         "api_key_hint": key[-4:] if key is not None and len(key) > 8 else None,
     }
@@ -443,7 +444,10 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
         return {
             "hardware": {
                 "ram_gb": round(hardware.ram_gb, 1),
-                "gpus": [{"name": g.name, "vram_mb": g.vram_mb} for g in hardware.gpus],
+                "gpus": [
+                    {"name": g.name, "vram_mb": g.vram_mb, "integrated": _is_integrated(g)}
+                    for g in hardware.gpus
+                ],
             },
             "recommended_tier": tier,
             "active": {"mode": settings.mode, "label": label, "id": local_id},

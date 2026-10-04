@@ -48,6 +48,8 @@ type Props = {
   onAnswered: () => void;
   /** Open Settings on a tab: "Manage models…" and the "no model" error lead to "model". */
   onOpenSettings: (tab: SettingsTab) => void;
+  /** False while Settings covers the chat; the models are reloaded when it shows again. */
+  visible?: boolean;
 };
 
 function sourceOf(sources: Source[], n: number): Source | null {
@@ -74,6 +76,7 @@ export default function ChatView({
   onBusyChange,
   onAnswered,
   onOpenSettings,
+  visible = true,
 }: Props) {
   const t = useT();
   const { settings, update } = useSettings();
@@ -92,6 +95,13 @@ export default function ChatView({
   const asking = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const thinkAvailable = canThink(models, settings);
+
+  // A model may have been downloaded or imported in Settings meanwhile.
+  const wasVisible = useRef(visible);
+  useEffect(() => {
+    if (visible && !wasVisible.current) void refreshModels();
+    wasVisible.current = visible;
+  }, [visible, refreshModels]);
 
   useEffect(() => {
     if (asking.current) return; // this chat was just created for the question being answered

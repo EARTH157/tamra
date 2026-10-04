@@ -29,6 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ask_before_delete: true,
   api_key_set: false,
   api_key_hint: null,
+  data_dir: "", // unknown until the core answers
 };
 
 const RETRY_MS = 3000; // wait before asking again when the core did not answer

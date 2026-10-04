@@ -177,7 +177,7 @@ export default function App() {
           type="button"
           className="sidebar-settings"
           aria-current={view === "settings" ? "page" : undefined}
-          onClick={() => openSettings("general")}
+          onClick={() => (view === "settings" ? setView("chat") : openSettings("general"))}
         >
           <SlidersHorizontal size={16} />
           {t("settings.open")}
@@ -224,6 +224,7 @@ export default function App() {
               onBusyChange={setBusy}
               onAnswered={() => void refreshChats()}
               onOpenSettings={openSettings}
+              visible={view === "chat"}
             />
           )}
         </div>
