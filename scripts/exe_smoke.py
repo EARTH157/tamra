@@ -6,6 +6,9 @@ Starts Tamra.exe in dev mode (API only on 127.0.0.1:8765, token "dev") with a sc
 folder and the repo's models, indexes the eval corpus, asks one question in each language and
 one off-topic question, checks the streamed answers and the saved chats, adds a file to check
 the folder watcher, then ends the exe by PID and checks that its llama-server ended with it.
+
+The local model is whatever Tamra picks from .models: an installed catalog model if there is
+one, else the uncatalogued dev GGUF that fetch_assets.py downloads (qwen2.5-0.5b-instruct).
 """
 
 import argparse

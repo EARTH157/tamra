@@ -44,10 +44,12 @@ def test_wait_until_up_notices_a_dead_server_thread():
 def test_build_core_uses_the_configured_folders(monkeypatch, tmp_path):
     monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("TAMRA_MODELS_DIR", str(tmp_path / "models"))
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "some-model.gguf").write_bytes(b"GGUF")
     core = app.build_core()
     try:
         assert (tmp_path / "data" / "tamra.db").exists()
-        assert core.llm.label == "qwen2.5-0.5b-instruct-q4_k_m"
+        assert core.local.label == "some-model"  # no catalog model is installed: any GGUF
     finally:
         core.shutdown()
 

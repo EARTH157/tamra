@@ -1,4 +1,4 @@
-"""Core: owns the store, the indexer and folder watcher, the answer service, and the local LLM."""
+"""Core: owns the store, the indexer and watcher, the answer service, and the LLM providers."""
 
 import logging
 import threading
@@ -6,18 +6,41 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from keyring.errors import KeyringError
 
-from tamra.answer import AnswerService, AnswerSettings
+from tamra import secrets
+from tamra.answer import AnswerService, AnswerSettings, Route
 from tamra.embedder import MODEL_ID, Embedder
 from tamra.ingest.chunker import TokenSpans, bge_token_spans
 from tamra.ingest.indexer import EmbedderLike, Indexer
 from tamra.ingest.watcher import FolderWatcher
+from tamra.llm.anthropic_api import AnthropicLLM
+from tamra.llm.base import Provider, ProviderError
+from tamra.llm.openai_compat import OpenAICompatibleLLM
 from tamra.llm.runtime import LocalLLM
+from tamra.models.catalog import Catalog, load_catalog
+from tamra.models.hardware import Hardware, detect
+from tamra.models.manager import ModelManager
+from tamra.settings import Settings, load_settings, save_settings
 from tamra.store import Collection, Store
 
 log = logging.getLogger(__name__)
 
-DEV_LLM_FILE = "qwen2.5-0.5b-instruct-q4_k_m.gguf"  # until M2 brings the model catalog
+OPENAI_BASE_URL = "https://api.openai.com"
+# Changing one of these swaps the provider. local_model_id does not: LocalLLM reads the model
+# path on every question and restarts llama-server on the new model by itself.
+_PROVIDER_FIELDS = frozenset({"mode", "api_provider", "api_model", "api_base_url"})
+
+
+def _build_api_provider(settings: Settings, key: str) -> Provider:
+    if settings.api_provider == "anthropic":
+        return AnthropicLLM(settings.api_model, key)
+    return OpenAICompatibleLLM(
+        base_url=settings.api_base_url or OPENAI_BASE_URL,
+        model=settings.api_model,
+        api_key=key,
+        kind="api",
+    )
 
 
 class Core:
@@ -29,10 +52,14 @@ class Core:
         *,
         embedder_factory: Callable[[], EmbedderLike] | None = None,
         token_spans_factory: Callable[[], TokenSpans] | None = None,
-        llm=None,
+        llm: LocalLLM | None = None,
+        api_factory: Callable[[Settings, str], Provider] = _build_api_provider,
+        catalog: Catalog | None = None,
         answer_settings: AnswerSettings | None = None,
         debounce: float = 2.0,
     ):
+        """`llm` replaces the local runtime and `api_factory` builds the API provider from the
+        settings and the key; both exist so tests can use fakes."""
         data_dir.mkdir(parents=True, exist_ok=True)
         bge = models_dir / "bge-m3"
         self.store = Store.open(data_dir / "tamra.db")
@@ -40,21 +67,114 @@ class Core:
         self._embedder: EmbedderLike | None = None
         self._embedder_lock = threading.Lock()
         spans_factory = token_spans_factory or (lambda: bge_token_spans(bge / "tokenizer.json"))
-        self.llm = llm or LocalLLM(
-            llama_exe,
-            lambda: models_dir / DEV_LLM_FILE,
-            data_dir / "logs" / "llama-server.log",
+        self._models_dir = models_dir
+        self._llama_exe = llama_exe
+        self._catalog = catalog or load_catalog()
+        self.models = ModelManager(models_dir, self._catalog)
+        self._hardware: Hardware | None = None
+        self._hardware_lock = threading.Lock()
+        self._settings = load_settings(self.store)
+        self._provider_lock = threading.Lock()  # guards the settings swap and the API cache
+        self._api_factory = api_factory
+        self._api: Provider | None = None  # built on the first API answer, not at startup
+        self._api_identity: tuple | None = None  # what _api was built from, including the key
+        self.local = llm or LocalLLM(
+            llama_exe, self._local_model_path, data_dir / "logs" / "llama-server.log"
         )
         self.indexer = Indexer(self.store, self.embedder, spans_factory, MODEL_ID)
         self.watcher = FolderWatcher(self.indexer.request_reconcile, debounce=debounce)
         self.answers = AnswerService(
             self.store,
             self._embed_query,
-            self.llm.client,
+            self._route,
             model_id=MODEL_ID,
-            llm_label=lambda: self.llm.label,
             settings=answer_settings,
         )
+
+    # --- settings and providers ---
+
+    @property
+    def settings(self) -> Settings:
+        return self._settings
+
+    def apply_settings(self, changes: dict[str, object]) -> Settings:
+        """Validate and save the changes (ValueError if any is bad), then swap providers.
+
+        An answer may be streaming on another thread, so a provider that is being replaced is
+        closed only once that answer has ended (AnswerService.when_idle). The next question
+        builds what it needs: nothing here starts llama-server or reads the API key.
+        """
+        with self._provider_lock:
+            settings = save_settings(self.store, changes)
+            self._settings = settings
+            retired: list[Provider] = []
+            if changes.keys() & _PROVIDER_FIELDS:
+                if self._api is not None:
+                    retired.append(self._api)
+                    self._api, self._api_identity = None, None
+                if settings.mode == "api":
+                    retired.append(self.local)  # stop llama-server to free its memory
+        for provider in retired:
+            self.answers.when_idle(provider.close)
+        return settings
+
+    def hardware(self) -> Hardware:
+        """RAM and GPUs, probed on the first call (it runs llama-server) and then remembered."""
+        with self._hardware_lock:
+            if self._hardware is None:
+                self._hardware = detect(self._llama_exe)
+            return self._hardware
+
+    def _route(self) -> Route:
+        settings = self._settings  # one snapshot: the name and the provider agree
+        if settings.mode == "local":
+            return Route("local", self.local.client)
+        return Route(settings.api_provider, lambda: self._open_api(settings))
+
+    def _open_api(self, settings: Settings) -> Provider:
+        """The API provider for these settings, built when first needed.
+
+        The key is read on every call, so a key changed in Settings applies to the next
+        question without any signal from the key store.
+        """
+        try:
+            key = secrets.get_api_key(settings.api_provider)
+        except KeyringError as e:
+            raise ProviderError("The API key could not be read from the system.", "auth") from e
+        if not key:
+            raise ProviderError("No API key is set.", "auth")
+        identity = (settings.api_provider, settings.api_model, settings.api_base_url, key)
+        with self._provider_lock:
+            if self._api is not None and self._api_identity == identity:
+                return self._api
+            replaced = self._api
+            provider = self._api_factory(settings, key)
+            self._api, self._api_identity = provider, identity
+        if replaced is not None:
+            self.answers.when_idle(replaced.close)
+        return provider
+
+    def _local_model_path(self) -> Path:
+        """The model file to serve: the selected one if installed, else the first installed
+        catalog model, else the first GGUF that is not in the catalog."""
+        installed = self._catalog.installed(self._models_dir)
+        llm_ids = [m.id for m in self._catalog.llms() if m.id in installed]
+        uncatalogued = self._catalog.uncatalogued(self._models_dir)
+        wanted = self._settings.local_model_id
+        if wanted in llm_ids:
+            return installed[wanted]
+        if wanted and wanted.startswith("import:"):
+            name = wanted.removeprefix("import:").lower()
+            for path in uncatalogued:
+                if path.name.lower() == name:
+                    return path
+        if llm_ids:
+            return installed[llm_ids[0]]
+        if uncatalogued:
+            return uncatalogued[0]
+        raise ProviderError("No local model is installed.", "model_missing")
+
+    # --- documents ---
 
     def embedder(self) -> EmbedderLike:
         """The embedding model, loaded on first use and shared by indexing and questions."""
@@ -111,7 +231,11 @@ class Core:
         self.watcher.stop()
         self.answers.cancel()
         self.indexer.stop()
-        self.llm.close()
+        self.local.close()
+        with self._provider_lock:
+            api, self._api, self._api_identity = self._api, None, None
+        if api is not None:
+            api.close()
         self.store.close()
 
     def _watch(self, collection: Collection) -> None:

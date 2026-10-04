@@ -37,22 +37,30 @@ def fake_spans(text: str) -> list[tuple[int, int]]:
 
 
 class FakeLLM:
-    """Yields fixed tokens and records the messages it was given."""
+    """Yields fixed chunks (plain strings are answer text) and records what it was given."""
 
-    def __init__(self, tokens: tuple[str, ...] = ("The lease is three years ", "[1]", ".")):
+    def __init__(
+        self,
+        tokens: tuple[str | Chunk, ...] = ("The lease is three years ", "[1]", "."),
+        *,
+        kind: str = "local",
+        label: str = "fake-llm",
+    ):
         self.tokens = tokens
+        self.kind = kind
+        self.label = label
         self.calls: list[list[dict]] = []
-
-    kind = "local"
-    label = "fake-llm"
+        self.think_flags: list[bool] = []
+        self.closed = False
 
     def generate(self, messages, max_tokens: int = 1024, *, think: bool = False) -> Iterator[Chunk]:
         self.calls.append(list(messages))
+        self.think_flags.append(think)
         for token in self.tokens:
-            yield Chunk("text", token)
+            yield token if isinstance(token, Chunk) else Chunk("text", token)
 
     def close(self) -> None:
-        pass
+        self.closed = True
 
 
 class FakeLocalLLM:
