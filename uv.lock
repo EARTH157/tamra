@@ -834,6 +834,7 @@ dependencies = [
     { name = "pywebview" },
     { name = "sqlite-vec" },
     { name = "tokenizers" },
+    { name = "truststore" },
     { name = "uvicorn" },
     { name = "watchdog" },
 ]
@@ -858,6 +859,7 @@ requires-dist = [
     { name = "pywebview", specifier = ">=5.3" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
     { name = "tokenizers", specifier = ">=0.20" },
+    { name = "truststore", specifier = ">=0.10.4" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "watchdog", specifier = ">=6" },
 ]

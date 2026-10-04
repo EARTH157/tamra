@@ -26,3 +26,11 @@ def qwen_gguf() -> Path:
 @pytest.fixture(scope="session")
 def llama_exe() -> Path:
     return _require(ROOT / "vendor" / "llama" / "llama-server.exe")
+
+
+@pytest.fixture(autouse=True)
+def _no_truststore_injection(monkeypatch):
+    """app.run() injects the system trust store into ssl; tests must not patch ssl globally."""
+    import truststore
+
+    monkeypatch.setattr(truststore, "inject_into_ssl", lambda: None)

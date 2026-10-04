@@ -5,12 +5,15 @@ import sys
 import zipfile
 from pathlib import Path
 
+import truststore
+
 from tamra.download import download_verified
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main(names: list[str]) -> int:
+    truststore.inject_into_ssl()
     assets = json.loads((ROOT / "scripts" / "assets.json").read_text(encoding="utf-8"))
     unknown = set(names) - assets.keys()
     if unknown:

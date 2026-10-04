@@ -7,6 +7,7 @@ import threading
 import time
 
 import httpx
+import truststore
 import uvicorn
 
 from tamra.core import Core
@@ -65,6 +66,7 @@ def _wait_until_up(
 
 
 def run(dev: bool = False) -> None:
+    truststore.inject_into_ssl()  # downloads and cloud calls trust the Windows certificate store
     setup_logging(data_dir() / "logs", console=dev)
     port, token = (DEV_PORT, DEV_TOKEN) if dev else (free_port(), secrets.token_urlsafe(32))
     ui_dir = None if dev else resource_dir() / "ui" / "dist"
