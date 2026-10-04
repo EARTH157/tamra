@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,7 @@ class ModelManager:
         self._state: dict[str, dict[str, Any]] = {m.id: _idle() for m in catalog.models}
         self._active: str | None = None
         self._cancel = threading.Event()
+        self._import_lock = threading.Lock()  # one import at a time
 
     # --- downloads ---
 
@@ -74,12 +76,18 @@ class ModelManager:
                 "error": None,
             }
             cancel = self._cancel
-        threading.Thread(
-            target=self._run_download,
-            args=(entry, cancel),
-            name=f"tamra-download-{model_id}",
-            daemon=True,
-        ).start()
+        try:
+            threading.Thread(
+                target=self._run_download,
+                args=(entry, cancel),
+                name=f"tamra-download-{model_id}",
+                daemon=True,
+            ).start()
+        except BaseException:
+            with self._lock:  # the worker never ran: release the slot
+                self._active = None
+                self._state[model_id] = _idle()
+            raise
 
     def cancel_download(self, model_id: str) -> None:
         """Stop a running download, keeping its .part files. Does nothing if it is not running."""
@@ -123,6 +131,11 @@ class ModelManager:
         except Exception as exc:  # the worker must never die silently
             log.warning("download of %s failed: %s", model_id, exc)
             self._finish(model_id, state="error", error=str(exc) or type(exc).__name__)
+        finally:
+            with self._lock:  # a BaseException (e.g. SystemExit) must not leave the slot taken
+                if self._active == model_id:
+                    self._active = None
+                    self._state[model_id].update(state="error", error="download interrupted")
 
     def _finish(self, model_id: str, **fields: Any) -> None:
         with self._lock:
@@ -135,33 +148,51 @@ class ModelManager:
         """Copy a model file into the models directory.
 
         A file whose sha256 matches a catalog file is stored under that file's catalog path. Any
-        other .gguf is copied as it is, with a warning. Everything else is refused. The copy goes
-        to a .part file first, so a half-copied file never looks installed.
+        other GGUF is copied as it is, with a warning. Everything else is refused. The copy goes
+        to a uniquely named temporary file first, so a half-copied file never looks installed
+        and never mixes with a download's .part. Raises ImportRefused, also when the model is
+        being downloaded right now.
         """
         path = Path(path)
         if not path.is_file():
             raise ImportRefused(f"{path} is not a file")
-        digest = sha256_file(path)
-        match = self._find_by_hash(digest)
-        if match is not None:
-            entry, f = match
-            dest = self.models_dir / f.path
-            if not self._already_there(dest, f.size, digest):
-                self._copy(path, dest, expected=digest)
-            return ImportResult(id=entry.id, path=dest, catalogued=True)
+        with self._import_lock:
+            try:
+                digest = sha256_file(path)
+            except OSError as exc:
+                raise ImportRefused(_unreadable(path, exc)) from exc
+            match = self._find_by_hash(digest)
+            if match is not None:
+                entry, f = match
+                self._refuse_if_downloading(entry)
+                dest = self.models_dir / f.path
+                if not self._already_there(dest, f.size, digest):
+                    self._copy(path, dest, expected=digest)
+                return ImportResult(id=entry.id, path=dest, catalogued=True)
 
-        if path.suffix.lower() != ".gguf":
-            raise ImportRefused("Only GGUF model files can be imported.")
-        clash = self._find_by_name(path.name)
-        if clash is not None:
-            entry, _ = clash
-            raise ImportRefused(
-                f"{path.name} has the name of {entry.name} in Tamra's catalog but different "
-                "content, so it is probably incomplete or damaged."
+            if path.suffix.lower() != ".gguf":
+                raise ImportRefused("Only GGUF model files can be imported.")
+            clash = self._find_by_name(path.name)
+            if clash is not None:
+                entry, _ = clash
+                raise ImportRefused(
+                    f"{path.name} has the name of {entry.name} in Tamra's catalog but different "
+                    "content, so it is probably incomplete or damaged."
+                )
+            if _head(path, 4) != b"GGUF":
+                raise ImportRefused(f"{path.name} is not a valid GGUF model file.")
+            dest = self.models_dir / path.name
+            self._copy(path, dest, expected=None)
+            return ImportResult(
+                id=path.stem, path=dest, catalogued=False, warning=UNCATALOGUED_WARNING
             )
-        dest = self.models_dir / path.name
-        self._copy(path, dest, expected=None)
-        return ImportResult(id=path.stem, path=dest, catalogued=False, warning=UNCATALOGUED_WARNING)
+
+    def _refuse_if_downloading(self, entry: ModelEntry) -> None:
+        with self._lock:
+            if self._active == entry.id:
+                raise ImportRefused(
+                    f"{entry.name} is being downloaded; wait for it to finish or cancel it first."
+                )
 
     def _find_by_hash(self, digest: str) -> tuple[ModelEntry, ModelFile] | None:
         for entry in self.catalog.models:
@@ -189,20 +220,48 @@ class ModelManager:
             return False
 
     def _copy(self, src: Path, dest: Path, expected: str | None) -> None:
-        """Copy src to dest through dest.part. With `expected`, the copied bytes must hash to it."""
+        """Copy src to dest through a temporary file next to it, which no other writer shares.
+
+        With `expected`, the copied bytes must hash to it. The temporary file is synced before it
+        is renamed, and removed on any failure.
+        """
         dest.parent.mkdir(parents=True, exist_ok=True)
-        part = dest.with_name(dest.name + ".part")
+        tmp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.import")
         h = hashlib.sha256()
         try:
-            with src.open("rb") as r, part.open("wb") as w:
-                for block in iter(lambda: r.read(_COPY_BLOCK), b""):
+            try:
+                reader = src.open("rb")
+            except OSError as exc:
+                raise ImportRefused(_unreadable(src, exc)) from exc
+            with reader as r, tmp.open("wb") as w:
+                while True:
+                    try:
+                        block = r.read(_COPY_BLOCK)
+                    except OSError as exc:
+                        raise ImportRefused(_unreadable(src, exc)) from exc
+                    if not block:
+                        break
                     w.write(block)
                     h.update(block)
+                w.flush()
+                os.fsync(w.fileno())
             if expected is not None and h.hexdigest() != expected:
                 raise ImportRefused(
                     "The file changed while it was being copied; it did not verify."
                 )
-            os.replace(part, dest)
+            os.replace(tmp, dest)
         except BaseException:
-            part.unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
             raise
+
+
+def _unreadable(path: Path, exc: OSError) -> str:
+    return f"Could not read {path.name}: {exc.strerror or exc}."
+
+
+def _head(path: Path, n: int) -> bytes:
+    try:
+        with path.open("rb") as f:
+            return f.read(n)
+    except OSError as exc:
+        raise ImportRefused(_unreadable(path, exc)) from exc

@@ -265,3 +265,55 @@ def test_http_errors_keep_the_part(tmp_path):
             transport=httpx.MockTransport(lambda r: httpx.Response(503)),
         )
     assert part.read_bytes() == BIG[:100]
+
+
+def _resume_server(content_range: str | None, start_at: int = 0):
+    """A server whose 206 answers carry the given Content-Range (or none); records requests."""
+    calls: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        rng = request.headers.get("range")
+        calls.append(rng)
+        if rng:
+            headers = {"Content-Range": content_range} if content_range else {}
+            return httpx.Response(206, headers=headers, content=BIG[start_at:])
+        return httpx.Response(200, content=BIG)
+
+    return calls, httpx.MockTransport(handler)
+
+
+def test_a_206_with_the_wrong_range_start_restarts_from_zero(tmp_path):
+    dest = tmp_path / "file.bin"
+    dest.with_name("file.bin.part").write_bytes(BIG[:5000])
+    calls, transport = _resume_server(f"bytes 0-{len(BIG) - 1}/{len(BIG)}", start_at=0)
+    download_resumable("https://x/f", dest, BIG_SHA, size=len(BIG), transport=transport)
+    assert calls == ["bytes=5000-", None]
+    assert dest.read_bytes() == BIG
+    assert not dest.with_name("file.bin.part").exists()
+
+
+def test_a_206_without_content_range_restarts_from_zero(tmp_path):
+    dest = tmp_path / "file.bin"
+    dest.with_name("file.bin.part").write_bytes(BIG[:5000])
+    calls, transport = _resume_server(None, start_at=5000)
+    download_resumable("https://x/f", dest, BIG_SHA, size=len(BIG), transport=transport)
+    assert calls == ["bytes=5000-", None]
+    assert dest.read_bytes() == BIG
+
+
+def test_a_206_with_an_unparseable_content_range_restarts_from_zero(tmp_path):
+    dest = tmp_path / "file.bin"
+    dest.with_name("file.bin.part").write_bytes(BIG[:5000])
+    calls, transport = _resume_server("garbage", start_at=5000)
+    download_resumable("https://x/f", dest, BIG_SHA, size=len(BIG), transport=transport)
+    assert calls == ["bytes=5000-", None]
+    assert dest.read_bytes() == BIG
+
+
+def test_a_206_with_a_matching_content_range_and_unknown_total_resumes(tmp_path):
+    dest = tmp_path / "file.bin"
+    dest.with_name("file.bin.part").write_bytes(BIG[:5000])
+    calls, transport = _resume_server(f"bytes 5000-{len(BIG) - 1}/*", start_at=5000)
+    download_resumable("https://x/f", dest, BIG_SHA, transport=transport)
+    assert calls == ["bytes=5000-"]
+    assert dest.read_bytes() == BIG

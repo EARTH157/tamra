@@ -1,4 +1,5 @@
 import hashlib
+import os
 import threading
 import time
 from pathlib import Path
@@ -86,7 +87,6 @@ def _wait_state(
     while time.monotonic() < deadline:
         st = manager.status()[model_id]
         if st["state"] == state and (st["done"] > 0 or not started):
-            return st
             return st
         time.sleep(0.01)
     raise AssertionError(f"never reached {state}: {manager.status()[model_id]}")
@@ -261,13 +261,13 @@ def test_import_of_a_catalogued_non_gguf_file_goes_to_its_catalog_path(tmp_path)
 def test_import_of_an_unknown_gguf_is_copied_as_is_with_a_warning(tmp_path):
     manager, models = _manager(tmp_path)
     src = tmp_path / "my-own-model.gguf"
-    src.write_bytes(b"some other weights")
+    src.write_bytes(b"GGUF" + b"some other weights")
     result = manager.import_file(src)
     assert result.catalogued is False
     assert result.warning == "This model is not in Tamra's catalog; answer quality is unknown."
     assert result.warning == UNCATALOGUED_WARNING
     assert result.path == models / "my-own-model.gguf"
-    assert result.path.read_bytes() == b"some other weights"
+    assert result.path.read_bytes() == b"GGUF" + b"some other weights"
 
 
 def test_import_refuses_a_file_that_is_not_gguf(tmp_path):
@@ -337,3 +337,123 @@ def test_importing_the_same_catalogued_file_twice_is_harmless(tmp_path):
     second = manager.import_file(src)
     assert first.path == second.path
     assert second.path.read_bytes() == LLM
+
+
+def test_import_refuses_an_unknown_gguf_without_the_gguf_magic(tmp_path):
+    manager, models = _manager(tmp_path)
+    src = tmp_path / "fake.gguf"
+    src.write_bytes(b"not a model at all")
+    with pytest.raises(ImportRefused, match="not a valid GGUF"):
+        manager.import_file(src)
+    assert list(models.iterdir()) == []
+
+
+def test_import_uses_its_own_temp_file_and_leaves_a_download_part_alone(tmp_path, monkeypatch):
+    manager, models = _manager(tmp_path)
+    part = models / "Tiny-Q4.gguf.part"
+    part.write_bytes(b"half a download")
+    src = tmp_path / "a.gguf"
+    src.write_bytes(LLM)
+    renamed = []
+    real_replace = os.replace
+    monkeypatch.setattr(
+        manager_module.os, "replace", lambda a, b: (renamed.append(Path(a)), real_replace(a, b))
+    )
+    manager.import_file(src)
+    assert len(renamed) == 1
+    assert renamed[0].name != "Tiny-Q4.gguf.part"
+    assert renamed[0].parent == models
+    assert part.read_bytes() == b"half a download"
+    assert (models / "Tiny-Q4.gguf").read_bytes() == LLM
+    assert not list(models.glob("*.import"))
+
+
+def test_import_of_the_model_being_downloaded_is_refused(tmp_path):
+    gate = threading.Event()
+    manager = ModelManager(tmp_path, _catalog(), transport=_transport(gate))
+    manager.start_download("tiny")
+    _wait_state(manager, "tiny", "downloading")
+    src = tmp_path / "elsewhere.gguf"
+    src.write_bytes(LLM)
+    with pytest.raises(ImportRefused, match="being downloaded"):
+        manager.import_file(src)
+    gate.set()
+    _wait_idle(manager, "tiny")
+    assert manager.import_file(src).id == "tiny"  # fine once the download is over
+
+
+def test_imports_are_serialised(tmp_path, monkeypatch):
+    manager, _ = _manager(tmp_path)
+    src = tmp_path / "a.gguf"
+    src.write_bytes(LLM)
+    inside = 0
+    peak = 0
+    guard = threading.Lock()
+    real_copy = manager._copy
+
+    def counting_copy(*args, **kwargs):
+        nonlocal inside, peak
+        with guard:
+            inside += 1
+            peak = max(peak, inside)
+        time.sleep(0.05)
+        try:
+            return real_copy(*args, **kwargs)
+        finally:
+            with guard:
+                inside -= 1
+
+    monkeypatch.setattr(manager, "_copy", counting_copy)
+    other = tmp_path / "b.gguf"
+    other.write_bytes(b"GGUF" + b"second model")
+    sources = [src, other, src, other]
+    threads = [threading.Thread(target=manager.import_file, args=(s,)) for s in sources]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert peak == 1
+
+
+def test_an_unreadable_source_is_refused_with_a_message(tmp_path, monkeypatch):
+    manager, models = _manager(tmp_path)
+    src = tmp_path / "locked.gguf"
+    src.write_bytes(LLM)
+
+    def deny(path):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(manager_module, "sha256_file", deny)
+    with pytest.raises(ImportRefused, match="Could not read locked.gguf"):
+        manager.import_file(src)
+    assert list(models.iterdir()) == []
+
+
+def test_a_failed_thread_start_releases_the_download_slot(tmp_path, monkeypatch):
+    manager = ModelManager(tmp_path, _catalog(), transport=_transport())
+
+    def fail(self):
+        raise RuntimeError("cannot start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", fail)
+    with pytest.raises(RuntimeError):
+        manager.start_download("tiny")
+    monkeypatch.undo()
+    assert manager.status()["tiny"]["state"] == "idle"
+    manager.start_download("tiny")  # the slot is free again
+    _wait_idle(manager, "tiny")
+
+
+def test_a_worker_killed_by_a_base_exception_releases_the_slot(tmp_path, monkeypatch):
+    def die(*args, **kwargs):
+        raise SystemExit
+
+    monkeypatch.setattr(manager_module, "download_resumable", die)
+    monkeypatch.setattr(threading, "excepthook", lambda args: None)  # the worker dies on purpose
+    manager = ModelManager(tmp_path, _catalog(), transport=_transport())
+    manager.start_download("tiny")
+    st = _wait_idle(manager, "tiny")
+    assert st["state"] == "error"
+    monkeypatch.undo()
+    manager.start_download("tiny")
+    assert _wait_idle(manager, "tiny")["state"] == "idle"

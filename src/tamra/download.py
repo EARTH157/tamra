@@ -1,4 +1,6 @@
 import hashlib
+import os
+import re
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -124,30 +126,62 @@ def _transfer(
     """Append the response body to part, restarting from zero if the server will not resume."""
     timeout = httpx.Timeout(30.0, read=300.0)
     with httpx.Client(follow_redirects=True, timeout=timeout, transport=transport) as client:
-        for _ in range(2):
-            headers = {"Accept-Encoding": "identity"}
-            if offset:
-                headers["Range"] = f"bytes={offset}-"
-            with client.stream("GET", url, headers=headers) as response:
-                if response.status_code == 416 and offset:
-                    part.unlink(missing_ok=True)  # the part does not fit the file: start over
-                    offset, h = 0, hashlib.sha256()
-                    continue
-                response.raise_for_status()
-                if offset and response.status_code != 206:
-                    offset, h = 0, hashlib.sha256()  # Range ignored: the body is the whole file
-                total = size if size is not None else _total_bytes(response, offset)
-                done = offset
+        if offset:
+            resumed = _fetch(client, url, part, h, offset, size, progress, check_cancel)
+            if resumed is not None:
+                return resumed
+            part.unlink(missing_ok=True)  # the part does not fit the file: start over
+            h = hashlib.sha256()
+        resumed = _fetch(client, url, part, h, 0, size, progress, check_cancel)
+        assert resumed is not None  # a request without Range always yields a body
+        return resumed
+
+
+def _fetch(
+    client: httpx.Client,
+    url: str,
+    part: Path,
+    h: "hashlib._Hash",
+    offset: int,
+    size: int | None,
+    progress: Callable[[int, int], None],
+    check_cancel: Callable[[], None],
+) -> tuple["hashlib._Hash", int] | None:
+    """One GET into part. None means the resume was refused or unusable (416, or a 206 whose
+    Content-Range is missing or does not start at offset); nothing has been written then."""
+    headers = {"Accept-Encoding": "identity"}
+    if offset:
+        headers["Range"] = f"bytes={offset}-"
+    with client.stream("GET", url, headers=headers) as response:
+        if offset and response.status_code == 416:
+            return None
+        response.raise_for_status()
+        if offset and response.status_code == 206 and _range_start(response) != offset:
+            return None
+        if offset and response.status_code != 206:
+            offset, h = 0, hashlib.sha256()  # Range ignored: the body is the whole file
+        total = size if size is not None else _total_bytes(response, offset)
+        done = offset
+        progress(done, total)
+        with part.open("ab" if offset else "wb") as f:
+            for chunk in response.iter_bytes():
+                check_cancel()
+                f.write(chunk)
+                h.update(chunk)
+                done += len(chunk)
                 progress(done, total)
-                with part.open("ab" if offset else "wb") as f:
-                    for chunk in response.iter_bytes():
-                        check_cancel()
-                        f.write(chunk)
-                        h.update(chunk)
-                        done += len(chunk)
-                        progress(done, total)
-                return h, done
-    raise httpx.HTTPError(f"{url}: the server rejected the range request twice")
+            f.flush()
+            os.fsync(f.fileno())
+        return h, done
+
+
+_CONTENT_RANGE = re.compile(r"\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*", re.IGNORECASE)
+
+
+def _range_start(response: httpx.Response) -> int | None:
+    """The first byte of a 206 body from its Content-Range header; None if missing or invalid."""
+    m = _CONTENT_RANGE.fullmatch(response.headers.get("content-range", ""))
+    return int(m.group(1)) if m else None
 
 
 def _total_bytes(response: httpx.Response, offset: int) -> int:
