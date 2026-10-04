@@ -36,48 +36,49 @@ the margin at hit@4 is thin.
 
 ## Exit criterion
 
-`dist/Tamra/Tamra.exe` was built with `./scripts/build.ps1` and checked on the dev machine
-(`scripts/exe_smoke.py` and the packaged selfcheck). Models: bge-m3 int8 and
-Qwen2.5-0.5B-instruct Q4_K_M; the system prompt includes the example citation line.
+`dist/Tamra/Tamra.exe` was built with `./scripts/build.ps1` (run under Windows PowerShell 5.1) and
+checked on the dev machine (`scripts/exe_smoke.py` and the packaged selfcheck). Models: bge-m3
+int8 and Qwen2.5-0.5B-instruct Q4_K_M; the system prompt includes the example citation line.
 
 **Packaged selfcheck** (exit code 0; `sqlite`, `documents`, `embedding`, and `llm` all `ok`):
 
 | Measure | Value |
 |---|---|
-| Embedding (packaged) | 7.16 passages/s, model load 1.78 s |
-| Local LLM start | 2.02 s, first token 0.02 s |
-| Local LLM speed | 291.93 tokens/s (64 tokens) |
+| Embedding (packaged) | 4.88 passages/s, model load 2.15 s |
+| Local LLM start | 4.51 s, first token 0.05 s |
+| Local LLM speed | 230.95 tokens/s (64 tokens) |
 | GPU used (Vulkan) | yes |
 
-**Smoke test** (the exe in `--dev` mode, scratch data folder, the 10-file eval corpus):
+**Smoke test** (the exe in `--dev` mode, scratch data folder, the 10-file eval corpus; exit
+code 0, no problems, 3 of 3 answerable questions cited):
 
 | Step | Seconds |
 |---|---|
-| Startup to healthy API | 2.0 |
-| Indexing 10 files (10 indexed, 0 failed, 0 skipped) | 3.3 |
-| Thai question | 7.4 (includes the first model use) |
-| English question | 0.4 |
+| Startup to healthy API | 2.1 |
+| Indexing 10 files (10 indexed, 0 failed, 0 skipped) | 4.7 |
+| Thai question | 7.5 (includes the first model use) |
+| English question | 0.3 |
 | Chinese question | 0.1 |
 | Off-topic question | 0.0 (the not-found reply never calls the model) |
 | Folder watcher indexes a new file | 2.5 |
 
 | Question | Answer | Sources | Cited `[n]` |
 |---|---|---|---|
-| `th-leave-annual` | พนักงานลาพักร้อนได้ปีละ 12 วัน | hr-leave-policy.docx, travel-expenses.pdf, canteen-rules.txt, company-history.txt | no |
-| `en-lease-rent` | The monthly rent is 18,500 baht, and it is due on the 5th day of each month. | apartment-lease.pdf, meeting-notes-2026-09.md, it-security-policy.md, canteen-rules.txt | no |
-| `zh-warranty-sofa` | 沙发框架保修五年。 | furniture-warranty.txt, apartment-lease.pdf, shipping-policy.pdf, it-security-policy.md | no |
+| `th-leave-annual` | พนักงานที่ผ่านการทดลองงานแล้วมีสิทธิลาพักร้อนปีละ 12 วัน [1] | hr-leave-policy.docx, travel-expenses.pdf, canteen-rules.txt, company-history.txt | yes |
+| `en-lease-rent` | The monthly rent is 18,500 baht, and it is due on the 5th day of each month. [1] | apartment-lease.pdf, meeting-notes-2026-09.md, it-security-policy.md, canteen-rules.txt | yes |
+| `zh-warranty-sofa` | 沙发框架保修五年。 [1] | furniture-warranty.txt, apartment-lease.pdf, shipping-policy.pdf, it-security-policy.md | yes |
 | `none-world-cup` | Not found in the documents. | none | n/a |
 
 Each answerable question had its expected file among the sources, the answer and its sources were
 saved in the chat, and the off-topic question got the not-found reply with no sources.
 All answers were correct and short.
 
-**Citations: 0 of 3.** Even with the example line at the end of the system prompt (4 of 4
-English and Thai answers cited in an earlier probe), the packaged run produced no `[n]` in any
-answer, so the smoke script reports "no answer contained a [n] citation" and exits with code 1.
-This is the only problem it found. The cause is the 0.5B model not following the citation rule
-reliably; the prompt was not changed further in this task. The sources of every answer are still
-shown as chips in the UI. Larger models arrive in M2.
+**Automatic citation.** The dev model rarely writes `[n]` once it sees real passages: probes
+found 0 of 5 answers cited with the plan's prompt and 1 of 5 with an extra reminder. The answer
+service now appends `[n]` when an uncited answer shares at least half of its character trigrams
+with one source (`AUTO_CITE_MIN_OVERLAP = 0.5`). All three cited answers above got their marker
+this way. Larger models in M2 are expected to cite on their own, and then the fallback rarely
+fires.
 
 **Process cleanup.** The exe was ended with a hard kill by PID; no `llama-server.exe` started by
 the run was left afterwards (the Job Object works).

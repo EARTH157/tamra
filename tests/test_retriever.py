@@ -4,7 +4,14 @@ import numpy as np
 import pytest
 from fakes import FakeEmbedder
 
-from tamra.retriever import Hit, best_similarity, fts_query, hybrid_search, query_text
+from tamra.retriever import (
+    Hit,
+    best_similarity,
+    fts_query,
+    hybrid_search,
+    query_text,
+    trigrams,
+)
 from tamra.store import ChunkInput, Store
 
 
@@ -93,3 +100,9 @@ def test_hybrid_search_finds_the_matching_chunk_in_a_real_store(tmp_path):
     assert hits[0].similarity > 0.3
     assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
     store.close()
+
+
+def test_trigrams_are_unique_and_in_order():
+    assert trigrams("Lease lease") == ["lea", "eas", "ase"]
+    assert trigrams("a ab") == []
+    assert trigrams("租赁合同期限")[:2] == ["租赁合", "赁合同"]

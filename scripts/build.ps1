@@ -1,4 +1,5 @@
-$ErrorActionPreference = "Stop"
+# Native tools write progress to stderr; each step's exit code is checked below.
+$ErrorActionPreference = "Continue"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 npm --prefix ui ci
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

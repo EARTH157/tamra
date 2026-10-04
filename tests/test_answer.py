@@ -4,12 +4,14 @@ from fakes import FakeEmbedder, FakeLLM
 from tamra.answer import (
     AnswerService,
     AnswerSettings,
+    auto_citation,
+    cited_numbers,
     detect_language,
     location_label,
 )
 from tamra.llm.llama_server import LlamaServerError
 from tamra.llm.openai_compat import LLMError
-from tamra.store import ChunkInput, Store
+from tamra.store import ChunkInput, SourceRecord, Store
 
 
 @pytest.fixture
@@ -177,3 +179,59 @@ def test_location_labels():
     assert location_label({**docx, "heading_path": [], "paragraph_end": 4}) == "para. 5"
     assert location_label({"kind": "text", "line_start": 7, "line_end": 7}) == "line 7"
     assert location_label({"kind": "text", "line_start": 7, "line_end": 9}) == "lines 7-9"
+
+
+def src(n, text):
+    location = {"kind": "text", "line_start": 1, "line_end": 1}
+    return SourceRecord(n, None, None, f"f{n}.md", text, location, None)
+
+
+def test_cited_numbers_keeps_only_valid_markers():
+    assert cited_numbers("A [1] b [3] c [9] d [0]", 3) == [1, 3]
+    assert cited_numbers("no markers", 3) == []
+
+
+def test_auto_citation_finds_the_source_an_answer_was_taken_from():
+    sources = [
+        src(1, "Parking costs fifty baht per day."),
+        src(2, "The monthly rent is 18,500 baht, due on the 5th day of each month."),
+    ]
+    assert auto_citation("The monthly rent is 18,500 baht, due on the 5th.", sources) == 2
+
+
+def test_auto_citation_works_for_thai_and_chinese():
+    thai = [src(1, "พนักงานที่ผ่านการทดลองงานแล้วมีสิทธิลาพักร้อนปีละ 12 วันทำงาน")]
+    assert auto_citation("พนักงานลาพักร้อนได้ปีละ 12 วัน", thai) == 1
+    chinese = [src(1, "沙发框架保修五年，布料和海绵保修两年。")]
+    assert auto_citation("沙发框架保修五年。", chinese) == 1
+
+
+def test_auto_citation_leaves_cited_unrelated_and_empty_answers_alone():
+    sources = [src(1, "The monthly rent is 18,500 baht.")]
+    assert auto_citation("The monthly rent is 18,500 baht [1].", sources) is None
+    assert auto_citation("Bananas are yellow and grow in bunches.", sources) is None
+    assert auto_citation("ok", sources) is None
+    assert auto_citation("The monthly rent is 18,500 baht.", []) is None
+
+
+def test_an_uncited_answer_gets_a_citation_from_its_source(env):
+    store, make, chat = env
+    events = list(
+        make(FakeLLM(("The lease term is three years.",))).ask(
+            chat.id, "How long is the lease term?"
+        )
+    )
+    tokens = [e["text"] for e in events if e["type"] == "token"]
+    assert tokens == ["The lease term is three years.", " [1]"]
+    assert store.list_messages(chat.id)[1].content == "The lease term is three years. [1]"
+
+
+def test_a_cancelled_answer_gets_no_automatic_citation(env):
+    store, make, chat = env
+    service = make(FakeLLM(("The lease term ", "is three years.")))
+    stream = service.ask(chat.id, "How long is the lease term?")
+    next(stream)  # sources
+    next(stream)  # first token
+    service.cancel()
+    assert [e["type"] for e in stream] == ["done"]
+    assert store.list_messages(chat.id)[1].content == "The lease term "

@@ -1,5 +1,6 @@
 """Answering (spec §6): retrieve, prompt with numbered sources, stream, and save the answer."""
 
+import re
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ import numpy as np
 
 from tamra.llm.llama_server import LlamaServerError
 from tamra.llm.openai_compat import LLMError, Message
-from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text
+from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
 from tamra.store import SourceRecord, Store
 
 LANGUAGE_NAMES = {"th": "Thai", "en": "English", "zh": "Chinese"}
@@ -31,6 +32,9 @@ Sources:
 
 Example answer format: The rent is 10,000 baht [1]."""
 
+AUTO_CITE_MIN_OVERLAP = 0.5  # share of the answer's trigrams found in one source
+_MARKER = re.compile(r"\[(\d+)\]")
+
 
 class LLMLike(Protocol):
     def generate(self, messages: list[Message], max_tokens: int = 1024) -> Iterator[str]: ...
@@ -51,6 +55,30 @@ def detect_language(text: str) -> str:
     latin = sum(1 for c in text if c.isascii() and c.isalpha())
     count, language = max((thai, "th"), (cjk, "zh"), (latin, "en"))
     return language if count else "en"
+
+
+def cited_numbers(text: str, source_count: int) -> list[int]:
+    """The [n] markers in text that name one of the sources."""
+    return [n for n in map(int, _MARKER.findall(text)) if 1 <= n <= source_count]
+
+
+def auto_citation(answer: str, sources: list[SourceRecord]) -> int | None:
+    """The source an uncited answer was taken from, by character-trigram overlap.
+
+    Small local models often answer from a source without writing its [n]. Returns None
+    when the answer already cites a source or no single source clearly contains it.
+    """
+    if not sources or cited_numbers(answer, len(sources)):
+        return None
+    grams = set(trigrams(answer))
+    if not grams:
+        return None
+    best_n, best_score = None, 0.0
+    for source in sources:
+        score = len(grams & set(trigrams(source.text))) / len(grams)
+        if score > best_score:
+            best_n, best_score = source.n, score
+    return best_n if best_score >= AUTO_CITE_MIN_OVERLAP else None
 
 
 def location_label(location: dict) -> str:
@@ -185,11 +213,19 @@ class AnswerService:
         try:
             try:
                 client = self._llm()
+                cancelled = False
                 for token in client.generate(messages, self._settings.max_tokens):
                     if self._cancel.is_set():
+                        cancelled = True
                         break
                     parts.append(token)
                     yield {"type": "token", "text": token}
+                if not cancelled:
+                    n = auto_citation("".join(parts), sources)
+                    if n is not None:
+                        marker = f" [{n}]"
+                        parts.append(marker)
+                        yield {"type": "token", "text": marker}
             except (LLMError, LlamaServerError) as e:
                 error = str(e)
         finally:  # also runs when the consumer closes the stream: keep what the user saw
