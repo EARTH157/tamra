@@ -1,12 +1,16 @@
 """HTTP API on 127.0.0.1 (spec §2-§3): token-gated JSON routes, SSE answers, and the built UI."""
 
+import dataclasses
 import json
+import logging
 import secrets
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
+from typing import Any, Literal
 
 import anyio
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -14,9 +18,18 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import tamra
+from tamra import secrets as key_store
 from tamra.answer import source_payload
 from tamra.core import Core
+from tamra.llm.base import LLMError, ProviderError
+from tamra.models.catalog import ModelEntry
+from tamra.models.hardware import recommend
+from tamra.models.manager import DownloadBusy, ImportRefused
 from tamra.store import Chat, Collection
+
+log = logging.getLogger(__name__)
+
+API_PROVIDERS = ("anthropic", "openai")
 
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 CONTENT_SECURITY_POLICY = (
@@ -88,6 +101,17 @@ class RenameBody(BaseModel):
 
 class QuestionBody(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
+    mode: Literal["answer", "search"] = "answer"
+    think: bool = False
+
+
+class ApiKeyBody(BaseModel):
+    provider: str = Field(max_length=40)
+    key: str
+
+
+class ImportBody(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
 
 
 def create_app(
@@ -95,10 +119,18 @@ def create_app(
     ui_dir: Path | None,
     core: Core | None = None,
     pick_folder: Callable[[], str | None] | None = None,
+    pick_file: Callable[[], str | None] | None = None,
+    open_data_folder: Callable[[], None] | None = None,
 ) -> FastAPI:
     if not token:
         raise ValueError("the API token must not be empty")  # an empty token would match ""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # FastAPI's default body echoes each field's input, which here can be an API key.
+        errors = [{"loc": e["loc"], "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
+        return JSONResponse({"detail": errors}, status_code=422)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -112,8 +144,32 @@ def create_app(
             )
         return {"folder_path": pick_folder()}
 
+    @app.post("/api/pick-file")
+    def choose_file() -> dict:
+        if pick_file is None:
+            raise HTTPException(
+                status_code=501, detail="The file picker is only available in the Tamra window."
+            )
+        return {"file_path": pick_file()}
+
+    @app.post("/api/open-data-folder", status_code=204)
+    def show_data_folder() -> Response:
+        if open_data_folder is None:
+            raise HTTPException(
+                status_code=501,
+                detail="Opening the data folder is only available in the Tamra window.",
+            )
+        try:
+            open_data_folder()
+        except OSError as e:
+            log.warning("cannot open the data folder: %s", e)
+            raise HTTPException(status_code=500, detail="Could not open the data folder.") from e
+        return Response(status_code=204)
+
     if core is not None:
         _add_routes(app, core)
+        _add_settings_routes(app, core)
+        _add_model_routes(app, core)
     if ui_dir is not None:
         if not (ui_dir / "index.html").is_file():
             raise RuntimeError(
@@ -223,6 +279,14 @@ def _add_routes(app: FastAPI, core: Core) -> None:
             raise HTTPException(status_code=404, detail="Chat not found.")
         return _chat_payload(chat)
 
+    @app.delete("/api/chats", status_code=204)
+    def delete_all_chats() -> Response:
+        if not core.answers.run_if_idle(core.store.delete_all_chats):
+            raise HTTPException(
+                status_code=409, detail="An answer is being written. Wait for it to finish."
+            )
+        return Response(status_code=204)
+
     @app.delete("/api/chats/{chat_id}", status_code=204)
     def delete_chat(chat_id: int) -> Response:
         if not core.store.delete_chat(chat_id):
@@ -232,7 +296,7 @@ def _add_routes(app: FastAPI, core: Core) -> None:
     @app.post("/api/chats/{chat_id}/messages")
     def ask(chat_id: int, body: QuestionBody) -> StreamingResponse:
         return StreamingResponse(
-            _sse(core.answers.ask(chat_id, body.content)),
+            _sse(core.answers.ask(chat_id, body.content, mode=body.mode, think=body.think)),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-store"},
         )
@@ -240,4 +304,185 @@ def _add_routes(app: FastAPI, core: Core) -> None:
     @app.post("/api/answer/cancel", status_code=204)
     def cancel() -> Response:
         core.answers.cancel()
+        return Response(status_code=204)
+
+
+def _stored_key(provider: str) -> str | None:
+    """The saved key, or None when there is none or the key store cannot be read."""
+    try:
+        return key_store.get_api_key(provider)
+    except Exception as e:  # any keyring backend failure; the key is never in the message
+        log.warning("cannot read the API key: %s", type(e).__name__)
+        return None
+
+
+def _settings_payload(core: Core) -> dict:
+    """The settings, plus whether a key is saved for the selected provider and its last 4
+    characters (only for a key longer than 8, so a short key is never nearly revealed)."""
+    settings = core.settings
+    key = _stored_key(settings.api_provider)
+    return {
+        **dataclasses.asdict(settings),
+        "api_key_set": key is not None,
+        "api_key_hint": key[-4:] if key is not None and len(key) > 8 else None,
+    }
+
+
+def _add_settings_routes(app: FastAPI, core: Core) -> None:
+    @app.get("/api/settings")
+    def get_settings() -> dict:
+        return _settings_payload(core)
+
+    @app.put("/api/settings")
+    def put_settings(changes: dict[str, Any]) -> dict:
+        try:
+            core.apply_settings(changes)
+        except ValueError as e:  # names the unknown or invalid field
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return _settings_payload(core)
+
+    @app.put("/api/settings/api-key", status_code=204)
+    def put_api_key(body: ApiKeyBody) -> Response:
+        if body.provider not in API_PROVIDERS:
+            raise HTTPException(status_code=400, detail="Unknown API provider.")
+        key = body.key.strip()
+        try:
+            if key:
+                key_store.set_api_key(body.provider, key)
+            else:
+                key_store.delete_api_key(body.provider)
+        except Exception as e:  # never put the key or the backend's message in the response
+            log.warning("cannot save the API key: %s", type(e).__name__)
+            raise HTTPException(
+                status_code=500, detail="The API key could not be saved to the system."
+            ) from e
+        return Response(status_code=204)
+
+    @app.post("/api/settings/test-connection")
+    def test_connection() -> dict:
+        """Send a 1-token request with the saved API settings and the stored key.
+
+        It tests the API settings whatever the current mode is, so a key can be tried before
+        switching to API mode. It always answers 200 with {ok, reason, message}.
+        """
+        generator = None
+        try:
+            provider = core.open_api()
+            generator = provider.generate([{"role": "user", "content": "ping"}], max_tokens=1)
+            next(generator, None)  # the first chunk, or the end: either proves the call worked
+        except ProviderError as e:
+            return {"ok": False, "reason": e.reason, "message": str(e)}
+        except LLMError as e:
+            return {"ok": False, "reason": "other", "message": str(e)}
+        except Exception as e:  # never a 500, and never the exception's text (it may name a URL)
+            log.warning("connection test failed: %s", type(e).__name__)
+            return {"ok": False, "reason": "other", "message": "The connection test failed."}
+        finally:
+            if generator is not None:
+                generator.close()
+        return {"ok": True, "reason": None, "message": "Connected."}
+
+
+def _entry_payload(entry: ModelEntry, installed: bool, status: dict) -> dict:
+    return {
+        "id": entry.id,
+        "name": entry.name,
+        "size": sum(f.size for f in entry.files),
+        "installed": installed,
+        "state": status["state"],  # idle | downloading | verifying | error
+        "done": status["done"],
+        "total": status["total"],
+        "error": status["error"],
+    }
+
+
+def _add_model_routes(app: FastAPI, core: Core) -> None:
+    @app.get("/api/models")
+    def get_models() -> dict:
+        hardware = core.hardware()  # probed once (it runs llama-server), then remembered
+        catalog = core.models.catalog
+        models_dir = core.models.models_dir
+        installed = catalog.installed(models_dir)  # file sizes only: nothing is hashed here
+        status = core.models.status()
+        tier = recommend(hardware, catalog)
+        local = [
+            {
+                **_entry_payload(m, m.id in installed, status[m.id]),
+                "tier": m.tier,
+                "recommended": m.tier == tier,
+                "license": m.license,
+                "languages": list(m.languages),
+                "context_length": m.context_length,
+                "thinking": m.thinking,
+            }
+            for m in catalog.llms()
+        ]
+        uncatalogued = []
+        for path in catalog.uncatalogued(models_dir):
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue  # removed since the listing
+            uncatalogued.append(
+                {"id": f"import:{path.name}", "name": path.stem, "file": path.name, "size": size}
+            )
+        embedding = catalog.embedding()
+        settings = core.settings
+        if settings.mode == "api":
+            label: str | None = settings.api_model
+        else:
+            try:
+                label = core.local.label
+            except ProviderError:  # no local model is installed
+                label = None
+        return {
+            "hardware": {
+                "ram_gb": round(hardware.ram_gb, 1),
+                "gpus": [{"name": g.name, "vram_mb": g.vram_mb} for g in hardware.gpus],
+            },
+            "recommended_tier": tier,
+            "active": {"mode": settings.mode, "label": label},
+            "gpu_offload": core.local.gpu_offload,
+            "local": local,
+            "uncatalogued": uncatalogued,
+            "embedding": _entry_payload(embedding, embedding.id in installed, status[embedding.id]),
+        }
+
+    @app.post("/api/models/import")
+    def import_model(body: ImportBody) -> dict:
+        path = Path(body.path.strip())
+        if not path.is_absolute():
+            raise HTTPException(
+                status_code=400, detail="Choose a full file path, for example C:\\Models\\m.gguf."
+            )
+        if not path.is_file():
+            raise HTTPException(status_code=400, detail=f"File not found: {body.path}")
+        try:
+            result = core.models.import_file(path)
+        except ImportRefused as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {
+            "id": result.id,
+            "path": str(result.path),
+            "catalogued": result.catalogued,
+            "warning": result.warning,
+        }
+
+    @app.post("/api/models/{model_id}/download", status_code=202)
+    def download_model(model_id: str) -> dict:
+        try:
+            core.models.start_download(model_id)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="Model not found.") from e
+        except DownloadBusy as e:
+            raise HTTPException(status_code=409, detail="Another download is running.") from e
+        return {"status": "downloading"}
+
+    @app.delete("/api/models/{model_id}/download", status_code=204)
+    def cancel_download(model_id: str) -> Response:
+        try:
+            core.models.catalog.get(model_id)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="Model not found.") from e
+        core.models.cancel_download(model_id)
         return Response(status_code=204)

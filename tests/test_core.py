@@ -296,6 +296,29 @@ def test_an_api_answer_uses_the_stored_key_and_is_saved_as_anthropic(tmp_path, m
         c.shutdown()
 
 
+def test_open_api_builds_the_provider_the_answers_use(tmp_path, monkeypatch):
+    Keys(monkeypatch, anthropic="test-key")
+    factory = ApiFactory()
+    c = make_core(tmp_path, api_factory=factory)
+    try:
+        first = c.open_api()
+        assert c.open_api() is first  # cached: the same provider an answer would get
+        assert [(s.api_provider, key) for s, key, _ in factory.built] == [("anthropic", "test-key")]
+    finally:
+        c.shutdown()
+
+
+def test_open_api_without_a_key_is_an_auth_error(tmp_path, monkeypatch):
+    Keys(monkeypatch)
+    c = make_core(tmp_path, api_factory=ApiFactory())
+    try:
+        with pytest.raises(ProviderError) as refused:
+            c.open_api()
+        assert refused.value.reason == "auth"
+    finally:
+        c.shutdown()
+
+
 def test_a_missing_api_key_is_an_error_event_not_a_crash(tmp_path, monkeypatch):
     keys = Keys(monkeypatch)
     c = indexed_core(tmp_path, api_factory=ApiFactory())

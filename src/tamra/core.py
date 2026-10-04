@@ -125,6 +125,11 @@ class Core:
         if self._settings.mode == "api":
             self.local.close()
 
+    def open_api(self) -> Provider:
+        """The API provider for the saved settings and the stored key (ProviderError if there is
+        no key). It is the one answers use, so the caller must not close it."""
+        return self._open_api(self._settings)
+
     def hardware(self) -> Hardware:
         """RAM and GPUs, probed on the first call (it runs llama-server) and then remembered."""
         with self._hardware_lock:

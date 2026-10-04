@@ -2,6 +2,7 @@
 
 import ctypes
 import logging
+import os
 import secrets
 import threading
 import time
@@ -42,6 +43,30 @@ class FolderPicker:
         return str(chosen[0]) if chosen else None
 
 
+class FilePicker:
+    """The Windows file picker for a GGUF model, on the app window (called from a worker thread)."""
+
+    FILE_TYPES = ("GGUF model (*.gguf)",)
+
+    def __init__(self) -> None:
+        self.window = None  # set once the window exists
+
+    def __call__(self) -> str | None:
+        if self.window is None:
+            return None
+        import webview
+
+        chosen = self.window.create_file_dialog(
+            webview.FileDialog.OPEN, allow_multiple=False, file_types=self.FILE_TYPES
+        )
+        return str(chosen[0]) if chosen else None
+
+
+def open_data_folder() -> None:
+    """Show Tamra's data folder in Explorer. The path is never taken from a request."""
+    os.startfile(data_dir())  # type: ignore[attr-defined]  # Windows only
+
+
 def _wait_until_up(
     port: int, token: str, thread: threading.Thread | None = None, timeout: float = 15.0
 ) -> None:
@@ -71,13 +96,21 @@ def run(dev: bool = False) -> None:
     port, token = (DEV_PORT, DEV_TOKEN) if dev else (free_port(), secrets.token_urlsafe(32))
     ui_dir = None if dev else resource_dir() / "ui" / "dist"
     picker = None if dev else FolderPicker()
+    file_picker = None if dev else FilePicker()
     core: Core | None = None
     failure: Exception | None = None
     try:
         core = build_core()
         core.start()
         config = uvicorn.Config(
-            create_app(token, ui_dir, core, pick_folder=picker),
+            create_app(
+                token,
+                ui_dir,
+                core,
+                pick_folder=picker,
+                pick_file=file_picker,
+                open_data_folder=None if dev else open_data_folder,
+            ),
             host="127.0.0.1",
             port=port,
             log_level="warning",
@@ -92,7 +125,7 @@ def run(dev: bool = False) -> None:
             if picker is None:
                 _wait_in_dev_mode(port, token, thread)
             else:
-                _show_window(port, token, picker)
+                _show_window(port, token, picker, file_picker)
         finally:
             server.should_exit = True
             thread.join(timeout=5)
@@ -121,7 +154,9 @@ def _wait_in_dev_mode(port: int, token: str, thread: threading.Thread) -> None:
         print("Stopping Tamra core...")
 
 
-def _show_window(port: int, token: str, picker: FolderPicker) -> None:
+def _show_window(
+    port: int, token: str, picker: FolderPicker, file_picker: FilePicker | None = None
+) -> None:
     import webview  # heavy; not needed in dev mode or for selfcheck
 
     picker.window = webview.create_window(
@@ -131,6 +166,8 @@ def _show_window(port: int, token: str, picker: FolderPicker) -> None:
         height=800,
         min_size=(800, 560),
     )
+    if file_picker is not None:
+        file_picker.window = picker.window
     webview.start()
 
 

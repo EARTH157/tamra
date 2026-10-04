@@ -5,6 +5,8 @@ import zlib
 from collections.abc import Iterator
 
 import numpy as np
+from keyring.backend import KeyringBackend
+from keyring.errors import PasswordDeleteError
 
 from tamra.llm.base import Chunk
 
@@ -67,6 +69,7 @@ class FakeLocalLLM:
     """Stands in for tamra.llm.runtime.LocalLLM."""
 
     label = "fake-model"
+    gpu_offload: bool | None = None
 
     def __init__(self, llm: "FakeLLM | None" = None):
         self.llm = llm or FakeLLM()
@@ -77,3 +80,24 @@ class FakeLocalLLM:
 
     def close(self) -> None:
         self.closed = True
+
+
+class MemoryKeyring(KeyringBackend):
+    """In-memory backend: tests never touch the real Windows Credential Manager."""
+
+    priority = 1
+
+    def __init__(self):
+        self.store: dict[tuple[str, str], str] = {}
+
+    def set_password(self, service, username, password):
+        self.store[(service, username)] = password
+
+    def get_password(self, service, username):
+        return self.store.get((service, username))
+
+    def delete_password(self, service, username):
+        try:
+            del self.store[(service, username)]
+        except KeyError:
+            raise PasswordDeleteError("not found") from None

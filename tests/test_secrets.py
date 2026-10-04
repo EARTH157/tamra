@@ -1,30 +1,8 @@
 import keyring
 import pytest
-from keyring.backend import KeyringBackend
-from keyring.errors import PasswordDeleteError
+from fakes import MemoryKeyring
 
 from tamra import secrets
-
-
-class MemoryKeyring(KeyringBackend):
-    """In-memory backend: tests never touch the real Windows Credential Manager."""
-
-    priority = 1
-
-    def __init__(self):
-        self.store: dict[tuple[str, str], str] = {}
-
-    def set_password(self, service, username, password):
-        self.store[(service, username)] = password
-
-    def get_password(self, service, username):
-        return self.store.get((service, username))
-
-    def delete_password(self, service, username):
-        try:
-            del self.store[(service, username)]
-        except KeyError:
-            raise PasswordDeleteError("not found") from None
 
 
 @pytest.fixture

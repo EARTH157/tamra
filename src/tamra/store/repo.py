@@ -329,6 +329,15 @@ class Store:
             cursor = self._conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
         return cursor.rowcount > 0
 
+    def delete_all_chats(self) -> int:
+        """Delete every chat with its messages and saved sources, in one transaction.
+
+        Returns how many chats were deleted.
+        """
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM chats")
+        return cursor.rowcount
+
     def add_user_message(self, chat_id: int, content: str) -> int:
         """Store a question; the first question of an untitled chat becomes its title."""
         created = _now()

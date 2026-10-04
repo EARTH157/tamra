@@ -187,6 +187,17 @@ class AnswerService:
                 return
         _run(action)
 
+    def run_if_idle(self, action: Callable[[], None]) -> bool:
+        """Run action only if no answer is being written; False (and nothing run) otherwise.
+
+        No answer can start while action runs, so a check followed by the action cannot race.
+        """
+        with self._state:
+            if self._answering:
+                return False
+            action()
+        return True
+
     def ask(
         self,
         chat_id: int,

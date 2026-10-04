@@ -424,6 +424,19 @@ def test_when_idle_waits_for_the_running_answer_to_end(env):
     assert ran == ["later"]
 
 
+def test_run_if_idle_runs_only_when_no_answer_is_being_written(env):
+    store, make, chat = env
+    service = make(FakeLLM())
+    ran = []
+    assert service.run_if_idle(lambda: ran.append("idle")) is True
+    stream = service.ask(chat.id, "How long is the lease term?")
+    next(stream)
+    assert service.run_if_idle(lambda: ran.append("busy")) is False
+    list(stream)
+    assert service.run_if_idle(lambda: ran.append("again")) is True
+    assert ran == ["idle", "again"]
+
+
 def test_a_failing_deferred_action_does_not_stop_the_others(env):
     store, make, chat = env
     service = make(FakeLLM())
