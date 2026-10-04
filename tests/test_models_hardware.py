@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from tamra.models import hardware
-from tamra.models.catalog import load_catalog
+from tamra.models.catalog import Catalog, load_catalog
 from tamra.models.hardware import Gpu, Hardware, detect, parse_devices, recommend
 
 SAMPLE = """\
@@ -28,6 +28,25 @@ def test_parse_devices_without_devices():
 
 def test_parse_devices_ignores_garbage():
     assert parse_devices("error: unknown argument\n\x00\xff junk (12 MiB)\nVulkan0 nope\n") == []
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        (
+            "  Vulkan0: NVIDIA GeForce RTX 4060 Laptop GPU (Special) (8188 MiB, 7000 MiB free)",
+            [Gpu("NVIDIA GeForce RTX 4060 Laptop GPU (Special)", 8188)],
+        ),
+        ("  CUDA0: NVIDIA GeForce RTX 4090 (24564 MiB)", [Gpu("NVIDIA GeForce RTX 4090", 24564)]),
+        ("  Vulkan0: Some GPU (no memory info)", []),
+        ("  Vulkan0: Some GPU", []),
+        ("ggml_vulkan: Found 2 Vulkan devices:", []),
+        ("load_backend: loaded Vulkan backend from C:/x/ggml-vulkan.dll (v1)", []),
+        ("ggml_vulkan: 0 = AMD Radeon(TM) 780M Graphics (AMD proprietary) | uma: 1", []),
+    ],
+)
+def test_parse_devices_lines(line, expected):
+    assert parse_devices(f"Available devices:\n{line}\n") == expected
 
 
 def gpu(name: str, vram_gb: int) -> Gpu:
@@ -72,6 +91,29 @@ def test_recommend_uses_largest_discrete_gpu(catalog):
 
 def test_recommend_discrete_amd_without_tm_counts(catalog):
     assert recommend(hw(gpu("AMD Radeon RX 7800 XT", 16)), catalog) == "large"
+
+
+@pytest.mark.parametrize(
+    "name, vram_gb, tier",
+    [
+        ("Intel(R) Arc(TM) A770 Graphics", 16, "large"),
+        ("Intel(R) Arc(TM) A750 Graphics", 8, "medium"),
+        ("Intel(R) Arc(TM) B580 Graphics", 12, "large"),
+        ("AMD Radeon(TM) Pro W7800 Graphics", 32, "large"),
+        ("AMD Radeon RX 7600", 8, "medium"),
+        ("AMD Radeon(TM) RX 7600 Graphics", 8, "medium"),
+        ("AMD Radeon(TM) 780M Graphics", 16, "small"),
+        ("Intel(R) Arc(TM) Graphics", 16, "small"),
+        ("Intel(R) Iris(R) Xe Graphics", 16, "small"),
+        ("Intel(R) UHD Graphics", 16, "small"),
+    ],
+)
+def test_recommend_classifies_discrete_and_integrated_names(catalog, name, vram_gb, tier):
+    assert recommend(hw(gpu(name, vram_gb)), catalog) == tier
+
+
+def test_recommend_with_no_llm_in_the_catalog_gives_small():
+    assert recommend(hw(gpu("NVIDIA GeForce RTX 3060", 12)), Catalog([])) == "small"
 
 
 def test_recommend_no_gpu_gives_small(catalog):

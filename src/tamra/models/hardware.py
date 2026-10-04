@@ -74,14 +74,25 @@ def detect(llama_exe: Path) -> Hardware:
     return Hardware(ram_gb=_ram_gb(), gpus=gpus)
 
 
+_INTEL_DISCRETE = re.compile(r"Arc\(TM\) [AB]\d{3}")
+_AMD_DISCRETE = re.compile(r"\b(Pro|RX)\b")
+
+
 def _is_integrated(gpu: Gpu) -> bool:
+    """Intel (except Arc A/B cards) and "Radeon(TM) ... Graphics" (except Pro/RX) are iGPUs."""
     name = gpu.name
-    return "Intel" in name or ("Radeon(TM)" in name and "Graphics" in name)
+    if "Intel" in name:
+        return not _INTEL_DISCRETE.search(name)
+    if "Radeon(TM)" in name and "Graphics" in name:
+        return not _AMD_DISCRETE.search(name)
+    return False
 
 
 def recommend(hardware: Hardware, catalog: Catalog) -> str:
     """The largest tier whose min_vram_gb fits the largest discrete GPU; else the smallest."""
     tiers = sorted(catalog.llms(), key=lambda m: m.min_vram_gb)
+    if not tiers:
+        return "small"
     discrete = [g.vram_mb for g in hardware.gpus if not _is_integrated(g)]
     vram_mb = max(discrete, default=0)
     fitting = [m for m in tiers if discrete and m.min_vram_gb * 1024 <= vram_mb]
