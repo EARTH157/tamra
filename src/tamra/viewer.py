@@ -15,7 +15,6 @@ from typing import Literal
 import numpy as np
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
-from pypdfium2._helpers.bitmap import PdfPosConv
 
 from tamra.ingest.parsers import PDFIUM_LOCK, ParsedDoc, Unit
 
@@ -338,7 +337,7 @@ def _page_rects(pdf_page, start: int, end: int) -> list[tuple[float, float, floa
     if width <= 0 or height <= 0:
         return []
     device_w, device_h = round(width * _DEVICE_UNITS), round(height * _DEVICE_UNITS)
-    to_device = PdfPosConv(pdf_page, (0, 0, device_w, device_h, 0))
+    to_device = pdfium.PdfPosConv(pdf_page, (0, 0, device_w, device_h, 0))
     textpage = pdf_page.get_textpage()
     try:
         first, after = _char_range(textpage, start, end)
