@@ -3,6 +3,7 @@
 import hashlib
 import logging
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 
@@ -10,9 +11,11 @@ import numpy as np
 
 from tamra import secrets
 from tamra.answer import AnswerService, AnswerSettings, Route
+from tamra.attribution import Attributor, Match
 from tamra.embedder import MODEL_ID, Embedder
 from tamra.ingest.chunker import TokenSpans, bge_token_spans
 from tamra.ingest.indexer import EmbedderLike, Indexer
+from tamra.ingest.parsers import ParsedDoc, ParseError, parse_file
 from tamra.ingest.watcher import FolderWatcher
 from tamra.llm.anthropic_api import AnthropicLLM
 from tamra.llm.base import Provider, ProviderError
@@ -22,7 +25,8 @@ from tamra.models.catalog import Catalog, load_catalog
 from tamra.models.hardware import Hardware, detect
 from tamra.models.manager import ModelManager
 from tamra.settings import Settings, load_settings, save_settings
-from tamra.store import Collection, Store
+from tamra.store import Collection, FileRecord, MessageRecord, Store
+from tamra.viewer import ViewerError, resolve_file
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +34,7 @@ OPENAI_BASE_URL = "https://api.openai.com"
 # Changing one of these swaps the provider. local_model_id does not: LocalLLM reads the model
 # path on every question and restarts llama-server on the new model by itself.
 _PROVIDER_FIELDS = frozenset({"mode", "api_provider", "api_model", "api_base_url"})
+DOCUMENT_CACHE_SIZE = 8  # parsed documents kept for the viewer, so paging a PDF parses it once
 
 
 def _build_api_provider(settings: Settings, key: str) -> Provider:
@@ -57,9 +62,11 @@ class Core:
         catalog: Catalog | None = None,
         answer_settings: AnswerSettings | None = None,
         debounce: float = 2.0,
+        warm_attribution: bool = False,
     ):
         """`llm` replaces the local runtime and `api_factory` builds the API provider from the
-        settings and the key; both exist so tests can use fakes."""
+        settings and the key; both exist so tests can use fakes. `warm_attribution` embeds a
+        new answer's sources in the background so the first "Check source" is fast."""
         data_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir = data_dir
         bge = models_dir / "bge-m3"
@@ -68,6 +75,12 @@ class Core:
         self._embedder: EmbedderLike | None = None
         self._embedder_lock = threading.Lock()
         spans_factory = token_spans_factory or (lambda: bge_token_spans(bge / "tokenizer.json"))
+        self._spans_factory = spans_factory
+        self._attributor: Attributor | None = None
+        self._attributor_lock = threading.Lock()
+        self._warm_attribution = warm_attribution
+        self._documents: OrderedDict[tuple, ParsedDoc] = OrderedDict()
+        self._documents_lock = threading.Lock()
         self._models_dir = models_dir
         self._llama_exe = llama_exe
         self._catalog = catalog or load_catalog()
@@ -93,6 +106,7 @@ class Core:
             self._route,
             model_id=MODEL_ID,
             settings=answer_settings,
+            on_saved=self._warm if warm_attribution else None,
         )
 
     # --- settings and providers ---
@@ -229,6 +243,65 @@ class Core:
 
     def _embed_query(self, text: str) -> np.ndarray:
         return self.embedder().embed([text])[0]
+
+    # --- attribution and the viewer ---
+
+    def attribute(
+        self, message: MessageRecord, selection: str, only: int | None = None
+    ) -> list[Match]:
+        """Match a selection to the message's sources. It shares the one embedder."""
+        with self._attributor_lock:
+            if self._attributor is None:
+                self._attributor = Attributor(
+                    lambda texts: self.embedder().embed(texts), self._spans_factory()
+                )
+            attributor = self._attributor
+        return attributor.attribute(message, selection, only)
+
+    def _warm(self, message_id: int) -> None:
+        threading.Thread(
+            target=self._warm_now, args=(message_id,), name="tamra-attribution-warm", daemon=True
+        ).start()
+
+    def _warm_now(self, message_id: int) -> None:
+        try:
+            message = self.store.get_message(message_id)
+            if message is not None and message.content.strip():
+                self.attribute(message, message.content[:500])  # caches every source's windows
+        except Exception as e:  # warming is only an optimisation
+            log.warning("attribution warm-up failed: %s", type(e).__name__)
+
+    def file_path(self, file_id: int) -> tuple[FileRecord, Path]:
+        """The stored record and the real path of an indexed file (ViewerError if it is gone or
+        its stored path leaves the collection folder). The path always comes from the store."""
+        collection = self.store.get_collection()
+        record = self.store.get_file(file_id)
+        if collection is None or record is None:
+            raise ViewerError("file not found")
+        return record, resolve_file(collection.folder_path, record.rel_path)
+
+    def document(self, file_id: int) -> tuple[FileRecord, Path, ParsedDoc]:
+        """The file parsed as it is now, from a small cache keyed by size and modified time."""
+        record, path = self.file_path(file_id)
+        try:
+            stat = path.stat()
+        except OSError as e:
+            raise ViewerError("file not found") from e
+        key = (file_id, str(path), stat.st_size, stat.st_mtime_ns)
+        with self._documents_lock:
+            doc = self._documents.get(key)
+            if doc is not None:
+                self._documents.move_to_end(key)
+                return record, path, doc
+        try:
+            doc = parse_file(path)
+        except ParseError as e:
+            raise ViewerError(f"cannot read file: {e}") from e
+        with self._documents_lock:
+            self._documents[key] = doc
+            while len(self._documents) > DOCUMENT_CACHE_SIZE:
+                self._documents.popitem(last=False)
+        return record, path, doc
 
     def start(self) -> None:
         self.indexer.start()

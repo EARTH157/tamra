@@ -113,6 +113,13 @@ class Store:
             ).fetchall()
         return [FileRecord(*row) for row in rows]
 
+    def get_file(self, file_id: int) -> FileRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {_FILE_COLUMNS} FROM files WHERE id = ?", (file_id,)
+            ).fetchone()
+        return FileRecord(*row) if row else None
+
     def next_pending_file(self, collection_id: int) -> FileRecord | None:
         with self._lock:
             row = self._conn.execute(

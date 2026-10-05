@@ -121,6 +121,7 @@ def source_payload(source: SourceRecord) -> dict:
     """What the UI shows for a source."""
     return {
         "n": source.n,
+        "file_id": source.file_id,  # None once the file left the index
         "file": source.rel_path,
         "label": location_label(source.location),
         "text": source.text,
@@ -160,12 +161,16 @@ class AnswerService:
         *,
         model_id: str,
         settings: AnswerSettings | None = None,
+        on_saved: Callable[[int], None] | None = None,
     ):
+        """on_saved(message_id) runs after a generated answer is saved, on the answering thread:
+        it must return quickly (start a thread for slow work). Its failures are only logged."""
         self._store = store
         self._embed_query = embed_query
         self._route = route
         self._model_id = model_id
         self._settings = settings or AnswerSettings()
+        self._on_saved = on_saved
         self._state = threading.Lock()  # guards _answering and _after
         self._answering = False
         self._after: list[Callable[[], None]] = []
@@ -321,6 +326,8 @@ class AnswerService:
                 message_id = self._store.add_assistant_message(
                     chat_id, content, provider=route.name, model=label, sources=sources
                 )
+                if self._on_saved is not None and sources:
+                    _run(lambda: self._on_saved(message_id))
         if error:
             yield {"type": "error", "message": error, "reason": reason}
         if message_id is not None:
