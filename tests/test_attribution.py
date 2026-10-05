@@ -8,6 +8,7 @@ from fakes import fake_spans
 
 from tamra.attribution import (
     NUMBER_PENALTY,
+    STRONG,
     WINDOW_STRIDE,
     WINDOW_TOKENS,
     Attributor,
@@ -16,7 +17,7 @@ from tamra.attribution import (
     windows,
 )
 from tamra.retriever import trigrams
-from tamra.store import MessageRecord, SourceRecord
+from tamra.store import MessageRecord, SourceRecord, Store
 
 DIM = 512
 
@@ -45,6 +46,11 @@ class CountingEmbed:
 
     def embedded(self, text: str) -> int:
         return sum(1 for batch in self.batches for t in batch if t == text)
+
+
+def same_embed(texts: list[str]) -> np.ndarray:
+    """Every text gets the same vector (cosine 1), so only the number rules decide."""
+    return np.ones((len(texts), 4), dtype=np.float32) / 2
 
 
 def source(n: int, text: str) -> SourceRecord:
@@ -151,6 +157,13 @@ def test_cited_in_handles_cjk_ends_newlines_and_decimals():
     assert cited_in(content, "1.5 baht") == {3}
 
 
+def test_a_thai_marker_followed_by_a_space_ends_the_sentence():
+    content = "ลาพักร้อนได้ 12 วัน [1] ส่วนลาป่วยได้ไม่เกิน 30 วัน [2] และที่พักคืนละ 1,500 บาท [3]"
+    assert cited_in(content, "ลาป่วยได้ไม่เกิน 30 วัน") == {2}
+    assert cited_in(content, "ลาพักร้อนได้ 12 วัน") == {1}
+    assert cited_in(content, "ที่พักคืนละ 1,500 บาท") == {3}
+
+
 def test_cited_in_with_no_marker_or_unknown_text_is_empty():
     assert cited_in("No markers here.", "No markers") == set()
     assert cited_in("Rent is due [1].", "something the answer never said") == set()
@@ -163,6 +176,21 @@ def test_cited_in_with_no_marker_or_unknown_text_is_empty():
 def test_numbers_normalise_commas_and_thai_digits():
     assert numbers("rent 18,500 baht, 1.5% and ๑๒ days; room B2") == {"18500", "1.5", "12", "2"}
     assert numbers("no digits here") == frozenset()
+
+
+def test_numbers_keep_lists_apart_and_drop_thousands_commas_only():
+    assert numbers("1,2,3") == {"1", "2", "3"}
+    assert numbers("1,500 and 12,000,000") == {"1500", "12000000"}
+    assert numbers("1,50") == {"1", "50"}
+
+
+def test_equal_values_in_different_formats_agree():
+    assert numbers("7:00") == numbers("07.00") == numbers("7") == {"7"}
+    assert numbers("15:00") == numbers("15.00 น.")
+    assert numbers("1.50") == numbers("1.5") == {"1.5"}
+    assert numbers("7:05") == numbers("07.05") == {"7.05"}
+    assert numbers("0") == {"0"} and numbers("007") == {"7"}
+    assert numbers("0.05") == {"0.05"}
 
 
 # --- attribute ---
@@ -210,6 +238,81 @@ def test_a_number_the_source_lacks_loses_to_the_source_that_has_it():
     assert matches[0].score - matches[1].score > NUMBER_PENALTY / 2
 
 
+def test_cited_sources_rank_first_even_with_a_lower_score():
+    twins = [source(1, "Fees are charged monthly."), source(2, "Fees are charged weekly.")]
+    content = "Fees are charged monthly [2]."
+    matches = attributor().attribute(message(twins, content=content), "Fees are charged monthly")
+    assert [m.n for m in matches] == [2, 1]
+    assert matches[0].score < matches[1].score
+
+
+def test_a_cited_source_below_the_partial_floor_still_matches_nothing():
+    twins = [source(1, "Fees are charged monthly."), source(2, "Parking is on level B2.")]
+    content = "Fees are charged monthly [2]."
+    matches = attributor().attribute(message(twins, content=content), "Fees are charged monthly")
+    assert [m.n for m in matches] == [1]
+
+
+def test_citation_markers_in_the_selection_are_not_part_of_the_claim():
+    text = "The rent is due on the fifth day of each month."
+    msg = message([source(1, text)])
+    plain = attributor().attribute(msg, text)
+    marked = attributor().attribute(msg, text + " [7]")
+    assert [(m.n, m.label) for m in marked] == [(1, "strong")]
+    assert marked[0].score == pytest.approx(plain[0].score)
+    assert attributor().attribute(msg, "[1]") == []
+
+
+def test_a_number_in_one_window_but_not_another_is_penalised_there():
+    twins = [
+        source(1, "The monthly rent is 18,500 baht, due on the 5th day of each month."),
+        source(2, "The monthly rent is 21,000 baht, due on the 5th day of each month."),
+    ]
+    matches = attributor().attribute(message(twins), twins[1].text)
+    assert [(m.n, m.label) for m in matches[:1]] == [(2, "strong")]
+    assert matches[0].score - matches[1].score > NUMBER_PENALTY / 2
+
+
+def test_a_number_no_source_has_caps_the_label_at_partial():
+    lease = source(1, "The monthly rent is 18,500 baht, due on the 5th day of each month.")
+    exact = attributor().attribute(message([lease]), lease.text)
+    wrong = attributor().attribute(message([lease]), lease.text.replace("18,500", "25,000"))
+    assert exact[0].label == "strong"
+    assert wrong[0].n == 1 and wrong[0].label == "partial"
+    assert wrong[0].score > STRONG  # the score is not lowered, only the label is capped
+
+
+def test_a_computed_total_in_the_same_language_caps_the_label():
+    claim = "ค่าที่พักในกรุงเทพฯ เบิกได้ไม่เกินคืนละ 1,500 บาท ต่างจังหวัดไม่เกินคืนละ 1,200 บาท"
+    hotel = source(1, claim)
+    assert attributor().attribute(message([hotel]), claim)[0].label == "strong"
+    total = attributor().attribute(message([hotel]), claim + " รวมสองคืน 2,700 บาท")
+    assert total[0].n == 1 and total[0].label == "partial"
+
+
+def test_numbers_are_compared_across_languages():
+    thai = source(1, "ค่าที่พักในกรุงเทพฯ เบิกได้ไม่เกินคืนละ 1,500 บาท")
+    a = Attributor(same_embed, fake_spans)
+    ok = a.attribute(message([thai]), "The hotel allowance in Bangkok is 1,500 baht a night.")
+    assert ok[0].label == "strong"  # nothing contradicts the source
+    total = a.attribute(
+        message([thai], message_id=2),
+        "The hotel allowance is 1,500 baht a night, 4,500 baht for three nights.",
+    )
+    assert total[0].label == "partial"  # 4,500 is in no source
+    two = message([thai, source(2, "ค่าเบี้ยเลี้ยงวันละ 270 บาท")], message_id=3)
+    assert a.attribute(two, "The allowance is 1,500 baht")[0].n == 1  # the number breaks the tie
+
+
+def test_times_written_differently_are_not_penalised():
+    canteen = source(1, "โรงอาหารเปิดให้บริการเวลา 07.00 ถึง 15.00 น. ทุกวันจันทร์ถึงวันศุกร์")
+    other = source(2, "ห้องประชุมเปิดเวลา 09.00 ถึง 18.00 น.")
+    a = Attributor(same_embed, fake_spans)
+    matches = a.attribute(message([canteen, other]), "The canteen is open from 7:00 to 15:00.")
+    assert matches[0].n == 1
+    assert matches[0].score - matches[1].score >= NUMBER_PENALTY * 2 - 1e-6
+
+
 def test_window_embeddings_are_cached_per_message():
     embed = CountingEmbed()
     a = attributor(embed)
@@ -244,12 +347,39 @@ def test_only_embeds_just_that_source_and_later_calls_add_the_rest():
     assert embed.embedded(PETS) == 1 and embed.embedded(LEASE) == 1
 
 
+def test_a_reused_message_id_never_serves_the_old_windows(tmp_path):
+    old_text = " ".join(f"old{i}" for i in range(200))
+    new_text = "Cats are allowed. Dogs are not."
+    store = Store.open(tmp_path / "tamra.db")
+    try:
+        a = attributor()
+        chat = store.create_chat()
+        first_id = store.add_assistant_message(
+            chat.id, "Old answer [1].", provider=None, model=None, sources=[source(1, old_text)]
+        )
+        assert a.attribute(store.get_message(first_id), words(60).replace("word", "old"))[0].n == 1
+        assert store.delete_chat(chat.id)
+
+        chat = store.create_chat()
+        second_id = store.add_assistant_message(
+            chat.id, "New answer [1].", provider=None, model=None, sources=[source(1, new_text)]
+        )
+        assert second_id == first_id  # SQLite reuses the id: the cache must not trust it
+        matches = a.attribute(store.get_message(second_id), new_text)
+        assert [(m.n, m.label) for m in matches] == [(1, "strong")]
+        assert all(0 <= m.start < m.end <= len(new_text) for m in matches)
+    finally:
+        store.close()
+
+
 def test_a_long_single_source_gives_up_to_three_separate_windows():
-    paragraphs = [" ".join(f"{topic}{i}" for i in range(60)) for topic in "abcde"]
-    text = " ".join(paragraphs)
-    msg = message([source(1, text)])
-    matches = attributor().attribute(msg, " ".join(f"a{i}" for i in range(60)) + " b1 c1 d1 e1")
-    assert 1 <= len(matches) <= 3
+    block = " ".join(f"blk{i}" for i in range(WINDOW_TOKENS))
+    filler = " ".join(f"fill{i}" for i in range(WINDOW_TOKENS * 2))
+    text = f"{block} {filler} {block}"  # the block sits in the first and the last window
+    ranges = windows(text, fake_spans)
+    matches = attributor().attribute(message([source(1, text)]), block)
+    assert 2 <= len(matches) <= 3
+    assert {(m.start, m.end) for m in matches[:2]} == {ranges[0], ranges[-1]}
     spans = [(m.start, m.end) for m in matches]
     for i, (a_start, a_end) in enumerate(spans):
         for b_start, b_end in spans[i + 1 :]:
@@ -293,8 +423,11 @@ def test_the_calibration_cases_are_well_formed():
     cases = load_cases()
     ids = [c["id"] for c in cases]
     assert len(ids) == len(set(ids))
-    assert len(cases) >= 24
-    assert {c["expect"] for c in cases} == {"strong", "partial", "none"}
+    main = [c for c in cases if c.get("group", "main") == "main"]
+    assert len(main) >= 24
+    assert {c.get("group", "main") for c in cases} == {"main", "heldout", "hard_negative"}
+    assert all(c["expect"] == "none" for c in cases if c.get("group") == "hard_negative")
+    assert {c["expect"] for c in main} == {"strong", "partial", "none"}
     for case in cases:
         numbers = {s["n"] for s in case["sources"]}
         assert case["expect"] == "none" or case["expect_n"] in numbers
@@ -316,3 +449,7 @@ def test_the_calibration_set_meets_the_accuracy_bar(bge_dir):
     report = run_cases(real, load_cases())
     assert report["n_accuracy"] >= 0.9
     assert report["false_matches"] == []
+    assert report["strong_on_wrong_source"] == []
+    rows = {r["id"]: r for r in report["rows"]}
+    assert rows["en-wrong-rent"]["got"] == "partial"  # the misquoted number caps the label
+    assert rows["en-rent-21000"]["got_n"] == 2

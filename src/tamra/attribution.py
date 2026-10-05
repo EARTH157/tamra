@@ -6,6 +6,7 @@ message, and every window is scored against the selection by cosine similarity p
 character-trigram overlap, which weighs numbers, names and terms that must match exactly.
 """
 
+import hashlib
 import re
 import threading
 import unicodedata
@@ -26,8 +27,7 @@ MAX_MATCHES = 3
 
 # Calibrated on eval/attribution.jsonl with bge-m3 (scripts/eval_attribution.py).
 TRIGRAM_WEIGHT = 0.2
-CITED_BONUS = 0.05
-NUMBER_PENALTY = 0.15  # per number of the selection that the window lacks
+NUMBER_PENALTY = 0.15  # per selection number that another window has and this one lacks
 MAX_NUMBER_PENALTIES = 2
 STRONG = 0.83
 PARTIAL = 0.57
@@ -35,23 +35,42 @@ PARTIAL = 0.57
 Label = Literal["strong", "partial"]
 
 _MARKER = re.compile(r"\[(\d+)\]")
-_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+_NUMBER = re.compile(r"\d+(?:[.,:]\d+)*")
+_THOUSANDS = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?")
 # A sentence ends at . ! ? (when not inside a number such as 1.5), at 。！？ or at a newline;
-# [n] markers written right after the end still belong to that sentence.
-_SENTENCE_END = re.compile(r"(?:[.!?]+(?=[\s\[]|$)|[。！？]+|\n)(?:[ \t]*\[\d+\])*")
+# [n] markers written right after the end still belong to that sentence. Thai has no full
+# stop, so a group of markers followed by whitespace also ends a sentence.
+_SENTENCE_END = re.compile(
+    r"(?:[.!?]+(?=[\s\[]|$)|[。！？]+|\n)(?:[ \t]*\[\d+\])*|(?:[ \t]*\[\d+\])+(?=\s|$)"
+)
 
 
 def numbers(text: str) -> frozenset[str]:
-    """The numbers in the text with digits normalised and thousands commas removed.
+    """The numbers in the text, normalised so that equal values compare equal.
 
-    Trigrams skip numbers shorter than three characters ("6" or "12" days), yet a number that
-    differs is the commonest way an answer misquotes its source.
+    Thai digits become ASCII, thousands commas go ("18,500" is "18500", but "1,2,3" is three
+    numbers), leading zeros go, and ":" counts as "." with trailing decimal zeros dropped, so
+    "7:00", "07.00" and "7" agree and "1.50" equals "1.5". Trigrams skip numbers shorter than
+    three characters ("6" or "12" days), yet a number that differs is the commonest way an
+    answer misquotes its source.
     """
     found = set()
     for match in _NUMBER.findall(text):
         digits = "".join(str(unicodedata.decimal(c)) if c.isdecimal() else c for c in match)
-        found.add(digits.replace(",", ""))
+        if _THOUSANDS.fullmatch(digits):
+            found.add(_normal(digits.replace(",", "")))
+        else:
+            found.update(_normal(part) for part in digits.split(","))
     return frozenset(found)
+
+
+def _normal(number: str) -> str:
+    whole, *rest = number.replace(":", ".").split(".")
+    whole = whole.lstrip("0") or "0"
+    if len(rest) == 1:  # a decimal or a time: "1.50" and "7.00" lose their trailing zeros
+        fraction = rest[0].rstrip("0")
+        return f"{whole}.{fraction}" if fraction else whole
+    return ".".join([whole, *rest])
 
 
 @dataclass(frozen=True)
@@ -103,6 +122,7 @@ class _Windows:
     vectors: np.ndarray  # one L2-normalised row per window
     grams: list[frozenset[str]]
     numbers: list[frozenset[str]]
+    digest: str  # of the snapshot text: a message id can be reused after a delete
 
 
 class Attributor:
@@ -124,55 +144,69 @@ class Attributor:
     def attribute(
         self, message: MessageRecord, selection: str, only: int | None = None
     ) -> list[Match]:
-        """Up to three matches, best first; empty means no clear source was found.
+        """Up to three matches; empty means no clear source was found.
+
+        Sources the answer cited for the selection (spec §7.2) come first, then best score first.
 
         only: consider just that source (an [n] chip was clicked).
         """
         selection = selection.strip()
         candidates = [s for s in message.sources if only is None or s.n == only]
-        if not selection or not candidates:
+        # The markers only say which sources the answer cited; they are not part of the claim.
+        cited = cited_in(message.content, selection)
+        query_text = " ".join(_MARKER.sub(" ", selection).split())
+        if not query_text or not candidates:
             return []
         entries = self._windows(message.id, candidates)
         if not entries:
             return []
-        query = np.asarray(self._embed([selection]), dtype=np.float32)[0]
-        selection_grams = frozenset(trigrams(selection))
-        selection_numbers = numbers(selection)
-        cited = cited_in(message.content, selection)
+        query = np.asarray(self._embed([query_text]), dtype=np.float32)[0]
+        query_grams = frozenset(trigrams(query_text))
+        query_numbers = numbers(query_text)
+        known_numbers = frozenset().union(*(n for e in entries.values() for n in e.numbers))
+        # A number that no candidate has cannot be checked against them: never a strong match.
+        unchecked = bool(query_numbers - known_numbers)
 
-        scored: list[tuple[float, int, int]] = []  # (score, source n, window index)
+        scored: list[tuple[bool, float, int, int]] = []  # (not cited, score, source n, window)
         for n, entry in entries.items():
             similarity = entry.vectors @ query
-            bonus = CITED_BONUS if n in cited else 0.0
             for index, grams in enumerate(entry.grams):
-                overlap = len(selection_grams & grams) / max(1, len(selection_grams))
-                missing = len(selection_numbers - entry.numbers[index])
+                overlap = len(query_grams & grams) / max(1, len(query_grams))
+                missing = len((query_numbers & known_numbers) - entry.numbers[index])
                 penalty = NUMBER_PENALTY * min(missing, MAX_NUMBER_PENALTIES)
-                score = float(similarity[index]) + TRIGRAM_WEIGHT * overlap + bonus - penalty
-                scored.append((score, n, index))
-        scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+                score = float(similarity[index]) + TRIGRAM_WEIGHT * overlap - penalty
+                scored.append((n not in cited, score, n, index))
+        scored.sort(key=lambda item: (item[0], -item[1], item[2], item[3]))  # cited sources first
 
         matches: list[Match] = []
         taken: dict[int, list[tuple[int, int]]] = {}
-        for score, n, index in scored:
-            if score < PARTIAL or len(matches) == MAX_MATCHES:
+        for _, score, n, index in scored:
+            if score < PARTIAL:
+                continue
+            if len(matches) == MAX_MATCHES:
                 break
             start, end = entries[n].ranges[index]
             used = taken.setdefault(n, [])
             if used and (len(entries) > 1 or any(start < b and a < end for a, b in used)):
                 continue  # one window per source, unless it is the only one: then no overlaps
             used.append((start, end))
-            matches.append(Match(n, start, end, "strong" if score >= STRONG else "partial", score))
+            label = "strong" if score >= STRONG and not unchecked else "partial"
+            matches.append(Match(n, start, end, label, score))
         return matches
 
     def _windows(self, message_id: int, sources: list[SourceRecord]) -> dict[int, _Windows]:
-        """The windows of these sources, embedding those not cached yet in one batch."""
+        """The windows of these sources, embedding those not cached (or changed) in one batch."""
+        digests = {s.n: hashlib.sha1(s.text.encode("utf-8")).hexdigest() for s in sources}
         with self._lock:
             cached = self._cache.setdefault(message_id, {})
             self._cache.move_to_end(message_id)
             while len(self._cache) > self._cache_size:
                 self._cache.popitem(last=False)
-            missing = [s for s in sources if s.n not in cached and s.text.strip()]
+            missing = [
+                s
+                for s in sources
+                if s.text.strip() and (s.n not in cached or cached[s.n].digest != digests[s.n])
+            ]
             if missing:
                 ranges = {s.n: windows(s.text, self._spans) for s in missing}
                 texts = [s.text[a:b] for s in missing for a, b in ranges[s.n]]
@@ -185,6 +219,11 @@ class Attributor:
                         vectors[row : row + count],
                         [frozenset(trigrams(t)) for t in texts[row : row + count]],
                         [numbers(t) for t in texts[row : row + count]],
+                        digests[s.n],
                     )
                     row += count
-            return {s.n: cached[s.n] for s in sources if s.n in cached}
+            return {
+                s.n: cached[s.n]
+                for s in sources
+                if s.n in cached and cached[s.n].digest == digests[s.n]
+            }

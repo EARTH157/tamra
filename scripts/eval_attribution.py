@@ -4,7 +4,12 @@
 
 Needs the bge-m3 model (scripts/fetch_assets.py). Runs every case in eval/attribution.jsonl
 through `tamra.attribution.Attributor` with the real embedder and prints each case's best
-score and label, then the accuracy of the expected source and of the expected label.
+score and label. Cases have a `group`:
+
+- main (the default): the set the constants are calibrated on; the accuracy bar applies here.
+- heldout: cases written after calibration; reported separately, never tuned on.
+- hard_negative: same-topic claims the sources do not support, or contradict. The matcher
+  measures similar wording, not truth, so these are reported as a rejection rate only.
 """
 
 import argparse
@@ -21,6 +26,7 @@ from tamra.store import MessageRecord, SourceRecord
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "eval" / "attribution.jsonl"
 MODEL_DIR = ROOT / ".models" / "bge-m3"
+GROUPS = ("main", "heldout", "hard_negative")
 
 
 def load_cases(path: Path = CASES) -> list[dict]:
@@ -52,8 +58,33 @@ def to_message(case: dict, message_id: int) -> MessageRecord:
     )
 
 
+def summarise(rows: list[dict]) -> dict:
+    """Accuracy of the expected source and label, and the cases wrongly matched or rejected."""
+    answerable = [r for r in rows if r["expect"] != "none"]
+    unanswerable = [r for r in rows if r["expect"] == "none"]
+    return {
+        "cases": len(rows),
+        "n_accuracy": (
+            sum(r["got_n"] == r["expect_n"] for r in answerable) / len(answerable)
+            if answerable
+            else None
+        ),
+        "label_accuracy": sum(r["got"] == r["expect"] for r in rows) / len(rows) if rows else None,
+        "rejection_rate": (
+            sum(r["got"] == "none" for r in unanswerable) / len(unanswerable)
+            if unanswerable
+            else None
+        ),
+        "false_matches": [r["id"] for r in unanswerable if r["got"] != "none"],
+        "wrong_source": [r["id"] for r in answerable if r["got_n"] != r["expect_n"]],
+        "strong_on_wrong_source": [
+            r["id"] for r in answerable if r["got"] == "strong" and r["got_n"] != r["expect_n"]
+        ],
+    }
+
+
 def run_cases(attributor: Attributor, cases: list[dict]) -> dict:
-    """Run every case; report the per-case outcome and the accuracy of source and label."""
+    """Run every case. The top-level accuracy fields are for the main group only."""
     rows = []
     for message_id, case in enumerate(cases, start=1):
         message = to_message(case, message_id)
@@ -62,6 +93,7 @@ def run_cases(attributor: Attributor, cases: list[dict]) -> dict:
         rows.append(
             {
                 "id": case["id"],
+                "group": case.get("group", "main"),
                 "expect_n": case["expect_n"],
                 "expect": case["expect"],
                 "got_n": top.n if top else None,
@@ -70,16 +102,8 @@ def run_cases(attributor: Attributor, cases: list[dict]) -> dict:
                 "all": [(m.n, m.label, round(m.score, 3)) for m in matches],
             }
         )
-    answerable = [r for r in rows if r["expect"] != "none"]
-    return {
-        "rows": rows,
-        "n_accuracy": sum(r["got_n"] == r["expect_n"] for r in answerable) / len(answerable),
-        "label_accuracy": sum(r["got"] == r["expect"] for r in rows) / len(rows),
-        "false_matches": [r["id"] for r in rows if r["expect"] == "none" and r["got"] != "none"],
-        "strong_on_wrong_source": [
-            r["id"] for r in answerable if r["got"] == "strong" and r["got_n"] != r["expect_n"]
-        ],
-    }
+    groups = {g: summarise([r for r in rows if r["group"] == g]) for g in GROUPS}
+    return {"rows": rows, "groups": groups, **groups["main"]}
 
 
 def main() -> int:
@@ -91,21 +115,27 @@ def main() -> int:
     report = run_cases(Attributor(embedder.embed, spans), load_cases())
     print(
         f"constants: TRIGRAM_WEIGHT={attribution.TRIGRAM_WEIGHT}"
-        f" CITED_BONUS={attribution.CITED_BONUS}"
         f" NUMBER_PENALTY={attribution.NUMBER_PENALTY}"
         f" STRONG={attribution.STRONG} PARTIAL={attribution.PARTIAL}"
     )
-    print(f"{'id':<26} {'expect':<9} {'got':<8} {'n':<9} score  matches")
+    print(f"{'id':<26} {'group':<13} {'expect':<10} {'got':<10} score  matches")
     for r in report["rows"]:
         want = f"{r['expect']}/{r['expect_n']}"
         got = f"{r['got']}/{r['got_n']}"
-        ok = "ok " if (r["got_n"], r["got"]) == (r["expect_n"], r["expect"]) else "MISS"
-        print(f"{r['id']:<26} {want:<9} {got:<10} {ok} {r['score']}  {r['all']}")
-    answerable = sum(1 for r in report["rows"] if r["expect"] != "none")
-    print(f"expect_n accuracy (non-none, {answerable} cases): {report['n_accuracy']:.3f}")
-    print(f"expect (label) accuracy (all {len(report['rows'])}): {report['label_accuracy']:.3f}")
-    print(f"false matches on none cases: {report['false_matches']}")
-    print(f"strong for the wrong source: {report['strong_on_wrong_source']}")
+        ok = "ok  " if (r["got_n"], r["got"]) == (r["expect_n"], r["expect"]) else "MISS"
+        print(f"{r['id']:<26} {r['group']:<13} {want:<10} {got:<10} {ok} {r['score']}  {r['all']}")
+    for name, g in report["groups"].items():
+        if not g["cases"]:
+            continue
+        print(f"\n[{name}] {g['cases']} cases")
+        if g["n_accuracy"] is not None:
+            print(f"  expect_n accuracy (answerable): {g['n_accuracy']:.3f}")
+        print(f"  expect (label) accuracy: {g['label_accuracy']:.3f}")
+        if g["rejection_rate"] is not None:
+            print(f"  rejection rate (none cases): {g['rejection_rate']:.3f}")
+        print(f"  false matches: {g['false_matches']}")
+        print(f"  wrong source: {g['wrong_source']}")
+        print(f"  strong for the wrong source: {g['strong_on_wrong_source']}")
     if args.out:
         args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0

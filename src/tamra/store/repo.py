@@ -33,6 +33,11 @@ def _blob(vector: np.ndarray) -> bytes:
     return np.asarray(vector, dtype=np.float32).tobytes()
 
 
+def _source(row: Sequence) -> SourceRecord:
+    """A SourceRecord from (n, chunk_id, file_id, rel_path, text_snapshot, location_json, hash)."""
+    return SourceRecord(row[0], row[1], row[2], row[3], row[4], json.loads(row[5]), row[6])
+
+
 class Store:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
@@ -426,15 +431,11 @@ class Store:
             if row is None:
                 return None
             source_rows = self._conn.execute(
-                "SELECT message_id, n, chunk_id, file_id, rel_path, text_snapshot,"
-                " location_json, file_hash_at_answer FROM message_sources"
-                " WHERE message_id = ? ORDER BY n",
+                "SELECT n, chunk_id, file_id, rel_path, text_snapshot, location_json,"
+                " file_hash_at_answer FROM message_sources WHERE message_id = ? ORDER BY n",
                 (message_id,),
             ).fetchall()
-        sources = tuple(
-            SourceRecord(r[1], r[2], r[3], r[4], r[5], json.loads(r[6]), r[7]) for r in source_rows
-        )
-        return MessageRecord(*row, sources=sources)
+        return MessageRecord(*row, sources=tuple(_source(r) for r in source_rows))
 
     def list_messages(self, chat_id: int) -> list[MessageRecord]:
         with self._lock:
@@ -452,7 +453,5 @@ class Store:
             ).fetchall()
         sources: dict[int, list[SourceRecord]] = {}
         for row in source_rows:
-            sources.setdefault(row[0], []).append(
-                SourceRecord(row[1], row[2], row[3], row[4], row[5], json.loads(row[6]), row[7])
-            )
+            sources.setdefault(row[0], []).append(_source(row[1:]))
         return [MessageRecord(*row, sources=tuple(sources.get(row[0], ()))) for row in rows]
