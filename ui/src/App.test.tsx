@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { SettingsProvider } from "./settings";
+import { modelsInfo, saved } from "./test-models";
+import type { Settings } from "./types";
 import {
   buttonByText,
   click,
@@ -225,5 +228,160 @@ describe("App", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("Settings in the app", () => {
+  /** The app inside the settings provider; the settings and models routes are answered. */
+  async function mountWithSettings(
+    settings: Partial<Settings> = {},
+    extra: Record<string, () => Response> = {},
+  ) {
+    const calls = withChats({
+      "GET /api/settings": () => json(saved(settings)),
+      "GET /api/models": () => json(modelsInfo()),
+      ...extra,
+    });
+    view = await mount(
+      <SettingsProvider>
+        <App />
+      </SettingsProvider>,
+    );
+    return calls;
+  }
+
+  const settingsButton = () => buttonByText(view!.container, "Settings");
+
+  it("opens the Settings page from the sidebar and returns to the chat from it", async () => {
+    await mountWithSettings();
+    expect(view!.container.querySelector(".settings")).toBeNull();
+    await click(settingsButton());
+    expect(view!.container.querySelector(".settings h1")?.textContent).toBe("Settings");
+    expect(settingsButton()?.getAttribute("aria-current")).toBe("page");
+    expect(view!.container.textContent).toContain("Interface language");
+    await click(view!.container.querySelector('button[title="Lease length"]'));
+    expect(view!.container.querySelector(".settings")).toBeNull();
+    expect(view!.container.querySelector(".chat-view")).not.toBeNull();
+    await click(settingsButton());
+    await click(buttonByText(view!.container, "New chat"));
+    expect(view!.container.querySelector(".settings")).toBeNull();
+  });
+
+  it("keeps the chat, with its unsent question, while Settings is open", async () => {
+    await mountWithSettings();
+    const box = () => view!.container.querySelector("textarea");
+    await typeInto(box(), "How long is the lease?");
+    await click(settingsButton());
+    expect(view!.container.querySelector(".view-slot")?.hasAttribute("hidden")).toBe(true);
+    await click(buttonByText(view!.container, "New chat"));
+    expect((box() as HTMLTextAreaElement).value).toBe("How long is the lease?");
+  });
+
+  it("lets you return to the chat from Settings while an answer is streaming", async () => {
+    const never = new ReadableStream<Uint8Array>({ start() {} }); // an answer that never ends
+    await mountWithSettings(
+      {},
+      {
+        "POST /api/chats": () => json(lease),
+        "GET /api/chats/3": () => json({ ...lease, messages: [] }),
+        "POST /api/chats/3/messages": () =>
+          new Response(never, { headers: { "Content-Type": "text/event-stream" } }),
+      },
+    );
+    await typeInto(view!.container.querySelector("textarea"), "How long is the lease?");
+    await click(view!.container.querySelector('button[type="submit"]'));
+    expect(buttonByText(view!.container, "New chat")?.disabled).toBe(true); // busy
+    await click(settingsButton());
+    expect(view!.container.querySelector(".settings")).not.toBeNull();
+    expect(buttonByText(view!.container, "New chat")?.disabled).toBe(true);
+    await click(settingsButton()); // the same button goes back
+    expect(view!.container.querySelector(".settings")).toBeNull();
+    expect(view!.container.querySelector(".view-slot")?.hasAttribute("hidden")).toBe(false);
+    expect(view!.container.querySelector(".chat-view")).not.toBeNull();
+    expect(settingsButton()?.hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("reloads the models when the chat shows again, so the model chip is current", async () => {
+    let models = modelsInfo();
+    await mountWithSettings({}, { "GET /api/models": () => json(models) });
+    const chip = () => view!.container.querySelector('button[aria-label^="Model"]');
+    expect(chip()?.getAttribute("aria-label")).toBe("Model: Qwen3-4B");
+    await click(settingsButton());
+    // A model is imported and chosen in Settings meanwhile.
+    models = modelsInfo({ active: { mode: "local", label: "mine", id: "import:mine.gguf" } });
+    await click(settingsButton());
+    expect(chip()?.getAttribute("aria-label")).toBe("Model: mine");
+  });
+
+  it("opens the AI model tab from Manage models in the chat", async () => {
+    await mountWithSettings();
+    await click(view!.container.querySelector('button[aria-label^="Model"]'));
+    await click(buttonByText(document.body, "Manage models…"));
+    expect(view!.container.querySelector(".settings")).not.toBeNull();
+    expect(
+      view!.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
+    ).toBe("AI model");
+  });
+
+  it("deletes a chat without asking when the setting is off", async () => {
+    const calls = await mountWithSettings(
+      { ask_before_delete: false },
+      { "DELETE /api/chats/3": () => new Response(null, { status: 204 }) },
+    );
+    const menu = await openMenu(view!.container);
+    await click(buttonByText(menu!, "Delete chat"));
+    expect(dialog()).toBeNull();
+    expect(calls.map((c) => c.key)).toContain("DELETE /api/chats/3");
+    expect(view!.container.textContent).not.toContain("Lease length");
+  });
+
+  it("still asks before deleting a chat when the setting is on", async () => {
+    const calls = await mountWithSettings({ ask_before_delete: true });
+    const menu = await openMenu(view!.container);
+    await click(buttonByText(menu!, "Delete chat"));
+    expect(dialog()).not.toBeNull();
+    expect(calls.some((c) => c.key.startsWith("DELETE"))).toBe(false);
+  });
+
+  it("reloads the chats and leaves the open chat after Delete all chats", async () => {
+    let remaining = [lease];
+    const calls = await mountWithSettings(
+      {},
+      {
+        "GET /api/chats": () => json({ chats: remaining }),
+        "GET /api/chats/3": () => json({ ...lease, messages: [] }),
+        "DELETE /api/chats": () => {
+          remaining = [];
+          return new Response(null, { status: 204 });
+        },
+      },
+    );
+    await click(view!.container.querySelector('button[title="Lease length"]'));
+    expect(view!.container.querySelector(".chat-row.active")).not.toBeNull();
+    await click(settingsButton());
+    expect(view!.container.textContent).toContain("1 chat saved on this computer");
+    await click(buttonByText(view!.container, "Delete all chats"));
+    await click(buttonByText(dialog()!, "Delete all chats"));
+    expect(calls.map((c) => c.key)).toContain("DELETE /api/chats");
+    expect(view!.container.textContent).toContain("No chats saved yet");
+    expect(view!.container.querySelector(".chat-row")).toBeNull();
+    expect(view!.container.textContent).toContain("No chats yet. Ask a question to start one.");
+    await click(buttonByText(view!.container, "New chat"));
+    expect(view!.container.textContent).toContain("Ask your documents"); // an empty chat, not Lease length
+  });
+
+  it("changes the folder and rebuilds the index from Settings", async () => {
+    const calls = await mountWithSettings(
+      {},
+      { "POST /api/collection/rebuild": () => new Response(null, { status: 204 }) },
+    );
+    await click(settingsButton());
+    await click(buttonByText(view!.container, "Rebuild index"));
+    expect(calls.map((c) => c.key)).toContain("POST /api/collection/rebuild");
+    const change = [...view!.container.querySelectorAll("button")].filter(
+      (b) => b.textContent === "Change folder",
+    );
+    await click(change[change.length - 1]); // the one on the Settings page
+    expect(dialog()?.textContent).toContain("Change documents folder");
   });
 });

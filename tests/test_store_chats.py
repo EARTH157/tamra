@@ -132,3 +132,18 @@ def test_renaming_rejects_an_empty_title_and_unknown_chats(store):
         store.rename_chat(chat.id, " \n\t ")
     assert store.get_chat(chat.id).title == "Kept"
     assert store.rename_chat(999, "Anything") is False
+
+
+def test_delete_all_chats_removes_chats_messages_and_sources(store):
+    first = store.create_chat()
+    second = store.create_chat("Named")
+    store.add_user_message(first.id, "q")
+    store.add_assistant_message(first.id, "a [1]", provider="local", model="m", sources=[source(1)])
+    assert store.delete_all_chats() == 2
+    assert store.list_chats() == []
+    assert store.list_messages(first.id) == []
+    assert store.get_chat(second.id) is None
+    assert store._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert store._conn.execute("SELECT COUNT(*) FROM message_sources").fetchone()[0] == 0
+    assert store.delete_all_chats() == 0
+    assert store.create_chat().id  # new chats can still be made

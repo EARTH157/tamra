@@ -74,6 +74,29 @@ def _check_documents() -> dict:
     return {"ok": pages == 1 and text == "Tamra" and detected is not None}
 
 
+def _check_providers() -> dict:
+    """The cloud-provider pieces load: a usable keyring backend, the Anthropic SDK, truststore
+    and the model catalog. Nothing is read from the credential store and nothing goes online."""
+    import anthropic
+    import keyring
+    import truststore  # noqa: F401  (importing it is the check)
+
+    from tamra.models.catalog import load_catalog
+
+    backend = keyring.get_keyring()
+    backend_name = type(backend).__name__
+    # keyring's fail/null backends mean no credential store: keys could not be saved.
+    usable = type(backend).__module__ not in ("keyring.backends.fail", "keyring.backends.null")
+    anthropic.Anthropic(api_key="x").close()  # builds the client (and its HTTP stack), no request
+    catalog = load_catalog()
+    return {
+        "ok": usable and len(catalog.llms()) > 0,
+        "keyring_backend": backend_name,
+        "anthropic": anthropic.__version__,
+        "catalog_models": len(catalog.models),
+    }
+
+
 def _check_embedding(model_dir: Path) -> dict:
     from tamra.embedder import Embedder
     from tamra.store import ChunkInput, Store
@@ -122,13 +145,15 @@ def _check_llm(llama_exe: Path, model: Path, log_dir: Path | None) -> dict:
     t0 = time.perf_counter()
     with LlamaServer(llama_exe, model, log_file) as srv:
         start_s = time.perf_counter() - t0
-        llm = OpenAICompatibleLLM(srv.base_url, "local")
+        llm = OpenAICompatibleLLM(srv.base_url, "local", kind="local")
         try:
             t1 = time.perf_counter()
             first_token_s, tokens = None, 0
-            for _ in llm.generate(
+            for chunk in llm.generate(
                 [{"role": "user", "content": "Count from 1 to 20."}], max_tokens=64
             ):
+                if chunk.kind != "text":
+                    continue
                 first_token_s = first_token_s or time.perf_counter() - t1
                 tokens += 1
             gen_s = time.perf_counter() - t1
@@ -154,6 +179,7 @@ def run_selfcheck(
     """Run the checks; log_dir (for llama-server's log) defaults to data_dir()/logs."""
     checks = {"sqlite": _guard(_check_sqlite)}
     checks["documents"] = _guard(_check_documents)
+    checks["providers"] = _guard(_check_providers)
     if embed_model_dir is not None:
         checks["embedding"] = _guard(lambda: _check_embedding(embed_model_dir))
     if llm_model is not None:

@@ -1,4 +1,5 @@
 import logging
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -14,6 +15,37 @@ log = logging.getLogger(__name__)
 
 class LlamaServerError(Exception):
     pass
+
+
+LOG_VERBOSITY = "4"
+MAX_LOG_BYTES = 1024 * 1024  # a larger log is restarted instead of appended to
+_OFFLOADED = re.compile(r"offloaded\s+(\d+)\s*/\s*(\d+)\s+layers\s+to\s+GPU", re.IGNORECASE)
+_MODEL_BUFFER = re.compile(r"load_tensors:\s+(\w+)\s+model buffer size\s*=\s*([\d.]+)\s*MiB")
+
+
+def _log_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def parse_gpu_offload(log_text: str) -> bool | None:
+    """Whether llama-server put model weights on a GPU. None when the log does not say (yet).
+
+    The "offloaded N/M layers to GPU" line is the signal, but llama.cpp also prints it when it
+    was told to use no device and ran on the CPU. So when the log lists model buffers, the weights
+    must also sit in a non-CPU buffer (such as Vulkan1) for this to be True.
+    """
+    found = _OFFLOADED.findall(log_text)
+    if not found:
+        return None
+    if int(found[-1][0]) == 0:
+        return False
+    buffers = _MODEL_BUFFER.findall(log_text)
+    if not buffers:
+        return True
+    return any(not name.upper().startswith("CPU") and float(size) > 0 for name, size in buffers)
 
 
 class LlamaServer:
@@ -35,6 +67,7 @@ class LlamaServer:
         self.port = free_port()
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.gpu_used: bool | None = None
+        self._log_start = 0  # where this run's output begins in the (appended-to) log file
         self._proc: subprocess.Popen | None = None
         self._log: IO[bytes] | None = None
         self._job: KillOnCloseJob | None = None
@@ -42,6 +75,7 @@ class LlamaServer:
     def args(self, gpu: bool) -> list[str]:
         args = [str(self.exe), "-m", str(self.model), "-c", str(self.ctx_size)]
         args += ["--host", "127.0.0.1", "--port", str(self.port)]
+        args += ["-lv", LOG_VERBOSITY]  # the default level hides the layer-offload report
         if self.api_key:
             args += ["--api-key", self.api_key]
         if not gpu:
@@ -63,7 +97,10 @@ class LlamaServer:
             budget = remaining * 0.6 if gpu and len(attempts) > 1 else remaining
             try:
                 try:
-                    self._log = self.log_file.open("ab")
+                    self._log = self.log_file.open(
+                        "wb" if _log_size(self.log_file) > MAX_LOG_BYTES else "ab"
+                    )
+                    self._log_start = self._log.tell()
                 except OSError as e:
                     raise LlamaServerError(f"cannot write the log at {self.log_file}: {e}") from e
                 try:
@@ -85,6 +122,18 @@ class LlamaServer:
                 self.stop()
                 raise
         raise LlamaServerError(f"llama-server failed to start; see {self.log_file}")
+
+    @property
+    def gpu_offload(self) -> bool | None:
+        """True when layers were offloaded to the GPU, False when none were (CPU only), None when
+        the log says nothing about it."""
+        try:
+            with self.log_file.open("rb") as f:
+                f.seek(self._log_start)
+                text = f.read().decode("utf-8", errors="replace")
+        except OSError:
+            return None
+        return parse_gpu_offload(text)
 
     def alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None

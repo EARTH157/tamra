@@ -96,19 +96,29 @@ describe("streamAnswer", () => {
     });
     const fetchImpl = vi.fn(async () => new Response(body));
     const events: AnswerEvent[] = [];
-    await streamAnswer(3, "q", (event) => events.push(event), fetchImpl);
+    await streamAnswer(3, "q", (event) => events.push(event), { mode: "search", think: true }, fetchImpl);
     expect(events).toEqual([
       { type: "token", text: "สาม" },
       { type: "done", message_id: 7 },
     ]);
     expect(fetchImpl).toHaveBeenCalledWith(
       "/api/chats/3/messages",
-      expect.objectContaining({ method: "POST", body: '{"content":"q"}' }),
+      expect.objectContaining({ method: "POST", body: '{"content":"q","mode":"search","think":true}' }),
+    );
+  });
+
+  it("asks for an answer without thinking by default", async () => {
+    const done = 'data: {"type":"done","message_id":1}\n\n';
+    const fetchImpl = vi.fn(async () => new Response(done));
+    await streamAnswer(3, "q", () => {}, undefined, fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/chats/3/messages",
+      expect.objectContaining({ body: '{"content":"q","mode":"answer","think":false}' }),
     );
   });
 
   it("raises an HTTP error before streaming", async () => {
     const fetchImpl = vi.fn(async () => new Response("{}", { status: 422 }));
-    await expect(streamAnswer(3, "", () => {}, fetchImpl)).rejects.toThrow("HTTP 422");
+    await expect(streamAnswer(3, "", () => {}, undefined, fetchImpl)).rejects.toThrow("HTTP 422");
   });
 });

@@ -5,6 +5,10 @@ import zlib
 from collections.abc import Iterator
 
 import numpy as np
+from keyring.backend import KeyringBackend
+from keyring.errors import PasswordDeleteError
+
+from tamra.llm.base import Chunk
 
 
 class FakeEmbedder:
@@ -35,21 +39,37 @@ def fake_spans(text: str) -> list[tuple[int, int]]:
 
 
 class FakeLLM:
-    """Yields fixed tokens and records the messages it was given."""
+    """Yields fixed chunks (plain strings are answer text) and records what it was given."""
 
-    def __init__(self, tokens: tuple[str, ...] = ("The lease is three years ", "[1]", ".")):
+    def __init__(
+        self,
+        tokens: tuple[str | Chunk, ...] = ("The lease is three years ", "[1]", "."),
+        *,
+        kind: str = "local",
+        label: str = "fake-llm",
+    ):
         self.tokens = tokens
+        self.kind = kind
+        self.label = label
         self.calls: list[list[dict]] = []
+        self.think_flags: list[bool] = []
+        self.closed = False
 
-    def generate(self, messages, max_tokens: int = 1024) -> Iterator[str]:
+    def generate(self, messages, max_tokens: int = 1024, *, think: bool = False) -> Iterator[Chunk]:
         self.calls.append(list(messages))
-        yield from self.tokens
+        self.think_flags.append(think)
+        for token in self.tokens:
+            yield token if isinstance(token, Chunk) else Chunk("text", token)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakeLocalLLM:
     """Stands in for tamra.llm.runtime.LocalLLM."""
 
     label = "fake-model"
+    gpu_offload: bool | None = None
 
     def __init__(self, llm: "FakeLLM | None" = None):
         self.llm = llm or FakeLLM()
@@ -60,3 +80,24 @@ class FakeLocalLLM:
 
     def close(self) -> None:
         self.closed = True
+
+
+class MemoryKeyring(KeyringBackend):
+    """In-memory backend: tests never touch the real Windows Credential Manager."""
+
+    priority = 1
+
+    def __init__(self):
+        self.store: dict[tuple[str, str], str] = {}
+
+    def set_password(self, service, username, password):
+        self.store[(service, username)] = password
+
+    def get_password(self, service, username):
+        return self.store.get((service, username))
+
+    def delete_password(self, service, username):
+        try:
+            del self.store[(service, username)]
+        except KeyError:
+            raise PasswordDeleteError("not found") from None

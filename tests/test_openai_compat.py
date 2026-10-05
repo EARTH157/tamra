@@ -5,7 +5,14 @@ import time
 import httpx
 import pytest
 
-from tamra.llm.openai_compat import LLMError, OpenAICompatibleLLM
+from tamra.llm.base import Chunk, ProviderError
+from tamra.llm.openai_compat import LLMError, OpenAICompatibleLLM, normalise_base_url
+
+
+def texts(chunks):
+    """The answer text of a stream (thinking chunks left out)."""
+    return [c.text for c in chunks if c.kind == "text"]
+
 
 SSE = (
     'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
@@ -28,7 +35,7 @@ def test_streams_content_deltas_and_sends_expected_request():
     llm = OpenAICompatibleLLM(
         "http://llm.test", "m1", api_key="k", transport=httpx.MockTransport(handler)
     )
-    tokens = list(llm.generate([{"role": "user", "content": "hi"}], max_tokens=8))
+    tokens = texts(llm.generate([{"role": "user", "content": "hi"}], max_tokens=8))
 
     assert tokens == ["Hel", "lo"]
     assert seen["url"] == "http://llm.test/v1/chat/completions"
@@ -103,7 +110,7 @@ def test_finish_reason_without_done_returns_tokens():
         )
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
-    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    tokens = texts(llm.generate([{"role": "user", "content": "hi"}]))
     assert tokens == ["Hello", " world"]
 
 
@@ -148,7 +155,7 @@ def test_raw_unicode_separators_preserved():
         return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
-    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    tokens = texts(llm.generate([{"role": "user", "content": "hi"}]))
     assert tokens == [content]
 
 
@@ -172,7 +179,7 @@ def test_multibyte_utf8_split_across_chunks():
         )
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
-    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    tokens = texts(llm.generate([{"role": "user", "content": "hi"}]))
     assert tokens == [content]
 
 
@@ -211,7 +218,7 @@ def test_final_done_without_newline():
         return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
-    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    tokens = texts(llm.generate([{"role": "user", "content": "hi"}]))
     assert tokens == ["Hello"]
 
 
@@ -228,7 +235,7 @@ def test_empty_finish_reason_continues_reading():
         return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
-    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    tokens = texts(llm.generate([{"role": "user", "content": "hi"}]))
     assert tokens == ["A", "B"]
 
 
@@ -246,7 +253,7 @@ def test_empty_data_and_null_delta():
         return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
 
     llm = OpenAICompatibleLLM("http://llm.test", "m1", transport=httpx.MockTransport(handler))
-    tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+    tokens = texts(llm.generate([{"role": "user", "content": "hi"}]))
     assert tokens == ["A", "B"]
 
 
@@ -284,7 +291,7 @@ def test_loopback_client_bypasses_proxy(monkeypatch):
     try:
         # Connect to the loopback server and generate
         llm = OpenAICompatibleLLM(f"http://{host}:{port}", "local")
-        tokens = list(llm.generate([{"role": "user", "content": "hi"}]))
+        tokens = texts(llm.generate([{"role": "user", "content": "hi"}]))
         llm.close()
         assert tokens == ["Hel", "lo"]
     finally:
@@ -310,10 +317,10 @@ def test_tokens_arrive_before_the_stream_ends():
     )
     stream = llm.generate([{"role": "user", "content": "hi"}])
     started = time.monotonic()
-    assert next(stream) == "first"
+    assert next(stream) == Chunk("text", "first")
     assert time.monotonic() - started < 2  # did not wait for the rest of the body
     gate.set()
-    assert list(stream) == ["second"]
+    assert texts(stream) == ["second"]
 
 
 def test_closing_the_stream_closes_the_response():
@@ -333,7 +340,7 @@ def test_closing_the_stream_closes_the_response():
         transport=httpx.MockTransport(lambda r: httpx.Response(200, stream=Body())),
     )
     stream = llm.generate([{"role": "user", "content": "hi"}])
-    assert next(stream) == "a"
+    assert next(stream) == Chunk("text", "a")
     stream.close()
     assert closed.is_set()
 
@@ -349,4 +356,237 @@ def test_thai_and_chinese_tokens_stream_intact():
         "m",
         transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body)),
     )
-    assert list(llm.generate([{"role": "user", "content": "hi"}])) == ["สัญญาเช่า", "三年"]
+    assert texts(llm.generate([{"role": "user", "content": "hi"}])) == ["สัญญาเช่า", "三年"]
+
+
+def sse(*payloads: dict) -> bytes:
+    lines = [f"data: {json.dumps(p)}\n\n" for p in payloads] + ["data: [DONE]\n\n"]
+    return "".join(lines).encode()
+
+
+def delta(**fields) -> dict:
+    return {"choices": [{"delta": fields}]}
+
+
+def make(handler, **kwargs) -> OpenAICompatibleLLM:
+    return OpenAICompatibleLLM(
+        "http://llm.test", "m", transport=httpx.MockTransport(handler), **kwargs
+    )
+
+
+USER = [{"role": "user", "content": "hi"}]
+
+
+def test_reasoning_deltas_become_thinking_chunks():
+    body = sse(
+        delta(reasoning_content="Let me "),
+        delta(reasoning_content="think."),
+        delta(content="Answer", reasoning_content=None),
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+    )
+    llm = make(lambda r: httpx.Response(200, content=body))
+    assert list(llm.generate(USER, think=True)) == [
+        Chunk("thinking", "Let me "),
+        Chunk("thinking", "think."),
+        Chunk("text", "Answer"),
+    ]
+
+
+@pytest.mark.parametrize("think", [True, False])
+def test_local_requests_send_enable_thinking(think):
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=sse())
+
+    list(make(handler, kind="local").generate(USER, think=think))
+    assert seen["body"]["chat_template_kwargs"] == {"enable_thinking": think}
+
+
+def test_api_requests_do_not_send_server_specific_fields():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=sse())
+
+    list(make(handler, kind="api").generate(USER, think=True))
+    assert "chat_template_kwargs" not in seen["body"]
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("http://llm.test", "http://llm.test"),
+        ("http://llm.test/", "http://llm.test"),
+        ("http://llm.test/v1", "http://llm.test"),
+        ("http://llm.test/v1/", "http://llm.test"),
+        ("https://api.example.com/openai/v1", "https://api.example.com/openai"),
+        ("http://127.0.0.1:8080/v1", "http://127.0.0.1:8080"),
+        ("http://llm.test/v10", "http://llm.test/v10"),
+    ],
+)
+def test_base_urls_are_normalised(given, expected):
+    assert normalise_base_url(given) == expected
+
+
+def test_a_v1_base_url_does_not_double_the_path():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, content=sse())
+
+    llm = OpenAICompatibleLLM("http://llm.test/v1/", "m", transport=httpx.MockTransport(handler))
+    list(llm.generate(USER))
+    assert seen["url"] == "http://llm.test/v1/chat/completions"
+
+
+def test_max_tokens_is_retried_once_as_max_completion_tokens():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        if "max_tokens" in bodies[-1]:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "Unsupported parameter: 'max_tokens'"}},
+            )
+        return httpx.Response(200, content=sse(delta(content="ok")))
+
+    chunks = list(make(handler).generate(USER, max_tokens=77))
+    assert chunks == [Chunk("text", "ok")]
+    assert len(bodies) == 2
+    assert "max_tokens" in bodies[0] and bodies[0]["max_tokens"] == 77
+    assert "max_tokens" not in bodies[1] and bodies[1]["max_completion_tokens"] == 77
+
+
+def test_the_max_tokens_retry_happens_only_once():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(400, text="bad max_tokens, bad max_completion_tokens")
+
+    with pytest.raises(ProviderError) as info:
+        list(make(handler).generate(USER))
+    assert len(calls) == 2
+    assert info.value.reason == "other"
+
+
+def test_other_400s_are_not_retried():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(400, text="context too long")
+
+    with pytest.raises(ProviderError, match="400"):
+        list(make(handler).generate(USER))
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (401, "auth"),
+        (403, "auth"),
+        (429, "quota"),
+        (404, "model_missing"),
+        (500, "other"),
+        (400, "other"),
+    ],
+)
+def test_http_statuses_map_to_error_reasons(status, reason):
+    llm = make(lambda r: httpx.Response(status, text="nope"))
+    with pytest.raises(ProviderError) as info:
+        list(llm.generate(USER))
+    assert info.value.reason == reason
+    assert isinstance(info.value, LLMError)
+    assert str(status) in str(info.value)
+
+
+def test_connection_errors_map_to_offline():
+    def handler(request):
+        raise httpx.ConnectError("Connection refused")
+
+    with pytest.raises(ProviderError) as info:
+        list(make(handler).generate(USER))
+    assert info.value.reason == "offline"
+
+
+def test_a_dead_local_server_is_not_reported_as_offline():
+    def handler(request):
+        raise httpx.ConnectError("Connection refused")
+
+    with pytest.raises(ProviderError) as info:
+        list(make(handler, kind="local").generate(USER))
+    assert info.value.reason == "other"
+    assert str(info.value) == "The local model server stopped responding."
+
+
+def test_a_read_timeout_is_not_offline():
+    def handler(request):
+        raise httpx.ReadTimeout("slow")
+
+    with pytest.raises(ProviderError) as info:
+        list(make(handler).generate(USER))
+    assert info.value.reason == "other"
+
+
+@pytest.mark.parametrize(("kind", "read"), [("local", 300.0), ("api", 120.0)])
+def test_timeouts_depend_on_the_kind(kind, read):
+    llm = make(lambda r: httpx.Response(200), kind=kind)
+    timeout = llm._client.timeout
+    assert (timeout.connect, timeout.read) == (10.0, read)
+
+
+def test_the_label_defaults_to_the_model_name():
+    assert make(lambda r: httpx.Response(200)).label == "m"
+    assert make(lambda r: httpx.Response(200), label="Qwen").label == "Qwen"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_auth_errors_do_not_echo_the_response_body(status):
+    llm = make(lambda r: httpx.Response(status, text="Bad key: sk-proj-****abcd"))
+    with pytest.raises(ProviderError) as info:
+        list(llm.generate(USER))
+    assert "sk-" not in str(info.value)
+    assert str(status) in str(info.value)
+    assert info.value.reason == "auth"
+
+
+def test_key_shaped_tokens_are_redacted_from_other_error_bodies():
+    llm = make(lambda r: httpx.Response(500, text="boom for sk-ant-api03-AbC_dEf-123 retry"))
+    with pytest.raises(ProviderError) as info:
+        list(llm.generate(USER))
+    assert "sk-ant" not in str(info.value) and "AbC" not in str(info.value)
+    assert "boom for [redacted] retry" in str(info.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ReadError("reset"), httpx.RemoteProtocolError("closed early"), httpx.WriteError("x")],
+)
+def test_other_transport_errors_map_to_offline(error):
+    def handler(request):
+        raise error
+
+    with pytest.raises(ProviderError) as info:
+        list(make(handler).generate(USER))
+    assert info.value.reason == "offline"
+
+
+def test_a_connection_dropped_mid_stream_is_offline():
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"a"}}]}\n\n'
+            raise httpx.ReadError("connection reset")
+
+    llm = make(lambda r: httpx.Response(200, stream=Body()))
+    stream = llm.generate(USER)
+    assert next(stream) == Chunk("text", "a")
+    with pytest.raises(ProviderError) as info:
+        list(stream)
+    assert info.value.reason == "offline"

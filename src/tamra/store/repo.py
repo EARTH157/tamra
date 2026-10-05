@@ -262,6 +262,31 @@ class Store:
             ).fetchall()
         return [row[0] for row in rows]
 
+    # Settings -------------------------------------------------------------------------------
+
+    def get_setting(self, key: str) -> object | None:
+        """A stored setting's value, or None when the key has never been stored."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value_json FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def set_settings(self, values: dict[str, object]) -> None:
+        """Store several settings (each value as JSON) in one transaction."""
+        rows = [(key, json.dumps(value, ensure_ascii=False)) for key, value in values.items()]
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO settings (key, value_json) VALUES (?, ?)"
+                " ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json",
+                rows,
+            )
+
+    def all_settings(self) -> dict[str, object]:
+        with self._lock:
+            rows = self._conn.execute("SELECT key, value_json FROM settings").fetchall()
+        return {key: json.loads(value) for key, value in rows}
+
     # Chats ----------------------------------------------------------------------------------
 
     def create_chat(self, title: str = "") -> Chat:
@@ -303,6 +328,15 @@ class Store:
         with self._lock, self._conn:
             cursor = self._conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
         return cursor.rowcount > 0
+
+    def delete_all_chats(self) -> int:
+        """Delete every chat with its messages and saved sources, in one transaction.
+
+        Returns how many chats were deleted.
+        """
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM chats")
+        return cursor.rowcount
 
     def add_user_message(self, chat_id: int, content: str) -> int:
         """Store a question; the first question of an untitled chat becomes its title."""

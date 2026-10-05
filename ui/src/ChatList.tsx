@@ -1,5 +1,6 @@
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useT } from "./i18n";
 import type { Chat } from "./types";
 
 type Props = {
@@ -17,8 +18,6 @@ type MenuState = { id: number; above: number; below: number; left: number };
 const GAP = 3; // between the ⋯ button and the menu
 const MARGIN = 8; // the menu keeps this far from the window edges
 
-const untitled = (chat: Chat) => chat.title || "New chat";
-
 /** The sidebar's chats, each with a ⋯ menu (Rename, Delete chat) and an inline rename. */
 export default function ChatList({
   chats,
@@ -28,6 +27,8 @@ export default function ChatList({
   onRename,
   onDelete,
 }: Props) {
+  const t = useT();
+  const untitled = (chat: Chat) => chat.title || t("chatList.untitled");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const trigger = useRef<HTMLElement | null>(null);
@@ -44,7 +45,7 @@ export default function ChatList({
 
   const menuChat = menu ? chats.find((chat) => chat.id === menu.id) : undefined;
   return (
-    <nav className="chat-list" aria-label="Chats">
+    <nav className="chat-list" aria-label={t("app.chats")}>
       <ul>
         {chats.map((chat) =>
           chat.id === editing ? (
@@ -68,7 +69,7 @@ export default function ChatList({
               <button
                 type="button"
                 className="icon-button row-more"
-                aria-label={`Options for ${untitled(chat)}`}
+                aria-label={t("chatList.options", { title: untitled(chat) })}
                 aria-haspopup="menu"
                 aria-expanded={menu?.id === chat.id}
                 onClick={(event) => openMenu(chat, event.currentTarget)}
@@ -113,6 +114,7 @@ type MenuProps = {
 };
 
 function ChatMenu({ above, below, left, onClose, onRename, onDelete }: MenuProps) {
+  const t = useT();
   const box = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState({ top: below + GAP, left });
 
@@ -165,18 +167,18 @@ function ChatMenu({ above, below, left, onClose, onRename, onDelete }: MenuProps
       ref={box}
       className="menu"
       role="menu"
-      aria-label="Chat options"
+      aria-label={t("chatList.menu")}
       style={place}
       onKeyDown={onKeyDown}
     >
       <button type="button" role="menuitem" className="menu-item" onClick={onRename}>
         <Pencil size={16} />
-        Rename
+        {t("chatList.rename")}
       </button>
       <div className="menu-divider" role="separator" />
       <button type="button" role="menuitem" className="menu-item danger" onClick={onDelete}>
         <Trash2 size={16} />
-        Delete chat
+        {t("chatList.delete")}
       </button>
     </div>
   );
@@ -186,6 +188,7 @@ type RenameProps = { chat: Chat; onSave: (title: string) => Promise<void>; onDon
 
 /** Inline rename: Enter saves, Esc (or leaving the field) cancels. */
 function RenameRow({ chat, onSave, onDone }: RenameProps) {
+  const t = useT();
   const [draft, setDraft] = useState(chat.title);
   const [tip, setTip] = useState<{ top: number; left: number } | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -231,7 +234,7 @@ function RenameRow({ chat, onSave, onDone }: RenameProps) {
       <input
         ref={input}
         className="rename-input"
-        aria-label="Chat title"
+        aria-label={t("chatList.renameLabel")}
         value={draft}
         maxLength={200}
         onChange={(e) => setDraft(e.target.value)}
@@ -241,7 +244,7 @@ function RenameRow({ chat, onSave, onDone }: RenameProps) {
         }}
       />
       <span className="tooltip" role="note" style={tip ?? undefined}>
-        Enter to save · Esc to cancel
+        {t("chatList.renameHint")}
       </span>
     </li>
   );

@@ -1,6 +1,7 @@
 import { Folder, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { api } from "./api";
+import { useT } from "./i18n";
 import Modal from "./Modal";
 import type { CollectionState } from "./types";
 
@@ -16,10 +17,11 @@ type Props = {
 export default function Setup({
   onDone,
   onCancel,
-  title = "Change documents folder",
-  description = "Tamra will index the new folder and answer from it. Your files are never changed.",
+  title,
+  description,
   initialFolder = "",
 }: Props) {
+  const t = useT();
   const [folder, setFolder] = useState(initialFolder);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
@@ -55,25 +57,25 @@ export default function Setup({
     <Modal labelledBy="folder-dialog-title" onClose={onCancel}>
       <form onSubmit={submit}>
         <div className="dialog-header">
-          <h2 id="folder-dialog-title">{title}</h2>
-          <button type="button" className="icon-button" aria-label="Close" onClick={onCancel}>
+          <h2 id="folder-dialog-title">{title ?? t("folder.changeTitle")}</h2>
+          <button type="button" className="icon-button" aria-label={t("common.close")} onClick={onCancel}>
             <X size={16} />
           </button>
         </div>
-        <p className="dialog-text">{description}</p>
+        <p className="dialog-text">{description ?? t("folder.changeText")}</p>
         <div className="path-row">
           <label className="path-field">
             <Folder size={16} />
             <input
-              aria-label="Folder path"
-              placeholder="Full folder path, like D:\Work\Documents"
+              aria-label={t("folder.pathLabel")}
+              placeholder={t("folder.pathPlaceholder")}
               value={folder}
               onChange={(e) => setFolder(e.target.value)}
               data-autofocus
             />
           </label>
           <button type="button" className="btn" onClick={browse}>
-            Browse…
+            {t("folder.browse")}
           </button>
         </div>
         {error && (
@@ -83,10 +85,10 @@ export default function Setup({
         )}
         <div className="dialog-actions">
           <button type="button" className="btn" onClick={onCancel}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button type="submit" className="btn primary" disabled={working || !folder.trim()}>
-            Use this folder
+            {t("folder.use")}
           </button>
         </div>
       </form>

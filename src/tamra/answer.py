@@ -1,17 +1,20 @@
 """Answering (spec §6): retrieve, prompt with numbered sources, stream, and save the answer."""
 
+import logging
 import re
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal
 
 import numpy as np
 
+from tamra.llm.base import LLMError, Message, Provider
 from tamra.llm.llama_server import LlamaServerError
-from tamra.llm.openai_compat import LLMError, Message
 from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
 from tamra.store import SourceRecord, Store
+
+log = logging.getLogger(__name__)
 
 _LATIN_WORD = re.compile(r"[A-Za-z]+")
 LANGUAGE_NAMES = {"th": "Thai", "en": "English", "zh": "Chinese"}
@@ -37,13 +40,24 @@ AUTO_CITE_MIN_OVERLAP = 0.5  # share of the answer's trigrams found in one sourc
 _MARKER = re.compile(r"\[(\d+)\]")
 
 
-class LLMLike(Protocol):
-    def generate(self, messages: list[Message], max_tokens: int = 1024) -> Iterator[str]: ...
+@dataclass(frozen=True)
+class Route:
+    """Where one question goes: the provider's name, and a way to get it ready.
+
+    `name` is cheap to know and decides the context budget; it is saved with the answer
+    ("local", "anthropic" or "openai"). `open` may be slow (it can start llama-server) or fail
+    with a ProviderError (no model installed, no API key), so it is only called when the answer
+    needs the model.
+    """
+
+    name: str
+    open: Callable[[], Provider]
 
 
 @dataclass(frozen=True)
 class AnswerSettings:
     top_k: int = 4  # spec §6: about 4 sources for small local models
+    api_top_k: int = 8  # spec §6: 8-10 for API models, which have a large context
     # below this best dense similarity: "not found" (M1 eval; docs/spikes/2026-10-m1-results.md)
     min_similarity: float = 0.43
     max_tokens: int = 1024
@@ -142,36 +156,80 @@ class AnswerService:
         self,
         store: Store,
         embed_query: Callable[[str], np.ndarray],
-        llm: Callable[[], LLMLike],
+        route: Callable[[], Route],
         *,
         model_id: str,
-        llm_label: Callable[[], str],
         settings: AnswerSettings | None = None,
     ):
         self._store = store
         self._embed_query = embed_query
-        self._llm = llm
+        self._route = route
         self._model_id = model_id
-        self._llm_label = llm_label
         self._settings = settings or AnswerSettings()
-        self._busy = threading.Lock()
+        self._state = threading.Lock()  # guards _answering and _after
+        self._answering = False
+        self._after: list[Callable[[], None]] = []
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
         """Stop the answer being written; what was written so far is kept."""
         self._cancel.set()
 
-    def ask(self, chat_id: int, question: str) -> Iterator[dict]:
-        if not self._busy.acquire(blocking=False):
+    def when_idle(self, action: Callable[[], None]) -> None:
+        """Run action now, or, if an answer is being written, right after it ends.
+
+        Used to close a provider that is being replaced without cutting off the stream that
+        is still reading from it.
+        """
+        with self._state:
+            if self._answering:
+                self._after.append(action)
+                return
+        _run(action)
+
+    def run_if_idle(self, action: Callable[[], None]) -> bool:
+        """Run action only if no answer is being written; False (and nothing run) otherwise.
+
+        No answer can start while action runs, so a check followed by the action cannot race.
+        """
+        with self._state:
+            if self._answering:
+                return False
+            action()
+        return True
+
+    def ask(
+        self,
+        chat_id: int,
+        question: str,
+        *,
+        mode: Literal["answer", "search"] = "answer",
+        think: bool = False,
+    ) -> Iterator[dict]:
+        if mode not in ("answer", "search"):
+            raise ValueError(f"unknown mode: {mode!r}")
+        with self._state:
+            busy = self._answering
+            self._answering = True
+        if busy:  # _answering stays True: the answer that set it clears it
             yield {"type": "error", "message": "Another answer is still being written."}
             return
         self._cancel.clear()
         try:
-            yield from self._ask(chat_id, question)
+            yield from self._ask(chat_id, question, mode, think)
         finally:
-            self._busy.release()
+            # Stay "answering" until the deferred actions are done: a new answer must not start
+            # (and read a provider) while one of them is about to close it.
+            while True:
+                with self._state:
+                    after, self._after = self._after, []
+                    if not after:
+                        self._answering = False
+                        break
+                for action in after:
+                    _run(action)
 
-    def _ask(self, chat_id: int, question: str) -> Iterator[dict]:
+    def _ask(self, chat_id: int, question: str, mode: str, think: bool) -> Iterator[dict]:
         collection = self._store.get_collection()
         if collection is None:
             yield {"type": "error", "message": "Choose a folder of documents first."}
@@ -193,6 +251,7 @@ class AnswerService:
                 "then ask again.",
             }
             return
+        route = self._route()
         previous = self._store.last_exchange(chat_id)
         self._store.add_user_message(chat_id, question)
         language = detect_language(question)
@@ -212,26 +271,41 @@ class AnswerService:
             yield {"type": "token", "text": text}
             yield {"type": "done", "message_id": message_id}
             return
-        chunks = self._store.get_chunks([hit.chunk_id for hit in hits[: self._settings.top_k]])
+        budget = self._settings.top_k if route.name == "local" else self._settings.api_top_k
+        chunks = self._store.get_chunks([hit.chunk_id for hit in hits[:budget]])
         sources = [
             SourceRecord(n, c.id, c.file_id, c.rel_path, c.text, c.location, c.file_hash)
             for n, c in enumerate(chunks, start=1)
         ]
         yield {"type": "sources", "sources": [source_payload(s) for s in sources]}
+        if mode == "search":  # passages only: no model is involved, so none is recorded
+            message_id = self._store.add_assistant_message(
+                chat_id, "", provider=None, model=None, sources=sources
+            )
+            yield {"type": "done", "message_id": message_id}
+            return
         messages = build_messages(question, previous, sources, language)
         parts: list[str] = []
         error: str | None = None
+        reason = "other"
+        label = ""
         message_id: int | None = None
         try:
             try:
-                client = self._llm()
+                llm = route.open()
+                label = llm.label
                 cancelled = False
-                for token in client.generate(messages, self._settings.max_tokens):
+                for chunk in llm.generate(messages, self._settings.max_tokens, think=think):
                     if self._cancel.is_set():
                         cancelled = True
                         break
-                    parts.append(token)
-                    yield {"type": "token", "text": token}
+                    if chunk.kind == "thinking":  # shown live, never saved with the answer
+                        yield {"type": "thinking", "text": chunk.text}
+                        continue
+                    parts.append(chunk.text)
+                    yield {"type": "token", "text": chunk.text}
+                if not cancelled and not parts:  # e.g. only thinking came back
+                    error = "The model returned no answer."
                 if not cancelled:
                     n = auto_citation("".join(parts), sources)
                     if n is not None:
@@ -240,13 +314,21 @@ class AnswerService:
                         yield {"type": "token", "text": marker}
             except (LLMError, LlamaServerError) as e:
                 error = str(e)
+                reason = getattr(e, "reason", "other")  # ProviderError says why; others do not
         finally:  # also runs when the consumer closes the stream: keep what the user saw
             content = "".join(parts)
             if content:
                 message_id = self._store.add_assistant_message(
-                    chat_id, content, provider="local", model=self._llm_label(), sources=sources
+                    chat_id, content, provider=route.name, model=label, sources=sources
                 )
         if error:
-            yield {"type": "error", "message": error}
+            yield {"type": "error", "message": error, "reason": reason}
         if message_id is not None:
             yield {"type": "done", "message_id": message_id}
+
+
+def _run(action: Callable[[], None]) -> None:
+    try:
+        action()
+    except Exception:  # a failed close must not break the answer or skip the other actions
+        log.exception("deferred action failed")

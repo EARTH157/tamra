@@ -44,7 +44,7 @@ def test_schema_is_created_once_and_versioned(tmp_path):
     assert again.get_collection() is None
     again.close()
     conn = sqlite3.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     conn.close()
 
 

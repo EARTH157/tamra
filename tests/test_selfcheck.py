@@ -5,13 +5,14 @@ import sys
 import pytest
 
 from tamra.__main__ import main
+from tamra.llm.base import Chunk
 from tamra.selfcheck import run_selfcheck
 
 
 def test_selfcheck_without_models(tmp_path):
     report = run_selfcheck(None, None, tmp_path / "missing.exe", tmp_path)
     assert report["ok"] is True
-    assert set(report["checks"]) == {"sqlite", "documents"}
+    assert set(report["checks"]) == {"sqlite", "documents", "providers"}
     assert report["checks"]["sqlite"]["fts5_trigram"] is True
 
 
@@ -129,11 +130,16 @@ def test_llm_check_reports_timings_from_a_stub_server(tmp_path, monkeypatch):
     class StubClient:
         closed = False
 
-        def __init__(self, base_url, model):
+        def __init__(self, base_url, model, **kwargs):
             pass
 
-        def generate(self, messages, max_tokens=1024):
-            yield from ["1", ",", " 2"]
+        def generate(self, messages, max_tokens=1024, *, think=False):
+            yield from [
+                Chunk("text", "1"),
+                Chunk("thinking", "hm"),
+                Chunk("text", ","),
+                Chunk("text", " 2"),
+            ]
 
         def close(self):
             StubClient.closed = True
@@ -152,6 +158,22 @@ def test_llm_check_reports_timings_from_a_stub_server(tmp_path, monkeypatch):
 def test_document_libraries_are_checked(tmp_path):
     report = run_selfcheck(None, None, tmp_path / "x.exe", tmp_path)
     assert report["checks"]["documents"] == {"ok": True}
+
+
+def test_providers_probe_loads_keyring_anthropic_and_the_catalog(tmp_path):
+    providers = run_selfcheck(None, None, tmp_path / "x.exe", tmp_path)["checks"]["providers"]
+    assert providers["ok"] is True
+    assert providers["keyring_backend"]
+    assert providers["catalog_models"] >= 4
+
+
+def test_providers_probe_fails_without_a_credential_store(monkeypatch, tmp_path):
+    import keyring
+    from keyring.backends.fail import Keyring as FailKeyring
+
+    monkeypatch.setattr(keyring, "get_keyring", lambda: FailKeyring())
+    providers = run_selfcheck(None, None, tmp_path / "x.exe", tmp_path)["checks"]["providers"]
+    assert providers["ok"] is False
 
 
 def test_a_startup_failure_returns_exit_code_1_without_raising(monkeypatch):

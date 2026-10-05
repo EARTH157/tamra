@@ -1,5 +1,6 @@
 import { Fragment } from "react";
 import { splitCitations } from "./citations";
+import { useT } from "./i18n";
 
 type Props = {
   text: string;
@@ -24,6 +25,7 @@ export function TextWithParagraphs({ text }: { text: string }) {
 
 /** Answer text as plain text, with [n] markers as buttons that open source n. */
 export default function AnswerText({ text, sourceCount, onCite, active = null }: Props) {
+  const t = useT();
   return (
     <div className="answer-text">
       {splitCitations(text, sourceCount).map((segment, i) =>
@@ -34,7 +36,7 @@ export default function AnswerText({ text, sourceCount, onCite, active = null }:
             key={i}
             type="button"
             className={segment.n === active ? "cite active" : "cite"}
-            aria-label={`Source ${segment.n}`}
+            aria-label={t("chat.cite", { n: segment.n })}
             aria-pressed={segment.n === active}
             onClick={() => onCite(segment.n)}
           >

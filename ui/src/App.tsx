@@ -1,17 +1,22 @@
-import { AlertTriangle, BookOpen, Plus, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import ChatList from "./ChatList";
 import ChatView from "./ChatView";
 import DeleteChatDialog from "./DeleteChatDialog";
+import { useT } from "./i18n";
 import IndexStatus from "./IndexStatus";
+import SettingsPage from "./SettingsPage";
+import { useSettings } from "./settings";
 import Setup from "./Setup";
-import type { Chat, CollectionState } from "./types";
+import type { Chat, CollectionState, SettingsTab } from "./types";
 import Welcome from "./Welcome";
 
 const POLL_MS = 2000;
 
 export default function App() {
+  const t = useT();
+  const { settings } = useSettings();
   const [state, setState] = useState<CollectionState | null>(null);
   const [offline, setOffline] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -20,6 +25,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [deleting, setDeleting] = useState<Chat | null>(null);
+  // The chat stays mounted (but hidden) while Settings is open, so a streaming answer carries on.
+  const [view, setView] = useState<"chat" | "settings">("chat");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
 
   const wasOffline = useRef(false);
 
@@ -93,6 +101,23 @@ export default function App() {
     }
   }
 
+  function openSettings(tab: SettingsTab) {
+    setSettingsTab(tab);
+    setView("settings");
+  }
+
+  /** Every chat was deleted from Settings: reload the list and leave the open chat. */
+  async function chatsDeleted() {
+    setActiveId(null);
+    await refreshChats();
+  }
+
+  /** Delete a chat: after the dialog, or at once when the setting says not to ask. */
+  function requestDelete(chat: Chat) {
+    if (settings.ask_before_delete) setDeleting(chat);
+    else void deleteChat(chat.id);
+  }
+
   const collection = state?.collection ?? null;
   return (
     <div className="app">
@@ -112,17 +137,18 @@ export default function App() {
           onClick={() => {
             setProblem(null);
             setActiveId(null);
+            setView("chat");
           }}
           disabled={busy || collection === null}
         >
           <Plus size={16} />
-          New chat
+          {t("app.newChat")}
         </button>
-        <div className="section-label">Chats</div>
+        <div className="section-label">{t("app.chats")}</div>
         {state !== null && collection === null ? (
-          <p className="sidebar-note">No chats yet. Add a folder of documents to start.</p>
+          <p className="sidebar-note">{t("app.noChatsNoFolder")}</p>
         ) : state !== null && chats.length === 0 ? (
-          <p className="sidebar-note">No chats yet. Ask a question to start one.</p>
+          <p className="sidebar-note">{t("app.noChatsYet")}</p>
         ) : (
           <ChatList
             chats={chats}
@@ -131,9 +157,10 @@ export default function App() {
             onSelect={(id) => {
               setProblem(null);
               setActiveId(id);
+              setView("chat");
             }}
             onRename={renameChat}
-            onDelete={setDeleting}
+            onDelete={requestDelete}
           />
         )}
         <div className="sidebar-fill" />
@@ -146,17 +173,26 @@ export default function App() {
             onRebuild={() => void rebuild()}
           />
         )}
+        <button
+          type="button"
+          className="sidebar-settings"
+          aria-current={view === "settings" ? "page" : undefined}
+          onClick={() => (view === "settings" ? setView("chat") : openSettings("general"))}
+        >
+          <SlidersHorizontal size={16} />
+          {t("settings.open")}
+        </button>
       </aside>
       <main className="main">
         {offline ? (
           <div className="banner" role="alert">
             <AlertTriangle size={16} />
             <span className="banner-text" title={offline}>
-              Tamra core is unreachable. Answers are paused until it reconnects.
+              {t("app.coreUnreachable")}
             </span>
             <button type="button" className="retry" onClick={() => void retry()}>
               <RefreshCw size={14} />
-              Retry
+              {t("common.retry")}
             </button>
           </div>
         ) : (
@@ -167,7 +203,7 @@ export default function App() {
               <button
                 type="button"
                 className="icon-button"
-                aria-label="Dismiss"
+                aria-label={t("common.dismiss")}
                 onClick={() => setProblem(null)}
               >
                 <X size={16} />
@@ -175,28 +211,41 @@ export default function App() {
             </div>
           )
         )}
-        {state === null ? (
-          <div className="connecting">{offline ? null : "Connecting to Tamra…"}</div>
-        ) : collection === null ? (
-          <Welcome onChoose={() => setChoosingFolder(true)} />
-        ) : (
-          <ChatView
-            chatId={activeId}
-            collectionName={collection.name}
-            createChat={createChat}
-            onBusyChange={setBusy}
-            onAnswered={() => void refreshChats()}
+        <div className="view-slot" hidden={view === "settings"}>
+          {state === null ? (
+            <div className="connecting">{offline ? null : t("app.connecting")}</div>
+          ) : collection === null ? (
+            <Welcome onChoose={() => setChoosingFolder(true)} />
+          ) : (
+            <ChatView
+              chatId={activeId}
+              collectionName={collection.name}
+              createChat={createChat}
+              onBusyChange={setBusy}
+              onAnswered={() => void refreshChats()}
+              onOpenSettings={openSettings}
+              visible={view === "chat"}
+            />
+          )}
+        </div>
+        {view === "settings" && (
+          <SettingsPage
+            tab={settingsTab}
+            onTabChange={setSettingsTab}
+            collection={collection}
+            index={state?.index ?? null}
+            chatCount={chats.length}
+            busy={busy}
+            onChangeFolder={() => setChoosingFolder(true)}
+            onRebuild={() => void rebuild()}
+            onChatsDeleted={chatsDeleted}
           />
         )}
       </main>
       {choosingFolder && (
         <Setup
-          title={collection ? "Change documents folder" : "Choose documents folder"}
-          description={
-            collection
-              ? "Tamra will index the new folder and answer from it. Your files are never changed."
-              : "Tamra indexes the PDF, Word, text, and Markdown files in this folder and its subfolders. Your files are never changed."
-          }
+          title={collection ? t("folder.changeTitle") : t("folder.chooseTitle")}
+          description={collection ? t("folder.changeText") : t("folder.chooseText")}
           initialFolder={collection?.folder_path ?? ""}
           onDone={(next) => {
             setState(next);

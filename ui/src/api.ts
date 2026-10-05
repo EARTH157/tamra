@@ -1,5 +1,6 @@
+import { translateNow } from "./i18n";
 import { createSseParser } from "./sse";
-import type { AnswerEvent } from "./types";
+import type { AnswerEvent, AnswerMode } from "./types";
 
 const STORAGE_KEY = "tamra.token";
 let token = "";
@@ -73,20 +74,23 @@ export async function api<T>(
   return (await response.json()) as T;
 }
 
+export type AskOptions = { mode: AnswerMode; think: boolean };
+
 /** Ask a question in a chat and call onEvent for every event of the streamed answer. */
 export async function streamAnswer(
   chatId: number,
   content: string,
   onEvent: (event: AnswerEvent) => void,
+  options: AskOptions = { mode: "answer", think: false },
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   const response = await fetchImpl(`/api/chats/${chatId}/messages`, {
     method: "POST",
     headers: { "X-Tamra-Token": token, "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, mode: options.mode, think: options.think }),
   });
   if (!response.ok) throw await errorOf(response);
-  if (!response.body) throw new ApiError(response.status, "The answer stream is empty.");
+  if (!response.body) throw new ApiError(response.status, translateNow("chat.streamEmpty"));
   const feed = createSseParser((data) => onEvent(JSON.parse(data) as AnswerEvent));
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
