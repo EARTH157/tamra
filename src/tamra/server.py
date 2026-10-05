@@ -251,7 +251,8 @@ def _chat_payload(chat: Chat) -> dict:
 def _add_routes(app: FastAPI, core: Core) -> None:
     @app.get("/api/collection")
     def get_collection() -> dict:
-        collection = core.store.get_collection()
+        collections = core.store.list_collections()
+        collection = collections[0] if collections else None
         if collection is None:
             return {"collection": None, "index": None}
         return {"collection": _collection_payload(collection), "index": core.index_status()}

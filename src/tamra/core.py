@@ -304,8 +304,8 @@ class Core:
     def file_path(self, file_id: int) -> tuple[FileRecord, Path]:
         """The stored record and the real path of an indexed file (ViewerError if it is gone or
         its stored path leaves the collection folder). The path always comes from the store."""
-        collection = self.store.get_collection()
         record = self.store.get_file(file_id)
+        collection = self.store.get_collection(record.collection_id) if record else None
         if collection is None or record is None:
             raise FileMissing("file not found")
         return record, resolve_file(collection.folder_path, record.rel_path)
@@ -361,31 +361,41 @@ class Core:
 
     def start(self) -> None:
         self.indexer.start()
-        collection = self.store.get_collection()
+        collection = self._first_collection()
         if collection is not None:
             self._watch(collection)
             self.indexer.request_reconcile()
 
     def set_collection(self, name: str, folder: str) -> Collection:
-        """Index this folder from now on (M1 keeps one collection; chats are kept)."""
+        """Index this folder from now on (one project for now; chats are kept)."""
         path = Path(folder.strip()).expanduser()
         if not path.is_absolute():
             raise ValueError("Choose a full folder path, for example C:\\Users\\me\\Documents.")
         if not path.is_dir():
             raise ValueError(f"Folder not found: {folder}")
-        collection = self.store.replace_collection(name.strip() or path.name, str(path), MODEL_ID)
+        name = name.strip() or path.name
+        collection = self._first_collection()
+        if collection is None:
+            collection = self.store.create_collection(name, str(path), MODEL_ID)
+        else:
+            self.store.rename_collection(collection.id, name)
+            collection = self.store.set_collection_folder(collection.id, str(path), MODEL_ID)
         self._watch(collection)
         self.indexer.request_reconcile()
         return collection
 
     def rebuild(self) -> bool:
-        if self.store.get_collection() is None:
+        if self._first_collection() is None:
             return False
         self.indexer.request_rebuild()
         return True
 
+    def _first_collection(self) -> Collection | None:
+        collections = self.store.list_collections()
+        return collections[0] if collections else None
+
     def index_status(self) -> dict | None:
-        collection = self.store.get_collection()
+        collection = self._first_collection()
         if collection is None:
             return None
         state = self.indexer.state()

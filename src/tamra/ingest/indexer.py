@@ -121,10 +121,11 @@ class Indexer:
         with self._lock:
             rebuild, reconcile = self._rebuild_requested, self._reconcile_requested
             self._rebuild_requested = self._reconcile_requested = False
-        collection = self._store.get_collection()
+        collections = self._store.list_collections()
+        collection = collections[0] if collections else None
         if collection is not None and rebuild:
             self._store.reset_index(collection.id, self._model_id)
-            collection = self._store.get_collection()
+            collection = self._store.get_collection(collection.id)
         if collection is None or collection.embedding_model_id != self._model_id:
             self._set_error(None)  # nothing to do; a stale collection reports itself
             return

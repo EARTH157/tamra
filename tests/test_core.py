@@ -83,7 +83,7 @@ def test_status_reports_a_stale_index_and_rebuild_fixes_it(core, tmp_path):
     (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
     core.set_collection("Docs", str(docs))
     wait_until(lambda: indexed(core) == 1)
-    core.store.reset_index(core.store.get_collection().id, "old-model")
+    core.store.reset_index(core.store.list_collections()[0].id, "old-model")
     status = core.index_status()
     assert status["stale"] is True
     assert set(status) == {"stale", "counts", "current", "error", "problems"}

@@ -1,6 +1,6 @@
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _V1 = """
 CREATE TABLE collections (
@@ -83,6 +83,24 @@ CREATE TABLE settings (
 );
 """
 
+# v3: many projects (collections). A chat has a home project and a search scope of one or more
+# projects. SQLite cannot add a constraint to an existing table without rebuilding it, and
+# dropping the parent of the files table would cascade, so name uniqueness is a unique index.
+_V3 = """
+ALTER TABLE chats ADD COLUMN collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE;
+CREATE INDEX chats_by_collection ON chats(collection_id);
+CREATE TABLE chat_collections (
+    chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    PRIMARY KEY (chat_id, collection_id)
+);
+CREATE INDEX chat_collections_by_collection ON chat_collections(collection_id);
+CREATE UNIQUE INDEX collections_name_nocase ON collections(name COLLATE NOCASE);
+UPDATE chats SET collection_id = (SELECT id FROM collections ORDER BY id LIMIT 1);
+INSERT INTO chat_collections (chat_id, collection_id)
+    SELECT id, collection_id FROM chats WHERE collection_id IS NOT NULL;
+"""
+
 
 def _run_in_transaction(conn: sqlite3.Connection, script: str, version: int) -> None:
     try:
@@ -101,7 +119,6 @@ def migrate(conn: sqlite3.Connection) -> None:
         raise RuntimeError(
             f"database schema {version} is newer than this version of Tamra ({SCHEMA_VERSION})"
         )
-    if version == 0:
-        _run_in_transaction(conn, _V1 + _V2, 2)
-    elif version == 1:
-        _run_in_transaction(conn, _V2, 2)
+    steps = [_V1, _V2, _V3]  # steps[n] upgrades schema n to n + 1
+    if version < SCHEMA_VERSION:
+        _run_in_transaction(conn, "\n".join(steps[version:]), SCHEMA_VERSION)

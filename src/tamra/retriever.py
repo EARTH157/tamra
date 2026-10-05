@@ -73,8 +73,8 @@ def hybrid_search(
     store: Store, collection_id: int, vector: np.ndarray, fts: str | None, k: int = CANDIDATES
 ) -> list[Hit]:
     """Dense and keyword candidates fused by Reciprocal Rank Fusion, best first."""
-    dense = store.search_dense(collection_id, vector, k)
-    keyword = store.search_keyword(collection_id, fts, k) if fts else []
+    dense = store.search_dense([collection_id], vector, k)
+    keyword = store.search_keyword([collection_id], fts, k) if fts else []
     similarity = dict(dense)
     scores: dict[int, float] = {}
     for rank, (chunk_id, _) in enumerate(dense, start=1):

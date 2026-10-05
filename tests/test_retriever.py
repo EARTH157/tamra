@@ -51,10 +51,10 @@ class _FakeStore:
     def __init__(self, dense, keyword):
         self.dense, self.keyword = dense, keyword
 
-    def search_dense(self, collection_id, vector, k):
+    def search_dense(self, collection_ids, vector, k):
         return self.dense
 
-    def search_keyword(self, collection_id, fts, k):
+    def search_keyword(self, collection_ids, fts, k):
         if self.keyword is None:
             raise AssertionError("keyword search must not run without a query")
         return self.keyword
@@ -81,7 +81,7 @@ def test_best_similarity():
 
 def test_hybrid_search_finds_the_matching_chunk_in_a_real_store(tmp_path):
     store = Store.open(tmp_path / "t.db")
-    collection = store.replace_collection("Docs", "C:/docs", "m")
+    collection = store.create_collection("Docs", "C:/docs", "m")
     embedder = FakeEmbedder()
     texts = [
         "The lease term is three years",

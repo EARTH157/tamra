@@ -20,7 +20,7 @@ def env(tmp_path):
     store = Store.open(tmp_path / "tamra.db")
     embedder = FakeEmbedder()
     indexer = Indexer(store, lambda: embedder, lambda: fake_spans, MODEL)
-    store.replace_collection("Docs", str(docs), MODEL)
+    store.create_collection("Docs", str(docs), MODEL)
     yield docs, store, embedder, indexer
     indexer.stop()
     store.close()
@@ -32,11 +32,11 @@ def run(indexer):
 
 
 def files(store):
-    return {f.rel_path: f for f in store.list_files(store.get_collection().id)}
+    return {f.rel_path: f for f in store.list_files(store.list_collections()[0].id)}
 
 
 def keyword(store, word):
-    return store.search_keyword(store.get_collection().id, f'"{word[:3]}"', 10)
+    return store.search_keyword([store.list_collections()[0].id], f'"{word[:3]}"', 10)
 
 
 def test_new_documents_are_indexed(env):
@@ -125,13 +125,13 @@ def test_a_pdf_without_text_is_skipped_with_a_note(env):
 
 def test_a_stale_collection_waits_for_a_rebuild(env):
     docs, store, _, indexer = env
-    store.replace_collection("Docs", str(docs), "old-model")
+    store.reset_index(store.list_collections()[0].id, "old-model")
     (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
     run(indexer)
-    assert store.list_files(store.get_collection().id) == []
+    assert store.list_files(store.list_collections()[0].id) == []
     indexer.request_rebuild()
     indexer.process()
-    assert store.get_collection().embedding_model_id == MODEL
+    assert store.list_collections()[0].embedding_model_id == MODEL
     assert files(store)["a.md"].status == "indexed"
 
 
@@ -150,7 +150,7 @@ def test_an_unavailable_model_pauses_indexing_without_failing_files(tmp_path):
     docs.mkdir()
     (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
     store = Store.open(tmp_path / "tamra.db")
-    store.replace_collection("Docs", str(docs), MODEL)
+    store.create_collection("Docs", str(docs), MODEL)
 
     def missing():
         raise FileNotFoundError("model.onnx not found")
@@ -181,7 +181,7 @@ def test_stopping_between_embedding_batches_requeues_the_file(env):
     record = files(store)["big.md"]
     assert record.status == "pending"
     assert stopping.calls == 1
-    assert store.search_keyword(store.get_collection().id, '"Par"', 10) == []
+    assert store.search_keyword([store.list_collections()[0].id], '"Par"', 10) == []
 
 
 def test_a_lookup_error_while_indexing_fails_the_file_instead_of_hiding_it(env):

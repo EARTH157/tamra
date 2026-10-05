@@ -36,7 +36,7 @@ class Env:
         self.core = core
         self.folder = folder
         self.store = core.store
-        self.collection = self.store.replace_collection("Docs", str(folder), MODEL_ID)
+        self.collection = self.store.create_collection("Docs", str(folder), MODEL_ID)
         self.hashes: dict[int, str] = {}
 
     def add_file(self, rel_path: str, content_hash: str = "h1") -> int:

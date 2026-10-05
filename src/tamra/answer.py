@@ -240,7 +240,8 @@ class AnswerService:
                     _run(action)
 
     def _ask(self, chat_id: int, question: str, mode: str, think: bool) -> Iterator[dict]:
-        collection = self._store.get_collection()
+        collections = self._store.list_collections()
+        collection = collections[0] if collections else None
         if collection is None:
             yield {"type": "error", "message": "Choose a folder of documents first."}
             return

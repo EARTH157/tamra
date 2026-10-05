@@ -13,12 +13,12 @@ def store(tmp_path):
     s.close()
 
 
-def test_fresh_database_is_created_at_schema_v2_with_a_settings_table(tmp_path):
+def test_fresh_database_is_created_at_the_latest_schema_with_a_settings_table(tmp_path):
     path = tmp_path / "tamra.db"
     Store.open(path).close()
     conn = sqlite3.connect(path)
-    assert SCHEMA_VERSION == 2
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert SCHEMA_VERSION == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     columns = {row[1] for row in conn.execute("PRAGMA table_info(settings)")}
     assert columns == {"key", "value_json"}
     conn.close()
@@ -49,7 +49,7 @@ def test_a_v1_database_upgrades_in_place_and_keeps_its_data(tmp_path):
     store.close()
 
     conn = sqlite3.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     conn.close()
 
 

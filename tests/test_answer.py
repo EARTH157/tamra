@@ -18,7 +18,7 @@ from tamra.store import ChunkInput, SourceRecord, Store
 @pytest.fixture
 def env(tmp_path):
     store = Store.open(tmp_path / "t.db")
-    collection = store.replace_collection("Docs", "C:/docs", "m")
+    collection = store.create_collection("Docs", "C:/docs", "m")
     embedder = FakeEmbedder()
     texts = ["The lease term is three years", "Parking costs fifty baht"]
     file_id = store.add_file(collection.id, "lease.md", 1, 1.0)
@@ -157,9 +157,9 @@ def test_problems_before_answering_are_single_error_events(tmp_path):
     assert list(service.ask(chat.id, "q")) == [
         {"type": "error", "message": "Choose a folder of documents first."}
     ]
-    store.replace_collection("Docs", "C:/docs", "other-model")
+    collection = store.create_collection("Docs", "C:/docs", "other-model")
     assert list(service.ask(chat.id, "q"))[0]["message"].startswith("The index was built with")
-    store.replace_collection("Docs", "C:/docs", "m")
+    store.reset_index(collection.id, "m")
     assert list(service.ask(999, "q")) == [{"type": "error", "message": "Chat 999 not found."}]
     store.close()
 
@@ -167,8 +167,8 @@ def test_problems_before_answering_are_single_error_events(tmp_path):
 def test_asking_before_anything_is_indexed_saves_nothing(tmp_path):
     store = Store.open(tmp_path / "t.db")
     service = AnswerService(store, lambda t: None, lambda: Route("local", FakeLLM), model_id="m")
-    store.replace_collection("Docs", "C:/docs", "m")
-    store.add_file(store.get_collection().id, "a.md", 1, 1.0)  # pending, not indexed
+    store.create_collection("Docs", "C:/docs", "m")
+    store.add_file(store.list_collections()[0].id, "a.md", 1, 1.0)  # pending, not indexed
     chat = store.create_chat()
     assert list(service.ask(chat.id, "q")) == [
         {
@@ -374,7 +374,7 @@ def test_an_api_answer_is_saved_with_its_provider_and_model(env):
 def many(tmp_path):
     """Ten passages that all match "lease term", to show how many the answer takes."""
     store = Store.open(tmp_path / "t.db")
-    collection = store.replace_collection("Docs", "C:/docs", "m")
+    collection = store.create_collection("Docs", "C:/docs", "m")
     embedder = FakeEmbedder()
     texts = [f"lease term clause {word}" for word in "abcdefghij"]
     file_id = store.add_file(collection.id, "lease.md", 1, 1.0)
