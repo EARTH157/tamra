@@ -7,8 +7,8 @@ source**, compare the answer with the best matching passage, and open the file a
 with a highlight. `dist/Tamra/Tamra.exe` was built on the dev machine and checked with
 `scripts/exe_smoke.py` and the packaged selfcheck. Build output: `Tamra.exe` is 14.4 MB and the
 `dist/Tamra` folder is 249 MB (the same as M2: no new dependency). Models: bge-m3 int8 and the
-Qwen2.5-0.5B-instruct Q4_K_M dev model, nothing downloaded. The test suite had 681 passing tests
-(12 `assets` tests deselected), the UI suite 320 tests, and the lint and format checks were clean.
+Qwen2.5-0.5B-instruct Q4_K_M dev model, nothing downloaded. The test suite had 693 passing tests
+(12 `assets` tests deselected), the UI suite 334 tests, and the lint and format checks were clean.
 
 **What the exit criterion covers**
 
@@ -16,9 +16,10 @@ Qwen2.5-0.5B-instruct Q4_K_M dev model, nothing downloaded. The test suite had 6
 - The controller checked the UI in the browser against the dev core: see "Visual check".
 - The real-window check (pywebview) is the owner's.
 
-The build ran the steps of `./scripts/build.ps1` one by one, without its `npm ci` step (so that
-nothing was downloaded): `npm --prefix ui run build`, `fetch_assets.py llama` (the pinned zip was
-already there and verified), then PyInstaller.
+The first build ran the steps of `./scripts/build.ps1` one by one, without its `npm ci` step:
+`npm --prefix ui run build`, `fetch_assets.py llama` (the pinned zip was already there and
+verified), then PyInstaller. After the final review fixes the controller rebuilt with
+`./scripts/build.ps1` as is and ran the smoke again (same results as below).
 
 ## How the attribution was calibrated
 
@@ -120,6 +121,11 @@ The controller ran the dev core on a scratch data folder with the corpus from
   changed) and that was fixed and re-checked.
 - Another defect found during these checks was fixed: a window that started in the middle of a
   Latin word (windows now snap to word boundaries).
+- **The exit flow in one run** (after the final review fixes): drag-select "The monthly rent is
+  18,500 baht" in the lease answer → **Check source** appears → the panel shows "Strong match",
+  `apartment-lease.pdf`, page 1 of 2 → **Open file** → the viewer shows page 1 of the real PDF
+  with yellow boxes on "Kanya Srisuk / 1. Term… / 2. Rent. The monthly rent is 18,500 baht, due on
+  the 5th day of each month. / A late payment fee…", the matched window.
 
 ## Deviations from the spec
 

@@ -152,13 +152,23 @@ def check_answer(question: dict, events: list[dict]) -> dict:
 
 def sentence_to_check(answer: str, sources: list[dict]) -> str:
     """A sentence of the answer that cites a PDF source (else the first), markers removed."""
-    pieces = [p.strip() for p in re.split(r"(?<=[.!?])\s+", answer) if p.strip()]
+    pieces: list[str] = []
+    for piece in (p.strip() for p in re.split(r"(?<=[.!?])\s+", answer)):
+        if pieces and not CITATION.sub("", piece).strip():
+            pieces[-1] += " " + piece  # "...month. [1]": the marker belongs to the sentence before
+        elif piece:
+            pieces.append(piece)
     pdf_numbers = {s["n"] for s in sources if s["file"].lower().endswith(".pdf")}
     for piece in pieces:
         cited = {int(n) for n in CITATION.findall(piece)}
         if cited & pdf_numbers:
-            return CITATION.sub("", piece).strip()
-    return CITATION.sub("", pieces[0] if pieces else answer).strip()
+            return _unmarked(piece)
+    return _unmarked(pieces[0] if pieces else answer)
+
+
+def _unmarked(text: str) -> str:
+    """The text without citation markers or the space before them."""
+    return re.sub(r"\s*(?:" + CITATION.pattern + ")", "", text).strip()
 
 
 def timed(call) -> tuple[httpx.Response, float]:

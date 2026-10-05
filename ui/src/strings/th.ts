@@ -80,7 +80,7 @@ export const th: Record<TranslationKey, string> = {
   "source.checking": "กำลังตรวจสอบแหล่งที่มา…",
   "source.failed": "ตรวจสอบข้อความที่เลือกไม่สำเร็จ",
   "check.err.model": "โมเดลค้นหาใช้งานไม่ได้ จึงตรวจสอบแหล่งที่มาไม่ได้",
-  "check.err.gone": "คำตอบนี้ไม่ได้ถูกบันทึกไว้แล้ว",
+  "check.err.gone": "ไม่พบคำตอบนี้แล้ว",
   "source.pageOf": "หน้า {page} จาก {count}",
   "source.line": "บรรทัด {n}",
   "source.lines": "บรรทัด {from}–{to}",

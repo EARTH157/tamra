@@ -37,8 +37,10 @@ Sources:
 Example answer format: The rent is 10,000 baht [1]."""
 
 AUTO_CITE_MIN_OVERLAP = 0.5  # share of the answer's trigrams found in one source
-# The same marker grammar as tamra.attribution and the UI: [1], [12] or a group like [1, 2].
-_MARKER = re.compile(r"\[\d{1,3}(?:\s*,\s*\d{1,3})*\]")
+# One citation marker: [1], [12] or a group such as [1, 2]. tamra.attribution and the UI
+# (ui/src/citations.ts) read the same form.
+MARKER_GROUP = r"\[\d{1,3}(?:\s*,\s*\d{1,3})*\]"
+_MARKER = re.compile(MARKER_GROUP)
 _DIGITS = re.compile(r"\d+")
 
 

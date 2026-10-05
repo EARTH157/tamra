@@ -17,6 +17,7 @@ from typing import Literal
 
 import numpy as np
 
+from tamra.answer import MARKER_GROUP
 from tamra.ingest.chunker import TokenSpans
 from tamra.retriever import trigrams
 from tamra.store import MessageRecord, SourceRecord
@@ -34,9 +35,7 @@ PARTIAL = 0.57
 
 Label = Literal["strong", "partial"]
 
-# One citation marker: [1], [12] or a group such as [1, 2]. The UI (ui/src/citations.ts) reads the
-# same form, so a marker the chips show is also one the core strips and credits.
-_MARKER_GROUP = r"\[\d{1,3}(?:\s*,\s*\d{1,3})*\]"
+_MARKER_GROUP = MARKER_GROUP  # the citation grammar answers are written in
 _MARKER = re.compile(_MARKER_GROUP)
 _MARKER_WITH_SPACE = re.compile(r"\s*" + _MARKER_GROUP)
 _DIGITS = re.compile(r"\d+")
