@@ -263,6 +263,14 @@ def test_citation_markers_in_the_selection_are_not_part_of_the_claim():
     assert attributor().attribute(msg, "[1]") == []
 
 
+def test_a_marker_before_punctuation_leaves_no_stray_space():
+    text = "The rent is due on the fifth day of each month."
+    msg = message([source(1, text)])
+    plain = attributor().attribute(msg, text)
+    marked = attributor().attribute(msg, text[:-1] + " [1].")
+    assert marked[0].score == pytest.approx(plain[0].score)
+
+
 def test_a_number_in_one_window_but_not_another_is_penalised_there():
     twins = [
         source(1, "The monthly rent is 18,500 baht, due on the 5th day of each month."),

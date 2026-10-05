@@ -35,6 +35,7 @@ PARTIAL = 0.57
 Label = Literal["strong", "partial"]
 
 _MARKER = re.compile(r"\[(\d+)\]")
+_MARKER_WITH_SPACE = re.compile(r"\s*\[\d+\]")
 _NUMBER = re.compile(r"\d+(?:[.,:]\d+)*")
 _THOUSANDS = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?")
 # A sentence ends at . ! ? (when not inside a number such as 1.5), at 。！？ or at a newline;
@@ -154,7 +155,8 @@ class Attributor:
         candidates = [s for s in message.sources if only is None or s.n == only]
         # The markers only say which sources the answer cited; they are not part of the claim.
         cited = cited_in(message.content, selection)
-        query_text = " ".join(_MARKER.sub(" ", selection).split())
+        # Remove each marker with the space before it, so "allowed [2]." embeds as "allowed.".
+        query_text = " ".join(_MARKER_WITH_SPACE.sub("", selection).split())
         if not query_text or not candidates:
             return []
         entries = self._windows(message.id, candidates)
