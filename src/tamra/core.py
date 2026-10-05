@@ -5,6 +5,7 @@ import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -25,8 +26,8 @@ from tamra.models.catalog import Catalog, load_catalog
 from tamra.models.hardware import Hardware, detect
 from tamra.models.manager import ModelManager
 from tamra.settings import Settings, load_settings, save_settings
-from tamra.store import Collection, FileRecord, MessageRecord, Store
-from tamra.viewer import ViewerError, resolve_file
+from tamra.store import Collection, FileRecord, MessageRecord, SourceRecord, Store
+from tamra.viewer import FileMissing, Unreadable, ViewerError, resolve_file
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,11 @@ OPENAI_BASE_URL = "https://api.openai.com"
 # path on every question and restarts llama-server on the new model by itself.
 _PROVIDER_FIELDS = frozenset({"mode", "api_provider", "api_model", "api_base_url"})
 DOCUMENT_CACHE_SIZE = 8  # parsed documents kept for the viewer, so paging a PDF parses it once
+DOCUMENT_CACHE_MAX_BYTES = 16 * 1024 * 1024  # a larger file is parsed per request, not kept
+
+
+class EmbedderUnavailable(RuntimeError):
+    """The embedding model could not be loaded."""
 
 
 def _build_api_provider(settings: Settings, key: str) -> Provider:
@@ -78,7 +84,12 @@ class Core:
         self._spans_factory = spans_factory
         self._attributor: Attributor | None = None
         self._attributor_lock = threading.Lock()
-        self._warm_attribution = warm_attribution
+        self._warm_pool = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="tamra-attribution-warm")
+            if warm_attribution
+            else None
+        )
+        self._closed = False
         self._documents: OrderedDict[tuple, ParsedDoc] = OrderedDict()
         self._documents_lock = threading.Lock()
         self._models_dir = models_dir
@@ -238,7 +249,10 @@ class Core:
         """The embedding model, loaded on first use and shared by indexing and questions."""
         with self._embedder_lock:
             if self._embedder is None:
-                self._embedder = self._embedder_factory()
+                try:
+                    self._embedder = self._embedder_factory()
+                except Exception as e:  # missing or unreadable model files
+                    raise EmbedderUnavailable(str(e)) from e
             return self._embedder
 
     def _embed_query(self, text: str) -> np.ndarray:
@@ -250,24 +264,31 @@ class Core:
         self, message: MessageRecord, selection: str, only: int | None = None
     ) -> list[Match]:
         """Match a selection to the message's sources. It shares the one embedder."""
+        return self._attributor_for().attribute(message, selection, only)
+
+    def _attributor_for(self) -> Attributor:
         with self._attributor_lock:
             if self._attributor is None:
                 self._attributor = Attributor(
                     lambda texts: self.embedder().embed(texts), self._spans_factory()
                 )
-            attributor = self._attributor
-        return attributor.attribute(message, selection, only)
+            return self._attributor
 
     def _warm(self, message_id: int) -> None:
-        threading.Thread(
-            target=self._warm_now, args=(message_id,), name="tamra-attribution-warm", daemon=True
-        ).start()
+        """Queue the warm-up of a saved answer on the single background worker."""
+        if self._warm_pool is not None and not self._closed:
+            try:
+                self._warm_pool.submit(self._warm_now, message_id)
+            except RuntimeError:  # the pool was shut down meanwhile
+                pass
 
     def _warm_now(self, message_id: int) -> None:
+        if self._closed:
+            return
         try:
             message = self.store.get_message(message_id)
-            if message is not None and message.content.strip():
-                self.attribute(message, message.content[:500])  # caches every source's windows
+            if message is not None and message.sources:
+                self._attributor_for().prepare(message)
         except Exception as e:  # warming is only an optimisation
             log.warning("attribution warm-up failed: %s", type(e).__name__)
 
@@ -277,8 +298,30 @@ class Core:
         collection = self.store.get_collection()
         record = self.store.get_file(file_id)
         if collection is None or record is None:
-            raise ViewerError("file not found")
+            raise FileMissing("file not found")
         return record, resolve_file(collection.folder_path, record.rel_path)
+
+    def source_changed(self, source: SourceRecord) -> bool:
+        """Whether the file no longer matches what the answer was given: it is gone or refused,
+        it was re-indexed with other content, or it was edited since it was last indexed."""
+        if source.file_id is None:
+            return True
+        try:
+            record, path = self.file_path(source.file_id)
+        except ViewerError:
+            return True
+        return self.file_changed(record, path, source.file_hash)
+
+    @staticmethod
+    def file_changed(record: FileRecord, path: Path, file_hash: str | None) -> bool:
+        if record.content_hash != file_hash:
+            return True
+        try:
+            stat = path.stat()
+        except OSError:
+            return True
+        # The indexer's own test for "edited": a file that differs here is queued for re-indexing.
+        return (stat.st_size, stat.st_mtime) != (record.size, record.mtime)
 
     def document(self, file_id: int) -> tuple[FileRecord, Path, ParsedDoc]:
         """The file parsed as it is now, from a small cache keyed by size and modified time."""
@@ -286,7 +329,7 @@ class Core:
         try:
             stat = path.stat()
         except OSError as e:
-            raise ViewerError("file not found") from e
+            raise FileMissing("file not found") from e
         key = (file_id, str(path), stat.st_size, stat.st_mtime_ns)
         with self._documents_lock:
             doc = self._documents.get(key)
@@ -296,7 +339,9 @@ class Core:
         try:
             doc = parse_file(path)
         except ParseError as e:
-            raise ViewerError(f"cannot read file: {e}") from e
+            raise Unreadable(f"cannot read file: {e}", pdf=path.suffix.lower() == ".pdf") from e
+        if stat.st_size > DOCUMENT_CACHE_MAX_BYTES:
+            return record, path, doc
         with self._documents_lock:
             self._documents[key] = doc
             while len(self._documents) > DOCUMENT_CACHE_SIZE:
@@ -345,6 +390,9 @@ class Core:
         }
 
     def shutdown(self) -> None:
+        self._closed = True
+        if self._warm_pool is not None:
+            self._warm_pool.shutdown(wait=False, cancel_futures=True)
         self.watcher.stop()
         self.answers.cancel()
         self.indexer.stop()

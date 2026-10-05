@@ -1,6 +1,8 @@
 """The attribution, locate, page, text, and open routes (M3 task 3)."""
 
 import logging
+import os
+import sys
 import time
 from pathlib import Path
 
@@ -39,8 +41,9 @@ class Env:
 
     def add_file(self, rel_path: str, content_hash: str = "h1") -> int:
         path = self.folder / rel_path
-        size = path.stat().st_size if path.exists() else 0
-        file_id = self.store.add_file(self.collection.id, rel_path, size, 1.0)
+        info = path.stat() if path.exists() else None  # as the indexer records it
+        size, mtime = (info.st_size, info.st_mtime) if info else (0, 1.0)
+        file_id = self.store.add_file(self.collection.id, rel_path, size, mtime)
         self.set_hash(file_id, content_hash)
         return file_id
 
@@ -321,7 +324,8 @@ def test_locate_a_pdf_passage_with_rects(env, client):
 def test_locate_is_not_found_when_the_passage_left_the_file(env, client, txt):
     txt["path"].write_text("Completely different words now, nothing like before.\n", "utf-8")
     body = locate(client, txt["message_id"], 1).json()
-    assert body == {"file_id": txt["file_id"], "kind": "text", "changed": False, "found": False}
+    # edited on disk but not yet re-indexed: the stored size no longer matches
+    assert body == {"file_id": txt["file_id"], "kind": "text", "changed": True, "found": False}
 
 
 def test_locate_reports_a_changed_file(env, client, txt):
@@ -364,6 +368,81 @@ def test_a_damaged_pdf_is_a_422(env, client):
     assert response.status_code == 422
     assert response.json()["detail"] == "This PDF could not be read."
     assert client.get(f"/api/files/{file_id}/pages/1", headers=AUTH).status_code == 422
+
+
+def test_a_broken_docx_in_a_folder_named_pdfs_is_not_called_a_pdf(tmp_path):
+    folder = tmp_path / "My PDFs"
+    folder.mkdir()
+    core = make_core(tmp_path)
+    try:
+        env = Env(core, folder)
+        (folder / "broken.docx").write_bytes(b"this is not a zip file")
+        file_id = env.add_file("broken.docx")
+        message_id = env.answer(
+            "x [1]",
+            [
+                source(
+                    1,
+                    file_id,
+                    "broken.docx",
+                    DEPOSIT,
+                    {"kind": "docx", "paragraph_start": 0, "paragraph_end": 0},
+                )
+            ],
+        )
+        client = client_for(env)
+        for response in (
+            locate(client, message_id, 1),
+            client.get(f"/api/files/{file_id}/text", headers=AUTH),
+        ):
+            assert response.status_code == 422
+            assert response.json()["detail"] == "This file could not be read."
+    finally:
+        core.shutdown()
+
+
+def test_a_missing_page_says_page_not_found(client, pdf):
+    assert page(client, pdf, 9).json()["detail"] == "Page not found."
+
+
+def test_a_file_edited_since_it_was_indexed_is_changed(env, client, txt):
+    assert locate(client, txt["message_id"], 1).json()["changed"] is False
+    path = txt["path"]
+    path.write_text(TXT_BODY + "More words.\n", encoding="utf-8")
+    assert locate(client, txt["message_id"], 1).json()["changed"] is True
+    matches = attribute(client, message_id=txt["message_id"], selection=LEASE).json()["matches"]
+    assert matches[0]["changed"] is True
+
+
+def test_a_file_with_only_a_new_mtime_is_changed(env, client, txt):
+    stat = txt["path"].stat()
+    os.utime(txt["path"], (stat.st_atime, stat.st_mtime + 100))
+    assert locate(client, txt["message_id"], 1).json()["changed"] is True
+
+
+def test_a_malformed_location_hint_does_not_break_locate(env, client):
+    path = env.folder / "n.txt"
+    path.write_text(TXT_BODY, encoding="utf-8")
+    file_id = env.add_file("n.txt")
+    message_id = env.answer("x [1]", [source(1, file_id, "n.txt", LEASE, {"kind": "text"})])
+    body = locate(client, message_id, 1).json()
+    assert (body["found"], body["start"], body["end"]) == (True, 3, 4)
+
+
+def test_other_attribution_failures_are_a_500_and_logged_with_a_traceback(env, txt, caplog):
+    def boom(*args):
+        raise ValueError("a bug")
+
+    env.core.attribute = boom
+    client = TestClient(
+        create_app(TOKEN, None, env.core),
+        base_url="http://127.0.0.1",
+        raise_server_exceptions=False,
+    )
+    with caplog.at_level(logging.ERROR, logger="tamra.server"):
+        response = attribute(client, message_id=txt["message_id"], selection=LEASE)
+    assert response.status_code == 500
+    assert any(r.exc_info and r.exc_info[0] is ValueError for r in caplog.records)
 
 
 # --- the parsed document cache ---
@@ -568,8 +647,9 @@ def test_a_saved_answer_warms_the_attribution_cache(tmp_path):
         events = list(core.answers.ask(chat_id, "How long is the lease term?"))
         assert events[-1]["type"] == "done"
         embedder = core.embedder()
-        # the question, then (in the background) the source windows and the answer text
-        wait_until(lambda: embedder.calls >= 3)
+        wait_until(lambda: embedder.calls >= 2)
+        time.sleep(0.1)
+        assert embedder.calls == 2  # the question, then every source's windows: no selection
         calls = embedder.calls
         message = core.store.get_message(events[-1]["message_id"])
         assert [m.n for m in core.attribute(message, LEASE)] == [1]
@@ -586,24 +666,96 @@ def test_the_cache_is_not_warmed_unless_enabled(env):
     assert env.core.embedder().calls == 1  # only the question
 
 
-def test_a_failed_warm_up_is_only_logged(tmp_path, caplog):
+def test_a_failed_warm_up_is_only_logged_and_leaves_the_answer_alone(tmp_path, caplog):
     folder = tmp_path / "docs"
     folder.mkdir()
 
-    class Failing(FakeEmbedder):
-        def embed(self, texts, batch_size=16):
-            if len(texts) == 1 and texts[0].startswith("How"):
-                return super().embed(texts)
-            raise RuntimeError("model went away")
+    class Flaky(FakeEmbedder):
+        broken = True
 
-    core = make_core(tmp_path, embedder_factory=Failing, warm_attribution=True)
+        def embed(self, texts, batch_size=16):
+            if self.broken and not texts[0].startswith("How"):
+                raise RuntimeError("model went away")
+            return super().embed(texts)
+
+    core = make_core(tmp_path, embedder_factory=Flaky, warm_attribution=True)
     try:
         env = Env(core, folder)
         _, chat_id = indexed_lease(env)
         with caplog.at_level(logging.WARNING, logger="tamra.core"):
             events = list(core.answers.ask(chat_id, "How long is the lease term?"))
-            assert events[-1]["type"] == "done"
-            wait_until(lambda: "warm-up failed" in caplog.text)
-        core._warm_now(999)  # a message that does not exist
+            wait_until(lambda: "warm-up failed: RuntimeError" in caplog.text)
+        assert [e["type"] for e in events if e["type"] == "error"] == []
+        assert events[-1]["type"] == "done"
+        message = core.store.get_message(events[-1]["message_id"])
+        assert message is not None and len(message.sources) == 1  # the answer was saved intact
+        core.embedder().broken = False  # the failure poisoned nothing: it works afterwards
+        assert [m.n for m in core.attribute(message, LEASE)] == [1]
+        core._warm_now(999)  # a message that does not exist is not an error
     finally:
         core.shutdown()
+
+
+def test_nothing_is_warmed_after_shutdown(tmp_path):
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    core = make_core(tmp_path, warm_attribution=True)
+    env = Env(core, folder)
+    _, chat_id = indexed_lease(env)
+    message_id = env.answer("x [1]", [source(1, 1, "lease.txt", LEASE, {"kind": "text"})])
+    embedder = core.embedder()
+    calls = embedder.calls
+    core.shutdown()
+    core._warm(message_id)  # the pool is closed: this must not raise or embed
+    core._warm_now(message_id)
+    time.sleep(0.1)
+    assert embedder.calls == calls and chat_id
+
+
+def test_warming_uses_one_named_worker(tmp_path):
+    core = make_core(tmp_path, warm_attribution=True)
+    try:
+        assert core._warm_pool._max_workers == 1
+        assert core._warm_pool._thread_name_prefix == "tamra-attribution-warm"
+    finally:
+        core.shutdown()
+
+
+# --- size caps and links ---
+
+
+def test_a_long_text_view_is_cut_and_says_so(env, client, monkeypatch):
+    import tamra.viewer as viewer
+
+    (env.folder / "long.txt").write_text("\n".join(f"line {i}" for i in range(30)), "utf-8")
+    file_id = env.add_file("long.txt")
+    monkeypatch.setattr(viewer, "MAX_TEXT_LINES", 12)
+    body = client.get(f"/api/files/{file_id}/text", headers=AUTH).json()
+    assert len(body["lines"]) == 12 and body["truncated"] is True
+
+
+def test_a_huge_file_is_parsed_but_not_cached(env, client, txt, monkeypatch):
+    import tamra.core as core_module
+
+    monkeypatch.setattr(core_module, "DOCUMENT_CACHE_MAX_BYTES", 10)
+    env.core._documents.clear()
+    assert locate(client, txt["message_id"], 1).json()["found"] is True
+    assert len(env.core._documents) == 0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="NTFS junctions")
+def test_a_junction_out_of_the_folder_is_refused(env, opener, tmp_path):
+    import _winapi
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret", encoding="utf-8")
+    (outside / "secret.pdf").write_bytes(b"%PDF-1.4")
+    _winapi.CreateJunction(str(outside), str(env.folder / "link"))
+    client = client_for(env, open_external=opener)
+    for name in ("secret.txt", "secret.pdf"):
+        file_id = env.add_file(f"link/{name}")
+        assert open_file(client, file_id).status_code == 400
+        assert client.get(f"/api/files/{file_id}/text", headers=AUTH).status_code == 400
+        assert page(client, file_id, 1).status_code == 400
+    assert opener.paths == []

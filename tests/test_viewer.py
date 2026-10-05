@@ -597,3 +597,57 @@ def test_every_pdf_chunk_is_found_on_its_page_with_matching_text(tmp_path, fonts
         covered = " ".join(_page_text(path, found.page)[found.start : found.end].split())
         assert covered
         assert covered in " ".join(c.text.split())
+
+
+def test_viewer_errors_have_types(tmp_path):
+    (tmp_path / "x.txt").write_text("x")
+    with pytest.raises(viewer.PathRefused):
+        resolve_file(str(tmp_path), "../x.txt")
+    with pytest.raises(viewer.PathRefused):
+        resolve_file(str(tmp_path), "a\x00b.txt")
+    with pytest.raises(viewer.FileMissing):
+        resolve_file(str(tmp_path), "nope.txt")
+    with pytest.raises(viewer.Unreadable) as unreadable:
+        pdf_page_count(tmp_path / "missing.pdf")
+    assert unreadable.value.pdf is True
+
+
+def test_a_missing_page_has_its_own_type(tmp_path, fonts):
+    path = make_pdf(tmp_path / "p.pdf", [["one"]])
+    with pytest.raises(viewer.PageMissing):
+        render_pdf_page(path, 2, 1.0)
+    with pytest.raises(viewer.PageMissing):
+        pdf_rects(path, 0, 0, 3)
+
+
+def test_a_malformed_location_hint_is_ignored(tmp_path):
+    path = tmp_path / "a.txt"
+    path.write_text("first paragraph here\n\nsecond paragraph is the target\n", encoding="utf-8")
+    doc = parse_file(path)
+    expected = locate(doc, "second paragraph is the target")
+    assert expected is not None
+    for hint in ({"kind": "text"}, {"kind": "text", "line_start": None, "line_end": 3}, {}):
+        assert locate(doc, "second paragraph is the target", hint) == expected
+
+
+def test_text_view_is_capped_and_says_so(tmp_path, monkeypatch):
+    path = tmp_path / "long.txt"
+    path.write_text("\n".join(f"line {i}" for i in range(50)), encoding="utf-8")
+    monkeypatch.setattr(viewer, "MAX_TEXT_LINES", 10)
+    view = text_view(parse_file(path))
+    assert view["lines"] == [f"line {i}" for i in range(10)]
+    assert view["truncated"] is True
+    monkeypatch.setattr(viewer, "MAX_TEXT_LINES", 100)
+    monkeypatch.setattr(viewer, "MAX_TEXT_CHARS", 30)
+    view = text_view(parse_file(path))
+    assert sum(len(line) for line in view["lines"]) <= 30 and view["truncated"] is True
+    monkeypatch.setattr(viewer, "MAX_TEXT_CHARS", 5_000_000)
+    assert "truncated" not in text_view(parse_file(path))
+
+
+def test_a_docx_text_view_is_capped_too(tmp_path, monkeypatch):
+    path = make_docx(tmp_path / "t.docx", [(0, f"Paragraph number {i}.") for i in range(20)])
+    monkeypatch.setattr(viewer, "MAX_TEXT_LINES", 5)
+    view = text_view(parse_file(path))
+    assert [p["index"] for p in view["paragraphs"]] == [0, 1, 2, 3, 4]
+    assert view["truncated"] is True

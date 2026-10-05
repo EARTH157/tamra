@@ -142,6 +142,10 @@ class Attributor:
         self._cache: OrderedDict[int, dict[int, _Windows]] = OrderedDict()  # LRU over messages
         self._lock = threading.Lock()
 
+    def prepare(self, message: MessageRecord) -> None:
+        """Embed and cache the windows of every source, so the first attribute() is fast."""
+        self._windows(message.id, list(message.sources))
+
     def attribute(
         self, message: MessageRecord, selection: str, only: int | None = None
     ) -> list[Match]:

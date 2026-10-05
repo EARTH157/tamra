@@ -29,8 +29,32 @@ _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _WHITESPACE = re.compile(r"\s+")
 
 
+MAX_TEXT_LINES = 100_000  # text_view stops at this many lines or MAX_TEXT_CHARS, and says so
+MAX_TEXT_CHARS = 5_000_000
+
+
 class ViewerError(Exception):
     """The requested file or passage cannot be shown."""
+
+
+class FileMissing(ViewerError):
+    """There is no such file (not indexed, or gone from the disk)."""
+
+
+class PathRefused(ViewerError):
+    """The stored path is invalid or leaves the collection folder."""
+
+
+class PageMissing(ViewerError):
+    """The PDF has no such page."""
+
+
+class Unreadable(ViewerError):
+    """The file exists but cannot be read; `pdf` says whether it is a PDF."""
+
+    def __init__(self, message: str, pdf: bool = False):
+        super().__init__(message)
+        self.pdf = pdf
 
 
 def resolve_file(folder: str, rel_path: str) -> Path:
@@ -39,15 +63,15 @@ def resolve_file(folder: str, rel_path: str) -> Path:
         root = Path(folder).resolve()
         path = (root / rel_path).resolve()
     except (OSError, ValueError) as e:  # ValueError: an embedded NUL byte
-        raise ViewerError("invalid path") from e
+        raise PathRefused("invalid path") from e
     if not path.is_relative_to(root):
-        raise ViewerError("outside the collection folder")
+        raise PathRefused("outside the collection folder")
     try:
         is_file = path.is_file()
     except (OSError, ValueError) as e:
-        raise ViewerError("invalid path") from e
+        raise PathRefused("invalid path") from e
     if not is_file:
-        raise ViewerError("file not found")
+        raise FileMissing("file not found")
     return path
 
 
@@ -102,12 +126,15 @@ class _Normalized:
 def _in_hint(unit: Unit, kind: str, hint: dict | None) -> bool:
     if not hint or hint.get("kind") != kind:
         return False
-    if kind == "pdf":
-        return hint["page_start"] <= unit.page <= hint["page_end"]
-    if kind == "docx":
-        return hint["paragraph_start"] <= unit.paragraph <= hint["paragraph_end"]
-    last_line = unit.line + unit.text.count("\n")
-    return unit.line <= hint["line_end"] and hint["line_start"] <= last_line
+    try:
+        if kind == "pdf":
+            return hint["page_start"] <= unit.page <= hint["page_end"]
+        if kind == "docx":
+            return hint["paragraph_start"] <= unit.paragraph <= hint["paragraph_end"]
+        last_line = unit.line + unit.text.count("\n")
+        return unit.line <= hint["line_end"] and hint["line_start"] <= last_line
+    except (KeyError, TypeError):  # a malformed hint is only a hint: ignore it
+        return False
 
 
 class _Units:
@@ -269,13 +296,14 @@ def render_pdf_page(path: Path, page: int, scale: float) -> bytes:
                     scale = 0.999 * math.sqrt(MAX_PIXELS / (width * height))  # sizes round up
                 bitmap = pdf_page.render(scale=scale)
                 try:
-                    return _encode_png(_to_rgb(bitmap.to_numpy()))
+                    rgb = _to_rgb(bitmap.to_numpy())  # a copy: the bitmap is freed below
                 finally:
                     bitmap.close()
             finally:
                 pdf_page.close()
         finally:
             pdf.close()
+    return _encode_png(rgb)  # compressing is slow, and pdfium is no longer needed
 
 
 def _to_rgb(pixels: np.ndarray) -> np.ndarray:
@@ -386,29 +414,52 @@ def _open_pdf(path: Path) -> pdfium.PdfDocument:
     try:
         return pdfium.PdfDocument(path)
     except (pdfium.PdfiumError, OSError) as e:
-        raise ViewerError(f"cannot open PDF: {e}") from e
+        raise Unreadable(f"cannot open PDF: {e}", pdf=True) from e
 
 
 def _get_page(pdf: pdfium.PdfDocument, page: int):
     if not 1 <= page <= len(pdf):
-        raise ViewerError("page out of range")
+        raise PageMissing("page out of range")
     return pdf[page - 1]
 
 
 def text_view(doc: ParsedDoc) -> dict:
-    """The extracted text of a DOCX or text file, for display with a highlighted range."""
+    """The extracted text of a DOCX or text file, for display with a highlighted range.
+
+    At most MAX_TEXT_LINES lines (paragraphs) or MAX_TEXT_CHARS characters are returned; a
+    longer file is cut and the reply has "truncated": true.
+    """
     if doc.kind == "text":
         lines: list[str] = []
+        chars = 0
+        truncated = False
         for unit in doc.units:
-            lines.extend([""] * (unit.line - 1 - len(lines)))  # blank lines between paragraphs
-            lines.extend(unit.text.split("\n"))
-        return {"kind": "text", "lines": lines}
-    if doc.kind == "docx":
-        return {
-            "kind": "docx",
-            "paragraphs": [
+            block = [""] * (unit.line - 1 - len(lines))  # blank lines between paragraphs
+            block.extend(unit.text.split("\n"))
+            for line in block:
+                if len(lines) >= MAX_TEXT_LINES or chars + len(line) > MAX_TEXT_CHARS:
+                    truncated = True
+                    break
+                lines.append(line)
+                chars += len(line)
+            if truncated:
+                break
+        reply: dict = {"kind": "text", "lines": lines}
+    elif doc.kind == "docx":
+        paragraphs = []
+        chars = 0
+        truncated = False
+        for u in doc.units:
+            if len(paragraphs) >= MAX_TEXT_LINES or chars + len(u.text) > MAX_TEXT_CHARS:
+                truncated = True
+                break
+            paragraphs.append(
                 {"index": u.paragraph, "text": u.text, "heading": u.heading_level > 0}
-                for u in doc.units
-            ],
-        }
-    raise ViewerError("a PDF is shown as page images")
+            )
+            chars += len(u.text)
+        reply = {"kind": "docx", "paragraphs": paragraphs}
+    else:
+        raise ViewerError("a PDF is shown as page images")
+    if truncated:
+        reply["truncated"] = True
+    return reply

@@ -20,15 +20,20 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 import tamra
 from tamra import secrets as key_store
 from tamra.answer import location_label, source_payload
-from tamra.core import Core
+from tamra.core import Core, EmbedderUnavailable
+from tamra.ingest.parsers import SUPPORTED
 from tamra.llm.base import LLMError, ProviderError
 from tamra.models.catalog import ModelEntry
 from tamra.models.hardware import _is_integrated, recommend
 from tamra.models.manager import DownloadBusy, ImportRefused
-from tamra.store import Chat, Collection, FileRecord
+from tamra.store import Chat, Collection
 from tamra.viewer import (
     MAX_SCALE,
     MIN_SCALE,
+    FileMissing,
+    PageMissing,
+    PathRefused,
+    Unreadable,
     ViewerError,
     locate,
     pdf_page_count,
@@ -328,17 +333,15 @@ def _add_routes(app: FastAPI, core: Core) -> None:
         return Response(status_code=204)
 
 
-OPENABLE_SUFFIXES = frozenset({".pdf", ".docx", ".txt", ".md"})  # what Tamra indexes
-
-
 def _viewer_error(e: ViewerError) -> HTTPException:
     """The HTTP error for a ViewerError, with a fixed message: a raw path is never sent."""
-    reason = str(e)
-    if reason in ("file not found", "page out of range"):
+    if isinstance(e, FileMissing):
         return HTTPException(status_code=404, detail="File not found.")
-    if reason in ("outside the collection folder", "invalid path"):
+    if isinstance(e, PageMissing):
+        return HTTPException(status_code=404, detail="Page not found.")
+    if isinstance(e, PathRefused):
         return HTTPException(status_code=400, detail="The file path is not valid.")
-    if "PDF" in reason:
+    if isinstance(e, Unreadable) and e.pdf:
         return HTTPException(status_code=422, detail="This PDF could not be read.")
     return HTTPException(status_code=422, detail="This file could not be read.")
 
@@ -355,21 +358,21 @@ def _add_viewer_routes(
             raise HTTPException(status_code=400, detail="Only an answer has sources.")
         try:
             matches = core.attribute(message, body.selection, body.n)
-        except Exception as e:  # e.g. the embedding model cannot be loaded
-            log.warning("attribution failed: %s", type(e).__name__)
+        except EmbedderUnavailable as e:
+            log.warning("attribution: the embedding model cannot be loaded: %s", e)
             raise HTTPException(
                 status_code=503, detail="The embedding model is unavailable."
             ) from e
+        except Exception:  # a bug: the client gets a plain 500, the log gets the traceback
+            log.error("attribution failed", exc_info=True)
+            raise
         sources = {s.n: s for s in message.sources}
-        records: dict[int | None, FileRecord | None] = {}
+        changed: dict[int, bool] = {}
         out = []
         for match in matches:
             source = sources[match.n]
-            if source.file_id not in records:
-                records[source.file_id] = (
-                    core.store.get_file(source.file_id) if source.file_id is not None else None
-                )
-            record = records[source.file_id]
+            if match.n not in changed:
+                changed[match.n] = core.source_changed(source)
             out.append(
                 {
                     "n": match.n,
@@ -380,7 +383,7 @@ def _add_viewer_routes(
                     "file_id": source.file_id,
                     "file": source.rel_path,
                     "location_label": location_label(source.location),
-                    "changed": record is None or record.content_hash != source.file_hash,
+                    "changed": changed[match.n],
                 }
             )
         return {"matches": out}
@@ -407,7 +410,7 @@ def _add_viewer_routes(
             reply: dict = {
                 "file_id": record.id,
                 "kind": doc.kind,
-                "changed": record.content_hash != source.file_hash,
+                "changed": core.file_changed(record, path, source.file_hash),
                 "found": False,
             }
             if doc.kind == "pdf":
@@ -459,7 +462,7 @@ def _add_viewer_routes(
             _, path = core.file_path(file_id)  # from the store, never from the request
         except ViewerError as e:
             raise _viewer_error(e) from e
-        if path.suffix.lower() not in OPENABLE_SUFFIXES:  # never start a program
+        if path.suffix.lower() not in SUPPORTED:  # never start a program
             raise HTTPException(status_code=400, detail="This file type cannot be opened.")
         try:
             open_external(path)

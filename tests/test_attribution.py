@@ -461,3 +461,15 @@ def test_the_calibration_set_meets_the_accuracy_bar(bge_dir):
     rows = {r["id"]: r for r in report["rows"]}
     assert rows["en-wrong-rent"]["got"] == "partial"  # the misquoted number caps the label
     assert rows["en-rent-21000"]["got_n"] == 2
+
+
+def test_prepare_caches_every_window_without_embedding_a_selection():
+    embed = CountingEmbed()
+    a = attributor(embed)
+    msg = message(sources3())
+    a.prepare(msg)
+    assert sorted(t for batch in embed.batches for t in batch) == sorted([LEASE, PETS, PARKING])
+    calls = len(embed.batches)
+    a.attribute(msg, QUOTE)
+    assert len(embed.batches) == calls + 1  # only the selection
+    assert embed.embedded(LEASE) == 1
