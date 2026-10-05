@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, FileText, Minus, Plus, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, locateSource } from "./api";
-import { errorText } from "./apiErrors";
+import { errorText, viewerErrorText } from "./apiErrors";
 import Modal from "./Modal";
 import { type TranslationKey, useT } from "./i18n";
 import { cpToUtf16 } from "./offsets";
@@ -12,6 +12,8 @@ import type { Locate, Source, TextDoc, ViewerRequest } from "./types";
 /** The zoom steps of a PDF page, in percent. */
 export const ZOOM_STEPS = [50, 75, 100, 125, 150, 200];
 const DEFAULT_ZOOM = 100;
+/** How many rows of a text file are shown at once; each button adds this many. */
+export const TEXT_WINDOW = 2000;
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
@@ -69,6 +71,7 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
   // False once the core says that opening a file is not possible here (the dev server).
   const [canOpen, setCanOpen] = useState(true);
   const [openError, setOpenError] = useState<string | null>(null);
+  const title = useRef<HTMLHeadingElement>(null);
 
   const key = targetKey(target);
   useEffect(() => {
@@ -80,7 +83,7 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
         if (current) setResult({ key, located, error: null });
       })
       .catch((error: Error) => {
-        if (current) setResult({ key, located: null, error: errorText(error, t) });
+        if (current) setResult({ key, located: null, error: viewerErrorText(error, t) });
       });
     return () => {
       current = false;
@@ -108,6 +111,8 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
   function switchTo(source: Source) {
     if (source.file_id == null) return;
     setOpenError(null);
+    // The card that was clicked leaves the list: keep focus in the dialog, on its title.
+    title.current?.focus();
     setTarget({ n: source.n, fileId: source.file_id, file: source.file, start: null, end: null });
   }
 
@@ -129,7 +134,7 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
       <header className="viewer-header">
         <FileText size={22} className="viewer-icon" />
         <div className="viewer-title">
-          <h2 id="viewer-title" title={target.file}>
+          <h2 id="viewer-title" ref={title} tabIndex={-1} title={target.file}>
             {fileName(target.file)}
           </h2>
           {folder && <span title={folder}>{folder}</span>}
@@ -234,7 +239,7 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
               </ul>
             </section>
           )}
-          <p className="viewer-note">{t("viewer.note")}</p>
+          {located?.found && <p className="viewer-note">{t("viewer.note")}</p>}
         </div>
         <div className="viewer-stage">
           {openError && (
@@ -263,9 +268,7 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
           )}
           {state?.error && (
             <div className="chat-error" role="alert">
-              <span>
-                {t("viewer.failed")} {state.error}
-              </span>
+              <span>{state.error}</span>
             </div>
           )}
           {located && isPdf && (
@@ -323,6 +326,8 @@ function TextView({
   const [loaded, setLoaded] = useState<{ fileId: number; doc: TextDoc | null; error: string | null } | null>(
     null,
   );
+  // The rows shown once the user asked for more of them, for the passage it was asked at.
+  const [extent, setExtent] = useState<{ key: string; from: number; to: number } | null>(null);
   const firstHit = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -332,7 +337,7 @@ function TextView({
         if (current) setLoaded({ fileId, doc, error: null });
       })
       .catch((error: Error) => {
-        if (current) setLoaded({ fileId, doc: null, error: errorText(error, t) });
+        if (current) setLoaded({ fileId, doc: null, error: viewerErrorText(error, t) });
       });
     return () => {
       current = false;
@@ -358,18 +363,32 @@ function TextView({
   if (!doc) {
     return (
       <div className="chat-error" role="alert">
-        <span>
-          {t("viewer.failed")} {now.error}
-        </span>
+        <span>{now.error}</span>
       </div>
     );
   }
   const rows = rowsOf(doc, highlight);
-  const firstHitNumber = rows.find((row) => row.hit)?.number;
+  const firstHitAt = rows.findIndex((row) => row.hit);
+  const firstHitNumber = firstHitAt >= 0 ? rows[firstHitAt].number : undefined;
+  // A long file is shown as a window around the passage, which the buttons widen.
+  const extentKey = `${fileId}:${start}:${end}`;
+  const defaultFrom = Math.max(0, firstHitAt - TEXT_WINDOW / 2);
+  const from = extent?.key === extentKey ? extent.from : defaultFrom;
+  const to = extent?.key === extentKey ? extent.to : Math.min(rows.length, defaultFrom + TEXT_WINDOW);
+  const lines = doc.kind === "text";
   return (
     <>
       <div className="viewer-paper">
-        {rows.map((row) => (
+        {from > 0 && (
+          <button
+            type="button"
+            className="btn viewer-more"
+            onClick={() => setExtent({ key: extentKey, from: Math.max(0, from - TEXT_WINDOW), to })}
+          >
+            {t(lines ? "viewer.earlierLines" : "viewer.earlierParagraphs")}
+          </button>
+        )}
+        {rows.slice(from, to).map((row) => (
           <div
             key={row.number}
             ref={row.number === firstHitNumber ? firstHit : undefined}
@@ -381,6 +400,17 @@ function TextView({
             <span className="line-text">{row.text}</span>
           </div>
         ))}
+        {to < rows.length && (
+          <button
+            type="button"
+            className="btn viewer-more"
+            onClick={() =>
+              setExtent({ key: extentKey, from, to: Math.min(rows.length, to + TEXT_WINDOW) })
+            }
+          >
+            {t(lines ? "viewer.laterLines" : "viewer.laterParagraphs")}
+          </button>
+        )}
       </div>
       {doc.truncated && <p className="source-state">{t("viewer.truncated")}</p>}
     </>

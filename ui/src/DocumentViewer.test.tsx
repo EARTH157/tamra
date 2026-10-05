@@ -88,6 +88,15 @@ const viewer = (over: Partial<ViewerRequest> = {}) => (
 function image(): HTMLImageElement | null {
   return view?.container.ownerDocument.querySelector(".pdf-page img") ?? null;
 }
+/** The shown image finishes loading with the given width in pixels, as a browser would report it. */
+async function loadImage(naturalWidth: number): Promise<void> {
+  const img = image();
+  Object.defineProperty(img, "naturalWidth", { value: naturalWidth, configurable: true });
+  await act(async () => {
+    img?.dispatchEvent(new Event("load"));
+  });
+}
+const pageWidth = () => (document.querySelector(".pdf-page") as HTMLElement).style.width;
 function boxes(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>(".pdf-hit")];
 }
@@ -114,8 +123,10 @@ describe("DocumentViewer, PDF", () => {
     expect(second.style.width).toBe("32%");
     // The boxes carry no meaning for assistive technology: the left pane's text does.
     expect(boxes().every((box) => box.getAttribute("aria-hidden") === "true")).toBe(true);
-    // The first box is scrolled into view.
-    expect(scrolled).toContain(first);
+    // The page has no height before its image loads, so the first box is scrolled to only then.
+    expect(scrolled).toEqual([]);
+    await loadImage(595);
+    expect(scrolled).toEqual([first]);
   });
 
   it("asks for the page image with the token header", async () => {
@@ -132,12 +143,103 @@ describe("DocumentViewer, PDF", () => {
     window.devicePixelRatio = 2;
     mockFetch({ [locateUrl]: () => json(locatePdf), [pageRoute(2, 2)]: png });
     view = await mount(viewer());
-    const img = image();
-    Object.defineProperty(img, "naturalWidth", { value: 1190 });
-    await act(async () => {
-      img?.dispatchEvent(new Event("load"));
+    await loadImage(1190);
+    expect(pageWidth()).toBe("595px");
+  });
+
+  it("changes the displayed size with the zoom: the page's size at 100% times the zoom of its image", async () => {
+    mockFetch({
+      [locateUrl]: () => json(locatePdf),
+      [pageRoute(2)]: png,
+      [pageRoute(2, 1.5)]: png,
+      [pageRoute(2, 1.25)]: png,
+      [pageRoute(2, 0.75)]: png,
+      [pageRoute(2, 0.5)]: png,
     });
-    expect((document.querySelector(".pdf-page") as HTMLElement).style.width).toBe("595px");
+    view = await mount(viewer());
+    await loadImage(595);
+    expect(pageWidth()).toBe("595px");
+    await click(byLabel("Zoom in")); // 125
+    await click(byLabel("Zoom in")); // 150
+    expect(pageWidth()).toBe("892.5px");
+    await loadImage(892.5);
+    expect(pageWidth()).toBe("892.5px");
+    for (let i = 0; i < 4; i++) await click(byLabel("Zoom out")); // 125, 100, 75, 50
+    await loadImage(297.5);
+    expect(pageWidth()).toBe("297.5px");
+  });
+
+  it("keeps the size of the image on screen until the next one arrives", async () => {
+    const pending: Array<(response: Response) => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (!String(input).includes("/pages/")) return Promise.resolve(json(locatePdf));
+        return new Promise<Response>((resolve) => pending.push(resolve));
+      }),
+    );
+    view = await mount(viewer());
+    await act(async () => {
+      pending[0](png());
+    });
+    await settle();
+    await loadImage(595);
+    await click(byLabel("Zoom in"));
+    expect(pageWidth()).toBe("595px"); // the 100% image is still shown
+    await act(async () => {
+      pending[1](png());
+    });
+    await settle();
+    // The 125% image is on screen: 595 x 1.25, until it reports its own width.
+    expect(pageWidth()).toBe("743.75px");
+    await loadImage(743.75);
+    expect(pageWidth()).toBe("743.75px");
+    // Let every request finish, so no slot stays taken for the next test.
+    for (const resolve of pending) resolve(png());
+  });
+
+  it("sizes the page right where the render scale is capped at 3", async () => {
+    window.devicePixelRatio = 2;
+    mockFetch({
+      [locateUrl]: () => json(locatePdf),
+      [pageRoute(2, 2)]: png,
+      [pageRoute(2, 2.5)]: png,
+      [pageRoute(2, 3)]: png,
+    });
+    view = await mount(viewer());
+    await loadImage(1190); // 595 x 2
+    for (let i = 0; i < 2; i++) await click(byLabel("Zoom in")); // 125, 150 (scale 2.5, 3)
+    await loadImage(1785); // 595 x 3
+    expect(pageWidth()).toBe("892.5px");
+    await click(byLabel("Zoom in")); // 200: still scale 3, no new image, only a new size
+    expect(pageWidth()).toBe("1190px");
+  });
+
+  it("does not ask again for the same scale when a zoom step only changes the size", async () => {
+    window.devicePixelRatio = 2;
+    const calls = mockFetch({
+      [locateUrl]: () => json(locatePdf),
+      [pageRoute(2, 2)]: png,
+      [pageRoute(2, 2.5)]: png,
+      [pageRoute(2, 3)]: png,
+    });
+    view = await mount(viewer());
+    for (let i = 0; i < 3; i++) await click(byLabel("Zoom in")); // 125, 150, 200
+    expect(calls.map((c) => c.key).filter((key) => key.includes("scale=3"))).toHaveLength(1);
+  });
+
+  it("says when the passage is on the page but has no boxes to mark it", async () => {
+    mockFetch({
+      [locateUrl]: () => json({ ...locatePdf, rects: [] }),
+      [pageRoute(2)]: png,
+      [pageRoute(3)]: png,
+    });
+    view = await mount(viewer());
+    const notice = "The passage is on this page, but Tamra could not mark it.";
+    expect(document.body.textContent).toContain(notice);
+    expect(boxes()).toHaveLength(0);
+    await click(byLabel("Next page"));
+    expect(document.body.textContent).not.toContain(notice);
   });
 
   it("loads the next and the previous page, with the passage marked only on its own page", async () => {
@@ -268,6 +370,8 @@ describe("DocumentViewer, PDF", () => {
     expect(boxes()).toHaveLength(0);
     expect(document.body.textContent).toContain("Tamra could not find this passage in the current file.");
     expect(document.querySelector(".viewer-found")).toBeNull();
+    // Nothing is marked, so there is no "yellow marks the same passage" to say.
+    expect(document.querySelector(".viewer-note")).toBeNull();
   });
 
   it("warns that the document changed since the answer", async () => {
@@ -285,9 +389,7 @@ describe("DocumentViewer, PDF", () => {
       [pageRoute(2)]: () => json({ detail: "This PDF could not be read." }, 422),
     });
     view = await mount(viewer());
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
-      "Could not show this file. This PDF could not be read.",
-    );
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("This file could not be read.");
   });
 });
 
@@ -339,6 +441,8 @@ describe("DocumentViewer, left pane", () => {
       "GET /api/files/8/text",
     ]);
     expect(text("#viewer-title")).toBe("notes.txt");
+    // Focus is not lost with the card that was clicked.
+    expect(document.activeElement).toBe(document.getElementById("viewer-title"));
     expect(text(".viewer-found p")).toBe("Notice is 30 days.");
     expect(text(".viewer-where")).toBe("line 1");
     // The checked answer text belongs to the first passage only, and the first source is now a card.
@@ -441,14 +545,48 @@ describe("DocumentViewer, text files", () => {
     expect(document.body.textContent).toContain("This file is long. Only the start is shown.");
   });
 
+  it("shows a long file as a window around the passage that the buttons widen", async () => {
+    const long = Array.from({ length: 6000 }, (_, i) => `row ${i + 1}`);
+    mockFetch({
+      "GET /api/sources/4/2/locate?start=0&end=18": () =>
+        json({ file_id: 8, kind: "text", changed: false, found: true, start: 3000, end: 3001 }),
+      "GET /api/files/8/text": () => json({ kind: "text", lines: long }),
+    });
+    view = await mount(viewer(textRequest));
+    const numbers = () => [...document.querySelectorAll(".viewer-line .no")].map((n) => Number(n.textContent));
+    // 2,000 rows with the marked line in the middle; the line numbers are the file's own.
+    expect(numbers()).toHaveLength(2000);
+    expect(numbers()[0]).toBe(2000);
+    expect(numbers().at(-1)).toBe(3999);
+    expect(document.querySelector(".viewer-line.hit .no")?.textContent).toBe("3000");
+    await click(buttonByText(document.body, "Show earlier lines"));
+    expect(numbers()).toHaveLength(3999);
+    expect(numbers()[0]).toBe(1);
+    expect(buttonByText(document.body, "Show earlier lines")).toBeUndefined();
+    await click(buttonByText(document.body, "Show later lines"));
+    expect(numbers()).toHaveLength(5999); // one row is still left
+    await click(buttonByText(document.body, "Show later lines"));
+    expect(numbers()).toHaveLength(6000);
+    expect(numbers().at(-1)).toBe(6000);
+    expect(buttonByText(document.body, "Show later lines")).toBeUndefined();
+  });
+
+  it("shows a short file whole, with no buttons to widen it", async () => {
+    mockFetch({
+      "GET /api/sources/4/2/locate?start=0&end=18": () =>
+        json({ file_id: 8, kind: "text", changed: false, found: true, start: 1, end: 2 }),
+      "GET /api/files/8/text": () => json({ kind: "text", lines: ["a", "b"] }),
+    });
+    view = await mount(viewer(textRequest));
+    expect(document.querySelector(".viewer-more")).toBeNull();
+  });
+
   it("shows why a file cannot be read", async () => {
     mockFetch({
       "GET /api/sources/4/2/locate?start=0&end=18": () => json({ detail: "This file could not be read." }, 422),
     });
     view = await mount(viewer(textRequest));
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
-      "Could not show this file. This file could not be read.",
-    );
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("This file could not be read.");
     expect(document.querySelector(".viewer-line")).toBeNull();
   });
 });
@@ -523,9 +661,26 @@ describe("DocumentViewer, header", () => {
   it("shows why the file cannot be shown when it is gone", async () => {
     mockFetch({ [locateUrl]: () => json({ detail: "File not found." }, 404) });
     view = await mount(viewer());
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
-      "Could not show this file. File not found.",
-    );
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("This file was moved or deleted.");
     expect(byLabel("Next page")).toBeNull();
+  });
+
+  it("words the other failures in its own language, and keeps the core's text only for the unknown", async () => {
+    mockFetch({ [locateUrl]: () => json({ detail: "The file path is not valid." }, 400) });
+    view = await mount(viewer());
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("This file cannot be shown.");
+    await view.unmount();
+    mockFetch({ [locateUrl]: () => json({ detail: "boom" }, 500) });
+    view = await mount(viewer());
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("Could not show this file. boom");
+    await view.unmount();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    view = await mount(viewer());
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("Tamra could not reach its core.");
   });
 });

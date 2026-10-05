@@ -1,5 +1,7 @@
+import { TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { fetchBlob } from "./api";
+import { viewerErrorText } from "./apiErrors";
 import { useT } from "./i18n";
 
 /** The most page images asked for at once: each one holds a worker of the core while it renders. */
@@ -60,7 +62,8 @@ export function pageScale(zoom: number, pixelRatio: number): number {
 
 const percent = (fraction: number) => Number((fraction * 100).toFixed(3));
 
-type Shown = { url: string; page: number; scale: number };
+/** A loaded image: the render scale and the zoom it was asked for, which together give its CSS size. */
+type Shown = { url: string; page: number; scale: number; zoom: number };
 
 type Props = {
   fileId: number;
@@ -84,9 +87,16 @@ export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) 
   const scale = pageScale(zoom, window.devicePixelRatio);
   const key = `${fileId}:${page}:${scale}`;
   const [shown, setShown] = useState<Shown | null>(null);
-  const [failed, setFailed] = useState<{ key: string; message: string } | null>(null);
-  // The CSS width of the page, known once its image has loaded: the image's pixels over its scale.
-  const [width, setWidth] = useState<number | null>(null);
+  const [failed, setFailed] = useState<{ key: string; error: Error } | null>(null);
+  // The page's CSS width at 100%, known once an image has loaded: its pixels over its scale. The page
+  // is shown at that times the zoom of the image on screen, so zooming changes the size, and until the
+  // next image arrives the size stays the one of the image shown.
+  const [fullWidth, setFullWidth] = useState<number | null>(null);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  // The image that has loaded and been sized; the passage is scrolled to only then, as before that the
+  // page has no height.
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const urlRef = useRef<string | null>(null);
   const firstBox = useRef<HTMLDivElement>(null);
 
@@ -98,14 +108,19 @@ export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) 
         const url = URL.createObjectURL(blob);
         const previous = urlRef.current;
         urlRef.current = url;
-        setShown({ url, page, scale });
+        setShown({ url, page, scale, zoom: zoomRef.current });
         if (previous) URL.revokeObjectURL(previous);
       })
       .catch((error: Error) => {
-        if (!controller.signal.aborted) setFailed({ key, message: error.message });
+        if (!controller.signal.aborted) setFailed({ key, error });
       });
     return () => controller.abort();
   }, [fileId, page, scale, key]);
+
+  // A zoom that renders at the same scale (the cap) needs no new image, only a new size.
+  useEffect(() => {
+    setShown((s) => (s && s.page === page && s.scale === scale && s.zoom !== zoom ? { ...s, zoom } : s));
+  }, [zoom, page, scale]);
 
   useEffect(
     () => () => {
@@ -117,21 +132,28 @@ export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) 
 
   const marks = shown && highlight && highlight.page === shown.page ? highlight.rects : [];
   const markKey = shown ? `${shown.url}:${JSON.stringify(marks)}` : "";
-  // Scroll to the first box when the marks appear (a new image or a new passage), not on every render.
+  const width = fullWidth !== null && shown ? Math.round(fullWidth * shown.zoom) / 100 : null;
+  const sized = !!shown && loadedUrl === shown.url;
+  // Scroll to the first box when the marks appear on a loaded image (a new image or a new passage).
   useEffect(() => {
-    if (marks.length > 0) firstBox.current?.scrollIntoView?.({ block: "center" });
-  }, [markKey]);
+    if (sized && marks.length > 0) firstBox.current?.scrollIntoView?.({ block: "center" });
+  }, [markKey, sized]);
 
   const current = shown?.page === page && shown.scale === scale;
-  const error = failed?.key === key ? failed.message : null;
+  const error = failed?.key === key ? failed.error : null;
+  const unmarked = !!shown && !!highlight && highlight.page === shown.page && highlight.rects.length === 0;
 
   return (
     <>
       {error && (
         <div className="chat-error" role="alert">
-          <span>
-            {t("viewer.failed")} {error}
-          </span>
+          <span>{viewerErrorText(error, t)}</span>
+        </div>
+      )}
+      {unmarked && (
+        <div className="source-warning" role="status">
+          <TriangleAlert size={16} />
+          <span>{t("viewer.noMarks")}</span>
         </div>
       )}
       {!current && !error && (
@@ -149,7 +171,8 @@ export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) 
             alt={t("viewer.pageAlt", { page: shown.page, file })}
             onLoad={(event) => {
               const natural = event.currentTarget.naturalWidth;
-              if (natural > 0) setWidth(natural / shown.scale);
+              if (natural > 0) setFullWidth(natural / shown.scale);
+              setLoadedUrl(shown.url);
             }}
           />
           {marks.map(([x0, y0, x1, y1], i) => (

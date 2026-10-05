@@ -2733,3 +2733,12 @@ svg.lucide {
     grid-template-columns: 260px minmax(0, 1fr);
   }
 }
+
+.viewer-title h2:focus {
+  outline: none;
+}
+
+.viewer-more {
+  display: flex;
+  margin: 8px auto;
+}
