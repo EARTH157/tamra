@@ -5,6 +5,7 @@ import { api, attribute, streamAnswer } from "./api";
 import { errorText } from "./apiErrors";
 import CheckSourceButton from "./CheckSourceButton";
 import Composer from "./Composer";
+import DocumentViewer from "./DocumentViewer";
 import { useT } from "./i18n";
 import { canThink, useModels } from "./models";
 import { isNotFound } from "./notFound";
@@ -97,6 +98,7 @@ export default function ChatView({
   const [thoughts, setThoughts] = useState<Record<number, Thought>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
+  const [viewer, setViewer] = useState<ViewerRequest | null>(null);
   // A selection being checked against the sources of its answer. It and `opened` are never both set.
   const [check, setCheck] = useState<Check | null>(null);
   const checkSeq = useRef(0); // a check that was replaced or closed is ignored when it answers
@@ -118,6 +120,7 @@ export default function ChatView({
     setOpened(null);
     checkSeq.current++;
     setCheck(null);
+    setViewer(null);
     setNotice(null);
     setThoughts({});
     setDetail(null);
@@ -265,8 +268,10 @@ export default function ChatView({
     setOpened({ owner, source });
   }
 
-  // The "Open file" button of the panel. The document viewer (the next task) takes it over.
-  function openViewer(_request: ViewerRequest) {}
+  // The "Open file" button of the panel: the document viewer opens over the chat.
+  function openViewer(request: ViewerRequest) {
+    setViewer(request);
+  }
 
   function stop() {
     api("POST", "/api/answer/cancel").catch((e: Error) => setNotice({ message: e.message }));
@@ -439,6 +444,13 @@ export default function ChatView({
           onOpenSource={(source) => panelOwner !== null && openSource(panelOwner, source)}
           onOpenViewer={openViewer}
           onClose={closePanel}
+        />
+      )}
+      {viewer && (
+        <DocumentViewer
+          request={viewer}
+          sources={messages.find((message) => message.id === viewer.messageId)?.sources ?? []}
+          onClose={() => setViewer(null)}
         />
       )}
     </div>

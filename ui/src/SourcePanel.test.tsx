@@ -220,6 +220,7 @@ describe("SourcePanel", () => {
       file: "docs/lease.pdf",
       start,
       end,
+      selection: "The lease runs three years",
     });
   });
 
@@ -237,6 +238,7 @@ describe("SourcePanel", () => {
       file: "notes.txt",
       start: null,
       end: null,
+      selection: null,
     });
   });
 

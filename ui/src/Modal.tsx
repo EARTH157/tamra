@@ -4,11 +4,13 @@ type Props = {
   labelledBy: string;
   onClose: () => void;
   small?: boolean;
+  /** Most of the window (the document viewer). */
+  large?: boolean;
   children: ReactNode;
 };
 
 /** A centered dialog over a dimmed backdrop. Esc (wherever focus is) or a backdrop click closes it. */
-export default function Modal({ labelledBy, onClose, small, children }: Props) {
+export default function Modal({ labelledBy, onClose, small, large, children }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   useEffect(() => {
@@ -44,7 +46,7 @@ export default function Modal({ labelledBy, onClose, small, children }: Props) {
     >
       <div
         ref={box}
-        className={small ? "dialog small" : "dialog"}
+        className={small ? "dialog small" : large ? "dialog large" : "dialog"}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}

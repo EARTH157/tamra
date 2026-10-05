@@ -103,9 +103,25 @@ export default function SourcePanel({
   function openViewer() {
     if (!canOpen || messageId === null || fileId === null || fileId === undefined || !title) return;
     if (match) {
-      onOpenViewer({ messageId, n: match.n, fileId, file: title, start: match.start, end: match.end });
+      onOpenViewer({
+        messageId,
+        n: match.n,
+        fileId,
+        file: title,
+        start: match.start,
+        end: match.end,
+        selection: check?.selection ?? null,
+      });
     } else if (source) {
-      onOpenViewer({ messageId, n: source.n, fileId, file: title, start: null, end: null });
+      onOpenViewer({
+        messageId,
+        n: source.n,
+        fileId,
+        file: title,
+        start: null,
+        end: null,
+        selection: null,
+      });
     }
   }
 

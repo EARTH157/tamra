@@ -380,3 +380,31 @@ describe("checking a source from an answer", () => {
     );
   });
 });
+
+describe("opening the document viewer from the source panel", () => {
+  it("opens the file at the checked passage over the chat, and Esc closes it", async () => {
+    calls = mockFetch({
+      "GET /api/chats/5": () =>
+        json({ ...chat, messages: [message(1, "user", "Leave?"), message(2, "assistant", content, sources)] }),
+      "POST /api/attribution": () => json({ matches: [match(2, sources[1].text)] }),
+      "GET /api/sources/2/2/locate?start=0&end=29": () =>
+        json({ file_id: 4, kind: "text", changed: false, found: true, start: 3, end: 4 }),
+      "GET /api/files/4/text": () => json({ kind: "text", lines: ["Terms", "Notice", "30 days"] }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    await click(answerText().querySelectorAll("button.cite")[1]);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await click(buttonByText(view.container, "Open file"));
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.querySelector("h2")?.textContent).toBe("notes.txt");
+    // The checked sentence and the passage of the file are side by side.
+    expect(dialog.querySelector(".viewer-selected")?.textContent).toBe("The notice period is 30 days");
+    expect(dialog.querySelector(".viewer-found p")?.textContent).toBe(sources[1].text);
+    expect(dialog.querySelector(".viewer-line.hit")?.textContent).toContain("30 days");
+    // The answer's other source is offered.
+    expect(dialog.querySelector(".viewer-others")?.textContent).toContain("leave.pdf");
+    await press(document.body, "Escape");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(view.container.querySelector(".source-panel")).not.toBeNull();
+  });
+});

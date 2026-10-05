@@ -80,6 +80,8 @@ describe("theme tokens", () => {
       expect(t["--highlight"], "highlight token").toMatch(/^#[0-9a-f]{6}$/);
       expect(t["--highlight-edge"], "edge token").toMatch(/^#[0-9a-f]{6}$/);
       expect(contrast(t["--text"], t["--highlight"])).toBeGreaterThanOrEqual(MIN);
+      // The place line under the passage in the document viewer.
+      expect(contrast(t["--warning-text"], t["--highlight"])).toBeGreaterThanOrEqual(MIN);
     });
   }
 

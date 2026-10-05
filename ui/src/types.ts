@@ -76,7 +76,18 @@ export type ViewerRequest = {
   /** Snapshot offsets of the passage; null for the whole snapshot. */
   start: number | null;
   end: number | null;
+  /** The answer text that was checked (the selection, or the sentence before a chip); null when none was. */
+  selection: string | null;
 };
+
+/** GET /api/files/{id}/text: a text or Markdown file by line, or a DOCX by paragraph. */
+export type TextDoc =
+  | { kind: "text"; lines: string[]; truncated?: boolean }
+  | {
+      kind: "docx";
+      paragraphs: { index: number; text: string; heading: boolean }[];
+      truncated?: boolean;
+    };
 
 export type Message = {
   id: number;

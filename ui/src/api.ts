@@ -102,6 +102,17 @@ export async function streamAnswer(
   feed(decoder.decode());
 }
 
+/** GET a binary response (a page image) with the token. The call can be abandoned with `signal`. */
+export async function fetchBlob(
+  path: string,
+  signal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Blob> {
+  const response = await fetchImpl(path, { headers: { "X-Tamra-Token": token }, signal });
+  if (!response.ok) throw await errorOf(response);
+  return response.blob();
+}
+
 /** Find where a selected part of a saved answer comes from, among that answer's own sources. */
 export function attribute(
   messageId: number,

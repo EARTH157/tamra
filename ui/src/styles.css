@@ -2475,3 +2475,261 @@ svg.lucide {
   border-radius: var(--radius-lg);
   background: var(--bg);
 }
+
+/* Document viewer ------------------------------------------------------------------------- */
+
+.dialog.large {
+  display: flex;
+  flex-direction: column;
+  width: 90vw;
+  max-width: none;
+  height: 90vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.viewer-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  height: 65px;
+  padding: 0 20px 0 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-icon {
+  flex: none;
+  color: var(--primary-ink);
+}
+
+.viewer-title {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.viewer-title h2 {
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-title span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-control {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 36px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.viewer-control .icon-button {
+  color: var(--text);
+}
+
+.viewer-readout {
+  min-width: 56px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.viewer-unavailable {
+  flex: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.viewer-header > .btn {
+  flex: none;
+}
+
+.viewer-body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 360px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.viewer-left {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 20px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.viewer-heading {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.viewer-selected,
+.viewer-found {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--highlight);
+  color: var(--text);
+  line-height: 26px;
+  overflow-wrap: anywhere;
+}
+
+.viewer-found {
+  box-shadow: inset 3px 0 0 var(--highlight-edge);
+}
+
+.viewer-found p {
+  max-height: 220px;
+  margin: 0;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.viewer-where {
+  display: block;
+  margin-top: 4px;
+  color: var(--warning-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.viewer-others {
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.viewer-others .source-cards {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  margin: 0;
+}
+
+.viewer-others .source-card {
+  width: 100%;
+  max-width: none;
+}
+
+.viewer-note {
+  margin: auto 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.viewer-stage {
+  min-width: 0;
+  padding: 24px;
+  overflow: auto;
+  background: var(--sidebar);
+}
+
+.viewer-stage > .source-warning,
+.viewer-stage > .chat-error {
+  max-width: 660px;
+  margin: 0 auto 14px;
+}
+
+.viewer-stage > .source-state {
+  text-align: center;
+}
+
+.pdf-page {
+  position: relative;
+  margin: 0 auto;
+  box-shadow: var(--shadow-menu);
+}
+
+.pdf-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.pdf-hit {
+  position: absolute;
+  background: var(--highlight);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
+/* The page image is white in either theme, and a multiplied dark highlight would hide its text. */
+:root[data-theme="dark"] .pdf-hit {
+  background: var(--highlight-edge);
+  mix-blend-mode: normal;
+  opacity: 0.4;
+}
+
+.viewer-paper {
+  max-width: 660px;
+  margin: 0 auto;
+  padding: 20px 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: var(--paper-size);
+}
+
+.viewer-line {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  min-height: 28px;
+  padding-right: 24px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+  line-height: 28px;
+}
+
+.viewer-line .no {
+  padding-right: 18px;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: right;
+  user-select: none;
+}
+
+.viewer-line .line-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.viewer-line.heading .line-text {
+  font-weight: 600;
+}
+
+.viewer-line.hit {
+  background: var(--highlight);
+  box-shadow: inset 3px 0 0 var(--highlight-edge);
+}
+
+.viewer-line.hit .no {
+  color: var(--warning-text);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .viewer-body {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+}
