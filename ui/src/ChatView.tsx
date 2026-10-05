@@ -2,13 +2,14 @@ import { BookOpen, FileText, Info, Lightbulb, SearchX, X } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import AnswerText, { type Highlight } from "./AnswerText";
 import { api, attribute, streamAnswer } from "./api";
-import { errorText } from "./apiErrors";
+import { attributionErrorText, errorText } from "./apiErrors";
 import CheckSourceButton from "./CheckSourceButton";
 import Composer from "./Composer";
 import DocumentViewer from "./DocumentViewer";
 import { useT } from "./i18n";
 import { canThink, useModels } from "./models";
 import { isNotFound } from "./notFound";
+import { utf16ToCp } from "./offsets";
 import { MIN_SELECTION, type Selected, sentenceBefore } from "./selection";
 import { useSettings } from "./settings";
 import SourcePanel, { type Check, fileName, folderOf, sourceLabel } from "./SourcePanel";
@@ -252,12 +253,15 @@ export default function ChatView({
       index: 0,
       error: null,
     });
-    attribute(messageId, selected.text, n)
+    // The core counts characters as Python does; the selection's offset is a UTF-16 index.
+    const content = detail?.messages.find((m) => m.id === messageId)?.content;
+    const start = content === undefined ? undefined : utf16ToCp(content, selected.start);
+    attribute(messageId, selected.text, n, start)
       .then((result) =>
         setCheck((c) => (c?.id === id ? { ...c, status: "ready", matches: result.matches } : c)),
       )
       .catch((e: Error) =>
-        setCheck((c) => (c?.id === id ? { ...c, status: "error", error: errorText(e, t) } : c)),
+        setCheck((c) => (c?.id === id ? { ...c, status: "error", error: attributionErrorText(e, t) } : c)),
       );
   }
 

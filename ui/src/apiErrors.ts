@@ -20,13 +20,30 @@ export function errorText(error: Error, t: Translate): string {
 }
 
 /**
+ * The text to show when checking a selection failed: the search model is unavailable (503), the
+ * answer is no longer saved (404), or the core could not be reached; anything else is worded as
+ * for any other call.
+ */
+export function attributionErrorText(error: Error, t: Translate): string {
+  if (!(error instanceof ApiError)) return t("viewer.err.network");
+  if (error.status === 503) return t("check.err.model");
+  if (error.status === 404) return t("check.err.gone");
+  return errorText(error, t);
+}
+
+/**
  * The text to show when the viewer cannot show a file or a page: a sentence of our own for the
  * statuses the viewer routes answer with, one for a call that never got an answer, and the core's
  * own words only for anything else.
  */
 export function viewerErrorText(error: Error, t: Translate): string {
   if (!(error instanceof ApiError)) return t("viewer.err.network");
-  if (error.status === 404) return t("viewer.err.notFound");
+  if (error.status === 404) {
+    // The viewer routes word their 404s differently: only an unknown file is "moved or deleted".
+    if (error.message === "Page not found.") return t("viewer.err.page");
+    if (error.message === "Source not found.") return t("check.err.gone");
+    return t("viewer.err.notFound");
+  }
   if (error.status === 422) return t("viewer.err.unreadable");
   if (error.status === 400) return t("viewer.err.cannotShow");
   return `${t("viewer.failed")} ${error.message}`;

@@ -34,15 +34,20 @@ PARTIAL = 0.57
 
 Label = Literal["strong", "partial"]
 
-_MARKER = re.compile(r"\[(\d+)\]")
-_MARKER_WITH_SPACE = re.compile(r"\s*\[\d+\]")
+# One citation marker: [1], [12] or a group such as [1, 2]. The UI (ui/src/citations.ts) reads the
+# same form, so a marker the chips show is also one the core strips and credits.
+_MARKER_GROUP = r"\[\d{1,3}(?:\s*,\s*\d{1,3})*\]"
+_MARKER = re.compile(_MARKER_GROUP)
+_MARKER_WITH_SPACE = re.compile(r"\s*" + _MARKER_GROUP)
+_DIGITS = re.compile(r"\d+")
 _NUMBER = re.compile(r"\d+(?:[.,:]\d+)*")
 _THOUSANDS = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?")
 # A sentence ends at . ! ? (when not inside a number such as 1.5), at 。！？ or at a newline;
 # [n] markers written right after the end still belong to that sentence. Thai has no full
 # stop, so a group of markers followed by whitespace also ends a sentence.
 _SENTENCE_END = re.compile(
-    r"(?:[.!?]+(?=[\s\[]|$)|[。！？]+|\n)(?:[ \t]*\[\d+\])*|(?:[ \t]*\[\d+\])+(?=\s|$)"
+    r"(?:[.!?]+(?=[\s\[]|$)|[。！？]+|\n)(?:[ \t]*" + _MARKER_GROUP + r")*"
+    r"|(?:[ \t]*" + _MARKER_GROUP + r")+(?=\s|$)"
 )
 
 
@@ -122,17 +127,32 @@ def _snap_to_words(text: str, start: int, end: int, reach: int = 24) -> tuple[in
     return start, end
 
 
-def cited_in(content: str, selection: str) -> set[int]:
-    """The [n] markers inside the selection, or inside the sentence(s) of content that hold it."""
-    cited = {int(n) for n in _MARKER.findall(selection)}
-    position = content.find(selection) if selection else -1
+def _marker_numbers(text: str) -> set[int]:
+    """Every source number named by the markers in the text, so "[1, 2]" gives 1 and 2."""
+    return {int(n) for group in _MARKER.findall(text) for n in _DIGITS.findall(group)}
+
+
+def cited_in(content: str, selection: str, start: int | None = None) -> set[int]:
+    """The [n] markers inside the selection, or inside the sentence(s) of content that hold it.
+
+    start: where the selection begins in content, when the caller knows (a code-point offset).
+    It decides which occurrence of a repeated sentence is meant; it is used only if the content
+    really holds the selection there, otherwise the first occurrence is taken.
+    """
+    cited = _marker_numbers(selection)
+    if not selection:
+        return cited
+    if start is not None and 0 <= start and content[start : start + len(selection)] == selection:
+        position = start
+    else:
+        position = content.find(selection)
     if position < 0:
         return cited
-    start, end = position, position + len(selection)
+    first, last = position, position + len(selection)
     bounds = [0, *(m.end() for m in _SENTENCE_END.finditer(content)), len(content)]
-    touched = [(a, b) for a, b in zip(bounds, bounds[1:], strict=False) if a < end and b > start]
+    touched = [(a, b) for a, b in zip(bounds, bounds[1:], strict=False) if a < last and b > first]
     if touched:
-        cited.update(int(n) for n in _MARKER.findall(content[touched[0][0] : touched[-1][1]]))
+        cited.update(_marker_numbers(content[touched[0][0] : touched[-1][1]]))
     return cited
 
 
@@ -166,18 +186,23 @@ class Attributor:
         self._windows(message.id, list(message.sources))
 
     def attribute(
-        self, message: MessageRecord, selection: str, only: int | None = None
+        self,
+        message: MessageRecord,
+        selection: str,
+        only: int | None = None,
+        start: int | None = None,
     ) -> list[Match]:
         """Up to three matches; empty means no clear source was found.
 
         Sources the answer cited for the selection (spec §7.2) come first, then best score first.
 
         only: consider just that source (an [n] chip was clicked).
+        start: the selection's offset in message.content, in code points (see cited_in).
         """
         selection = selection.strip()
         candidates = [s for s in message.sources if only is None or s.n == only]
         # The markers only say which sources the answer cited; they are not part of the claim.
-        cited = cited_in(message.content, selection)
+        cited = cited_in(message.content, selection, start)
         # Remove each marker with the space before it, so "allowed [2]." embeds as "allowed.".
         query_text = " ".join(_MARKER_WITH_SPACE.sub("", selection).split())
         if not query_text or not candidates:

@@ -21,6 +21,17 @@ describe("splitCitations", () => {
     ]);
   });
 
+  it("reads the same marker grammar as the core: up to three digits, groups with spaces", () => {
+    expect(splitCitations("A [100,101]", 101)).toEqual([
+      { kind: "text", text: "A ", start: 0, end: 2 },
+      { kind: "cite", n: 100, start: 2, end: 11 },
+      { kind: "cite", n: 101, start: 2, end: 11 },
+    ]);
+    expect(splitCitations("A [1000]", 2000)).toEqual([
+      { kind: "text", text: "A [1000]", start: 0, end: 8 },
+    ]);
+  });
+
   it("leaves numbers without a source as text", () => {
     expect(splitCitations("See [7] and [0].", 4)).toEqual([
       { kind: "text", text: "See [7] and [0].", start: 0, end: 16 },

@@ -239,6 +239,65 @@ def test_an_unavailable_embedder_is_a_503_with_a_fixed_message(tmp_path):
         core.shutdown()
 
 
+TEXT_AT_1 = {"kind": "text", "line_start": 1, "line_end": 1}
+
+
+def test_an_unavailable_tokenizer_is_a_503_with_a_fixed_message(tmp_path):
+    folder = tmp_path / "docs"
+    folder.mkdir()
+
+    def no_tokenizer():
+        raise FileNotFoundError(r"C:\secret\path	okenizer.json")
+
+    core = make_core(tmp_path, token_spans_factory=no_tokenizer)
+    try:
+        env = Env(core, folder)
+        (folder / "a.txt").write_text(LEASE, encoding="utf-8")
+        file_id = env.add_file("a.txt")
+        message_id = env.answer(
+            "x [1]",
+            [source(1, file_id, "a.txt", LEASE, {"kind": "text", "line_start": 1, "line_end": 1})],
+        )
+        response = attribute(client_for(env), message_id=message_id, selection=LEASE)
+        assert response.status_code == 503
+        assert "secret" not in response.text
+    finally:
+        core.shutdown()
+
+
+def test_a_repeated_sentence_credits_the_occurrence_at_start(env, client, txt):
+    sentence = "Fees are charged"
+    content = f"{sentence} [1]. Then something else. {sentence} [2]."
+    twins = [
+        source(1, txt["file_id"], "notes.txt", "Fees are charged monthly.", TEXT_AT_1),
+        source(2, txt["file_id"], "notes.txt", "Fees are charged weekly.", TEXT_AT_1),
+    ]
+    message_id = env.answer(content, twins)
+    first = attribute(client, message_id=message_id, selection=sentence).json()["matches"]
+    at_first = attribute(client, message_id=message_id, selection=sentence, start=0)
+    second_start = content.rfind(sentence)
+    at_second = attribute(client, message_id=message_id, selection=sentence, start=second_start)
+    assert first[0]["n"] == at_first.json()["matches"][0]["n"] == 1
+    assert at_second.json()["matches"][0]["n"] == 2
+    # a start that does not point at the selection is ignored, and a negative one is refused
+    wrong = attribute(client, message_id=message_id, selection=sentence, start=7)
+    assert wrong.json()["matches"][0]["n"] == 1
+    assert attribute(client, message_id=message_id, selection=sentence, start=-1).status_code == 422
+
+
+def test_a_start_counts_code_points_not_utf16_units(env, client, txt):
+    sentence = "Fees are charged"
+    content = f"😀 {sentence} [1]. 😀 {sentence} [2]."
+    twins = [
+        source(1, txt["file_id"], "notes.txt", "Fees are charged monthly.", TEXT_AT_1),
+        source(2, txt["file_id"], "notes.txt", "Fees are charged weekly.", TEXT_AT_1),
+    ]
+    message_id = env.answer(content, twins)
+    start = content.rfind(sentence)  # a Python (code point) index
+    matches = attribute(client, message_id=message_id, selection=sentence, start=start)
+    assert matches.json()["matches"][0]["n"] == 2
+
+
 # --- locate ---
 
 
@@ -401,6 +460,39 @@ def test_a_broken_docx_in_a_folder_named_pdfs_is_not_called_a_pdf(tmp_path):
         core.shutdown()
 
 
+@pytest.mark.parametrize("name", ["locked.txt", "locked.pdf"])
+def test_an_os_error_while_parsing_is_a_422_not_a_500(env, client, monkeypatch, name):
+    import tamra.core as core_module
+
+    (env.folder / name).write_bytes(b"x")
+    file_id = env.add_file(name)
+    message_id = env.answer("x [1]", [source(1, file_id, name, LEASE, TEXT_AT_1)])
+
+    def denied(path):
+        raise PermissionError(r"C:\secret\locked: access denied")
+
+    monkeypatch.setattr(core_module, "parse_file", denied)
+    response = locate(client, message_id, 1)
+    assert response.status_code == 422
+    kind = "PDF" if name.endswith(".pdf") else "file"
+    assert response.json()["detail"] == f"This {kind} could not be read."
+    assert "secret" not in response.text
+
+
+def test_a_file_removed_during_parsing_is_a_404(env, client, monkeypatch):
+    import tamra.core as core_module
+
+    (env.folder / "gone.txt").write_text("x", encoding="utf-8")
+    file_id = env.add_file("gone.txt")
+
+    def vanished(path):
+        raise FileNotFoundError(str(path))
+
+    monkeypatch.setattr(core_module, "parse_file", vanished)
+    response = client.get(f"/api/files/{file_id}/text", headers=AUTH)
+    assert response.status_code == 404 and response.json()["detail"] == "File not found."
+
+
 def test_a_missing_page_says_page_not_found(client, pdf):
     assert page(client, pdf, 9).json()["detail"] == "Page not found."
 
@@ -430,7 +522,7 @@ def test_a_malformed_location_hint_does_not_break_locate(env, client):
 
 
 def test_other_attribution_failures_are_a_500_and_logged_with_a_traceback(env, txt, caplog):
-    def boom(*args):
+    def boom(*args, **kwargs):
         raise ValueError("a bug")
 
     env.core.attribute = boom

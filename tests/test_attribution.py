@@ -187,6 +187,29 @@ def test_a_thai_marker_followed_by_a_space_ends_the_sentence():
     assert cited_in(content, "ที่พักคืนละ 1,500 บาท") == {3}
 
 
+def test_a_marker_group_credits_every_source_in_it():
+    content = "Cats are allowed [1, 2]. Dogs are not [3 ,4]."
+    assert cited_in(content, "Cats are allowed") == {1, 2}
+    assert cited_in(content, "Dogs are not") == {3, 4}
+    assert cited_in(content, "allowed [1, 2]") == {1, 2}
+
+
+def test_a_thai_marker_group_followed_by_a_space_ends_the_sentence():
+    content = "ลาพักร้อนได้ 12 วัน [1, 2] ส่วนลาป่วยได้ไม่เกิน 30 วัน [3] และที่พัก"
+    assert cited_in(content, "ลาพักร้อนได้ 12 วัน") == {1, 2}
+    assert cited_in(content, "ลาป่วยได้ไม่เกิน 30 วัน") == {3}
+
+
+def test_start_picks_the_occurrence_of_a_repeated_sentence():
+    content = "Cats are allowed [1]. Dogs are not. Cats are allowed [2]."
+    assert cited_in(content, "Cats are allowed") == {1}  # the first occurrence by default
+    assert cited_in(content, "Cats are allowed", content.rfind("Cats")) == {2}
+    # an offset that does not point at the selection falls back to the first occurrence
+    assert cited_in(content, "Cats are allowed", 5) == {1}
+    assert cited_in(content, "Cats are allowed", 9999) == {1}
+    assert cited_in(content, "Cats are allowed", -3) == {1}
+
+
 def test_cited_in_with_no_marker_or_unknown_text_is_empty():
     assert cited_in("No markers here.", "No markers") == set()
     assert cited_in("Rent is due [1].", "something the answer never said") == set()
@@ -284,6 +307,42 @@ def test_citation_markers_in_the_selection_are_not_part_of_the_claim():
     assert [(m.n, m.label) for m in marked] == [(1, "strong")]
     assert marked[0].score == pytest.approx(plain[0].score)
     assert attributor().attribute(msg, "[1]") == []
+
+
+def test_a_marker_group_in_the_selection_is_stripped_and_cites_both_sources():
+    text = "Fees are charged monthly."
+    twins = [source(1, text), source(2, "Parking is on level B2 of the building.")]
+    msg = message(twins)
+    plain = attributor().attribute(msg, text)
+    for marked_text in (
+        text + " [1, 2]",
+        "Fees are charged [1,2] monthly.",
+        text[:-1] + " [1, 2].",
+    ):
+        marked = attributor().attribute(msg, marked_text)
+        assert marked[0].score == pytest.approx(plain[0].score)
+    # no digit of the group reaches the number check: "2" would otherwise be a number
+    # that no source has, which caps the label at partial
+    marked = attributor().attribute(msg, text + " [1, 2]")
+    assert [(m.n, m.label) for m in marked] == [(1, "strong")]
+    # both numbers are credited, so source 2 is the cited one even though it matches worse
+    both = attributor().attribute(
+        message([source(1, text), source(2, "Fees are charged weekly.")]),
+        "Fees are charged monthly [1, 2]",
+    )
+    assert {m.n for m in both} == {1, 2}
+    assert both[0].n == 1
+
+
+def test_a_repeated_sentence_credits_the_chosen_occurrence():
+    twins = [source(1, "Fees are charged monthly."), source(2, "Fees are charged weekly.")]
+    content = "Fees are charged [1]. Rent is due. Fees are charged [2]."
+    second = content.rfind("Fees")
+    msg = message(twins, content=content)
+    first_pick = attributor().attribute(msg, "Fees are charged")
+    second_pick = attributor().attribute(msg, "Fees are charged", start=second)
+    assert first_pick[0].n == 1
+    assert second_pick[0].n == 2
 
 
 def test_a_marker_before_punctuation_leaves_no_stray_space():

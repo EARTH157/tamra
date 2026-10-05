@@ -118,11 +118,13 @@ export function attribute(
   messageId: number,
   selection: string,
   n: number | null,
+  start?: number,
 ): Promise<AttributionResult> {
   return api<AttributionResult>("POST", "/api/attribution", {
     message_id: messageId,
     selection,
     ...(n === null ? {} : { n }),
+    ...(start === undefined ? {} : { start }),
   });
 }
 

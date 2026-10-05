@@ -74,10 +74,10 @@ const match = (n: number, text: string) => ({
 let calls: Call[] = [];
 
 /** A chat with one saved answer; attribution answers with `attribution`. */
-async function open(attribution: () => Response) {
+async function open(attribution: () => Response, text = content) {
   calls = mockFetch({
     "GET /api/chats/5": () =>
-      json({ ...chat, messages: [message(1, "user", "Leave?"), message(2, "assistant", content, sources)] }),
+      json({ ...chat, messages: [message(1, "user", "Leave?"), message(2, "assistant", text, sources)] }),
     "POST /api/attribution": attribution,
     "GET /api/sources/2/1/locate?start=0&end=33": () => json({ detail: "File not found." }, 404),
     "GET /api/sources/2/2/locate?start=0&end=29": () => json({ detail: "File not found." }, 404),
@@ -113,7 +113,7 @@ describe("checking a source from an answer", () => {
     await selectIn(first, 10, first.textContent!.length);
     expect(checkButton()).toBeDefined();
     await click(checkButton());
-    expect(attributionBody()).toEqual({ message_id: 2, selection: "6 days" });
+    expect(attributionBody()).toEqual({ message_id: 2, selection: "6 days", start: 10 });
     const panel = view!.container.querySelector(".source-panel")!;
     expect(panel.textContent).toContain("Strong match");
     expect(panel.querySelector(".snapshot-hit")?.textContent).toBe(sources[0].text);
@@ -132,7 +132,11 @@ describe("checking a source from an answer", () => {
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     });
     await click(checkButton());
-    expect(attributionBody()).toEqual({ message_id: 2, selection: "6 days [1]." });
+    expect(attributionBody()).toEqual({
+      message_id: 2,
+      selection: "6 days [1].",
+      start: 10,
+    });
   });
 
   it("marks the checked span in the answer until the panel closes", async () => {
@@ -154,6 +158,7 @@ describe("checking a source from an answer", () => {
       message_id: 2,
       selection: "The notice period is 30 days",
       n: 2,
+      start: content.indexOf("The notice"),
     });
     expect(answerText().querySelector("mark.answer-hit")?.textContent).toBe(
       "The notice period is 30 days",
@@ -321,11 +326,50 @@ describe("checking a source from an answer", () => {
     expect(view.container.querySelector(".source-panel .compare")).toBeNull();
   });
 
-  it("shows an error when the check fails", async () => {
+  it("sends the start as code points when the answer holds characters outside the basic plane", async () => {
+    // "A 😀 [1]. " is 10 UTF-16 units but 9 characters, so Python's index of the second sentence is 9.
+    const text = "A 😀 [1]. 😀 The notice period [2].";
+    await open(() => json({ matches: [match(2, sources[1].text)] }), text);
+    await click(answerText().querySelectorAll("button.cite")[1]);
+    expect(attributionBody()).toEqual({
+      message_id: 2,
+      selection: "😀 The notice period",
+      n: 2,
+      start: 9,
+    });
+  });
+
+  it("says in the user's words that the search model is not available", async () => {
     await open(() => json({ detail: "The embedding model is unavailable." }, 503));
     await click(answerText().querySelectorAll("button.cite")[0]);
     expect(view!.container.querySelector('.source-panel [role="alert"]')?.textContent).toBe(
-      "Could not check this selection. The embedding model is unavailable.",
+      "Could not check this selection. The search model is not available, so the source cannot be checked.",
+    );
+  });
+
+  it("says when the answer is no longer saved", async () => {
+    await open(() => json({ detail: "Message not found." }, 404));
+    await click(answerText().querySelectorAll("button.cite")[0]);
+    expect(view!.container.querySelector('.source-panel [role="alert"]')?.textContent).toBe(
+      "Could not check this selection. This answer is no longer saved.",
+    );
+  });
+
+  it("says when the core cannot be reached", async () => {
+    await open(() => {
+      throw new TypeError("Failed to fetch");
+    });
+    await click(answerText().querySelectorAll("button.cite")[0]);
+    expect(view!.container.querySelector('.source-panel [role="alert"]')?.textContent).toBe(
+      "Could not check this selection. Tamra could not reach its core.",
+    );
+  });
+
+  it("keeps the core's text for any other failure", async () => {
+    await open(() => json({ detail: "Only an answer has sources." }, 400));
+    await click(answerText().querySelectorAll("button.cite")[0]);
+    expect(view!.container.querySelector('.source-panel [role="alert"]')?.textContent).toBe(
+      "Could not check this selection. Only an answer has sources.",
     );
   });
 

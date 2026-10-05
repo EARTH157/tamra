@@ -3,8 +3,11 @@ export type Segment =
   | { kind: "text"; text: string; start: number; end: number }
   | { kind: "cite"; n: number; start: number; end: number };
 
-/** One citation marker: [1], [12] or [1, 2]. Shared by the chip splitter and the sentence finder. */
-export const MARKER_SOURCE = String.raw`\[(\d{1,2}(?:\s*,\s*\d{1,2})*)\]`;
+/**
+ * One citation marker: [1], [12] or [1, 2]. Shared by the chip splitter and the sentence finder,
+ * and the same grammar as the core's (`_MARKER_GROUP` in src/tamra/attribution.py).
+ */
+export const MARKER_SOURCE = String.raw`\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]`;
 const MARKER = new RegExp(MARKER_SOURCE, "g");
 
 /** Split answer text into plain text and [n] citations. Numbers without a source stay text. */

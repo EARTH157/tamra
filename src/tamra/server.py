@@ -127,6 +127,9 @@ class AttributionBody(BaseModel):
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
     ]
     n: int | None = Field(default=None, ge=1)
+    # Where the selection starts in the message content, in code points (Python's indices). It
+    # tells apart repeated sentences; a start that does not point at the selection is ignored.
+    start: int | None = Field(default=None, ge=0)
 
 
 class ApiKeyBody(BaseModel):
@@ -357,7 +360,7 @@ def _add_viewer_routes(
         if message.role != "assistant":
             raise HTTPException(status_code=400, detail="Only an answer has sources.")
         try:
-            matches = core.attribute(message, body.selection, body.n)
+            matches = core.attribute(message, body.selection, body.n, body.start)
         except EmbedderUnavailable as e:
             log.warning("attribution: the embedding model cannot be loaded: %s", e)
             raise HTTPException(

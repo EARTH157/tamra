@@ -261,17 +261,26 @@ class Core:
     # --- attribution and the viewer ---
 
     def attribute(
-        self, message: MessageRecord, selection: str, only: int | None = None
+        self,
+        message: MessageRecord,
+        selection: str,
+        only: int | None = None,
+        start: int | None = None,
     ) -> list[Match]:
-        """Match a selection to the message's sources. It shares the one embedder."""
-        return self._attributor_for().attribute(message, selection, only)
+        """Match a selection to the message's sources. It shares the one embedder.
+
+        start: the selection's code-point offset in the message, if the caller knows it.
+        """
+        return self._attributor_for().attribute(message, selection, only, start)
 
     def _attributor_for(self) -> Attributor:
         with self._attributor_lock:
             if self._attributor is None:
-                self._attributor = Attributor(
-                    lambda texts: self.embedder().embed(texts), self._spans_factory()
-                )
+                try:
+                    spans = self._spans_factory()
+                except Exception as e:  # missing or unreadable tokenizer file
+                    raise EmbedderUnavailable(str(e)) from e
+                self._attributor = Attributor(lambda texts: self.embedder().embed(texts), spans)
             return self._attributor
 
     def _warm(self, message_id: int) -> None:
@@ -338,7 +347,9 @@ class Core:
                 return record, path, doc
         try:
             doc = parse_file(path)
-        except ParseError as e:
+        except FileNotFoundError as e:  # removed between the stat and the parse
+            raise FileMissing("file not found") from e
+        except (ParseError, OSError) as e:  # damaged, or locked or denied by the system
             raise Unreadable(f"cannot read file: {e}", pdf=path.suffix.lower() == ".pdf") from e
         if stat.st_size > DOCUMENT_CACHE_MAX_BYTES:
             return record, path, doc
