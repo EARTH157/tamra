@@ -221,6 +221,11 @@ def test_cited_numbers_keeps_only_valid_markers():
     assert cited_numbers("no markers", 3) == []
 
 
+def test_cited_numbers_reads_marker_groups():
+    assert cited_numbers("A [1, 2] b [3 ,9] c [2]", 3) == [1, 2, 3, 2]
+    assert cited_numbers("A [1, 2, 3]", 2) == [1, 2]
+
+
 def test_auto_citation_finds_the_source_an_answer_was_taken_from():
     sources = [
         src(1, "Parking costs fifty baht per day."),
@@ -239,6 +244,7 @@ def test_auto_citation_works_for_thai_and_chinese():
 def test_auto_citation_leaves_cited_unrelated_and_empty_answers_alone():
     sources = [src(1, "The monthly rent is 18,500 baht.")]
     assert auto_citation("The monthly rent is 18,500 baht [1].", sources) is None
+    assert auto_citation("The monthly rent is 18,500 baht [1, 2].", sources) is None
     assert auto_citation("Bananas are yellow and grow in bunches.", sources) is None
     assert auto_citation("ok", sources) is None
     assert auto_citation("The monthly rent is 18,500 baht.", []) is None

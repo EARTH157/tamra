@@ -204,3 +204,15 @@ def test_failed_or_skipped_files_leave_the_index(store, coll):
     assert (record.status, record.content_hash, record.indexed_at) == ("skipped", None, None)
     assert store.search_dense(coll.id, unit(1), 5) == []
     assert store.search_keyword(coll.id, '"lea"', 5) == []
+
+
+def test_get_file_returns_one_record_or_none(store, coll):
+    file_id = store.add_file(coll.id, "sub/b.txt", 5, 2.0)
+    record = store.get_file(file_id)
+    assert (record.id, record.rel_path, record.size, record.status) == (
+        file_id,
+        "sub/b.txt",
+        5,
+        "pending",
+    )
+    assert store.get_file(file_id + 100) is None

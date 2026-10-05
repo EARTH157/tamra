@@ -2,6 +2,7 @@
 
 import codecs
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +11,10 @@ import pypdfium2 as pdfium
 from charset_normalizer import from_bytes
 
 SUPPORTED = frozenset({".pdf", ".docx", ".txt", ".md"})
+
+# PDFium is not thread-safe: indexing runs in a worker thread while the viewer serves requests
+# on others, so every open-to-close use of a PdfDocument holds this lock.
+PDFIUM_LOCK = threading.RLock()
 
 _HEADING = re.compile(r"Heading (\d)")
 _THAI_CONSONANTS = range(0x0E01, 0x0E2F)
@@ -25,7 +30,7 @@ class Unit:
     """A run of document text and the coordinates of its first character.
 
     pdf: page (1-based) and char (offset of text[0] in the page's extracted text).
-    docx: paragraph (0-based index into document.paragraphs) and heading_path.
+    docx: paragraph (0-based index into document.paragraphs), heading_path, and heading_level.
     text: line (1-based number of the line holding text[0]).
     """
 
@@ -35,6 +40,7 @@ class Unit:
     paragraph: int = 0
     heading_path: tuple[str, ...] = ()
     line: int = 0
+    heading_level: int = 0  # docx: 1-9 when the paragraph is itself a heading or title
 
 
 @dataclass(frozen=True)
@@ -81,6 +87,11 @@ def parse_file(path: Path) -> ParsedDoc:
 
 def parse_pdf(path: Path) -> ParsedDoc:
     """One unit per page with a text layer; pages without one are listed in the note."""
+    with PDFIUM_LOCK:
+        return _parse_pdf(path)
+
+
+def _parse_pdf(path: Path) -> ParsedDoc:
     try:
         pdf = pdfium.PdfDocument(path)
     except pdfium.PdfiumError as e:
@@ -127,7 +138,9 @@ def parse_docx(path: Path) -> ParsedDoc:
         level = int(match.group(1)) if match else (1 if style == "Title" else 0)
         if level:
             headings = headings[: level - 1] + [text.strip()]
-        units.append(Unit(text=text, paragraph=index, heading_path=tuple(headings)))
+        units.append(
+            Unit(text=text, paragraph=index, heading_path=tuple(headings), heading_level=level)
+        )
     return ParsedDoc("docx", units)
 
 

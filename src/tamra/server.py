@@ -6,26 +6,41 @@ import logging
 import secrets
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import anyio
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import tamra
 from tamra import secrets as key_store
-from tamra.answer import source_payload
-from tamra.core import Core
+from tamra.answer import location_label, source_payload
+from tamra.core import Core, EmbedderUnavailable
+from tamra.ingest.parsers import SUPPORTED
 from tamra.llm.base import LLMError, ProviderError
 from tamra.models.catalog import ModelEntry
 from tamra.models.hardware import _is_integrated, recommend
 from tamra.models.manager import DownloadBusy, ImportRefused
 from tamra.store import Chat, Collection
+from tamra.viewer import (
+    MAX_SCALE,
+    MIN_SCALE,
+    FileMissing,
+    PageMissing,
+    PathRefused,
+    Unreadable,
+    ViewerError,
+    locate,
+    pdf_page_count,
+    pdf_rects,
+    render_pdf_page,
+    text_view,
+)
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +49,7 @@ API_PROVIDERS = ("anthropic", "openai")
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+    "img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
     "frame-ancestors 'none'; form-action 'none'"
 )
 
@@ -105,6 +120,18 @@ class QuestionBody(BaseModel):
     think: bool = False
 
 
+class AttributionBody(BaseModel):
+    message_id: int
+    # The UI sends a raw substring of the message; surrounding whitespace is not part of it.
+    selection: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
+    ]
+    n: int | None = Field(default=None, ge=1)
+    # Where the selection starts in the message content, in code points (Python's indices). It
+    # tells apart repeated sentences; a start that does not point at the selection is ignored.
+    start: int | None = Field(default=None, ge=0)
+
+
 class ApiKeyBody(BaseModel):
     provider: str = Field(max_length=40)
     key: str
@@ -121,6 +148,7 @@ def create_app(
     pick_folder: Callable[[], str | None] | None = None,
     pick_file: Callable[[], str | None] | None = None,
     open_data_folder: Callable[[], None] | None = None,
+    open_external: Callable[[Path], None] | None = None,
 ) -> FastAPI:
     if not token:
         raise ValueError("the API token must not be empty")  # an empty token would match ""
@@ -168,6 +196,7 @@ def create_app(
 
     if core is not None:
         _add_routes(app, core)
+        _add_viewer_routes(app, core, open_external)
         _add_settings_routes(app, core)
         _add_model_routes(app, core)
     if ui_dir is not None:
@@ -304,6 +333,145 @@ def _add_routes(app: FastAPI, core: Core) -> None:
     @app.post("/api/answer/cancel", status_code=204)
     def cancel() -> Response:
         core.answers.cancel()
+        return Response(status_code=204)
+
+
+def _viewer_error(e: ViewerError) -> HTTPException:
+    """The HTTP error for a ViewerError, with a fixed message: a raw path is never sent."""
+    if isinstance(e, FileMissing):
+        return HTTPException(status_code=404, detail="File not found.")
+    if isinstance(e, PageMissing):
+        return HTTPException(status_code=404, detail="Page not found.")
+    if isinstance(e, PathRefused):
+        return HTTPException(status_code=400, detail="The file path is not valid.")
+    if isinstance(e, Unreadable) and e.pdf:
+        return HTTPException(status_code=422, detail="This PDF could not be read.")
+    return HTTPException(status_code=422, detail="This file could not be read.")
+
+
+def _add_viewer_routes(
+    app: FastAPI, core: Core, open_external: Callable[[Path], None] | None
+) -> None:
+    @app.post("/api/attribution")
+    def attribute(body: AttributionBody) -> dict:
+        message = core.store.get_message(body.message_id)
+        if message is None:
+            raise HTTPException(status_code=404, detail="Message not found.")
+        if message.role != "assistant":
+            raise HTTPException(status_code=400, detail="Only an answer has sources.")
+        try:
+            matches = core.attribute(message, body.selection, body.n, body.start)
+        except EmbedderUnavailable as e:
+            log.warning("attribution: the embedding model cannot be loaded: %s", e)
+            raise HTTPException(
+                status_code=503, detail="The embedding model is unavailable."
+            ) from e
+        except Exception:  # a bug: the client gets a plain 500, the log gets the traceback
+            log.error("attribution failed", exc_info=True)
+            raise
+        sources = {s.n: s for s in message.sources}
+        changed: dict[int, bool] = {}
+        out = []
+        for match in matches:
+            source = sources[match.n]
+            if match.n not in changed:
+                changed[match.n] = core.source_changed(source)
+            out.append(
+                {
+                    "n": match.n,
+                    "start": match.start,
+                    "end": match.end,
+                    "text": source.text[match.start : match.end],
+                    "label": match.label,  # "strong" | "partial": never a raw score
+                    "file_id": source.file_id,
+                    "file": source.rel_path,
+                    "location_label": location_label(source.location),
+                    "changed": changed[match.n],
+                }
+            )
+        return {"matches": out}
+
+    @app.get("/api/sources/{message_id}/{n}/locate")
+    def locate_source(
+        message_id: int, n: int, start: int | None = None, end: int | None = None
+    ) -> dict:
+        message = core.store.get_message(message_id)
+        source = next((s for s in message.sources if s.n == n), None) if message else None
+        if source is None:
+            raise HTTPException(status_code=404, detail="Source not found.")
+        if (start is None) != (end is None):
+            raise HTTPException(status_code=400, detail="Give both start and end, or neither.")
+        passage = source.text
+        if start is not None and end is not None:
+            if not 0 <= start < end <= len(source.text):
+                raise HTTPException(status_code=400, detail="The range is outside the source.")
+            passage = source.text[start:end]
+        if source.file_id is None:
+            raise HTTPException(status_code=404, detail="File not found.")
+        try:
+            record, path, doc = core.document(source.file_id)
+            reply: dict = {
+                "file_id": record.id,
+                "kind": doc.kind,
+                "changed": core.file_changed(record, path, source.file_hash),
+                "found": False,
+            }
+            if doc.kind == "pdf":
+                reply["page_count"] = pdf_page_count(path)
+            found = locate(doc, passage, source.location)
+            if found is None:
+                return reply
+            reply.update(found=True, start=found.start, end=found.end)
+            if found.kind == "pdf" and found.page is not None:
+                rects = pdf_rects(path, found.page, found.start, found.end)
+                reply.update(page=found.page, rects=[list(r) for r in rects])
+            return reply
+        except ViewerError as e:
+            raise _viewer_error(e) from e
+
+    @app.get("/api/files/{file_id}/pages/{page}")
+    def page_image(file_id: int, page: int, scale: float = 1.5) -> Response:
+        if not MIN_SCALE <= scale <= MAX_SCALE:  # also false for NaN
+            raise HTTPException(
+                status_code=400, detail=f"The scale must be from {MIN_SCALE} to {MAX_SCALE}."
+            )
+        try:
+            _, path = core.file_path(file_id)
+            if path.suffix.lower() != ".pdf":
+                raise HTTPException(status_code=404, detail="This file has no pages.")
+            png = render_pdf_page(path, page, scale)
+        except ViewerError as e:
+            raise _viewer_error(e) from e
+        return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/files/{file_id}/text")
+    def file_text(file_id: int) -> dict:
+        try:
+            _, path = core.file_path(file_id)
+            if path.suffix.lower() == ".pdf":
+                raise HTTPException(status_code=400, detail="A PDF is shown as page images.")
+            _, _, doc = core.document(file_id)
+            return text_view(doc)
+        except ViewerError as e:
+            raise _viewer_error(e) from e
+
+    @app.post("/api/files/{file_id}/open", status_code=204)
+    def open_file(file_id: int) -> Response:
+        if open_external is None:
+            raise HTTPException(
+                status_code=501, detail="Opening files is only available in the Tamra window."
+            )
+        try:
+            _, path = core.file_path(file_id)  # from the store, never from the request
+        except ViewerError as e:
+            raise _viewer_error(e) from e
+        if path.suffix.lower() not in SUPPORTED:  # never start a program
+            raise HTTPException(status_code=400, detail="This file type cannot be opened.")
+        try:
+            open_external(path)
+        except OSError as e:
+            log.warning("cannot open a file: %s", type(e).__name__)
+            raise HTTPException(status_code=500, detail="Could not open the file.") from e
         return Response(status_code=204)
 
 

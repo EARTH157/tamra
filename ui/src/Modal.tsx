@@ -1,14 +1,42 @@
 import { type ReactNode, useEffect, useRef } from "react";
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Keep Tab and Shift+Tab inside the dialog: past the last control it goes to the first, and back. */
+function trapTab(event: KeyboardEvent, box: HTMLElement) {
+  const controls = [...box.querySelectorAll<HTMLElement>(FOCUSABLE)];
+  if (controls.length === 0) {
+    event.preventDefault();
+    box.focus();
+    return;
+  }
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  const active = document.activeElement;
+  if (!(active instanceof Node) || !box.contains(active) || active === box) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  } else if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 type Props = {
   labelledBy: string;
   onClose: () => void;
   small?: boolean;
+  /** Most of the window (the document viewer). */
+  large?: boolean;
   children: ReactNode;
 };
 
 /** A centered dialog over a dimmed backdrop. Esc (wherever focus is) or a backdrop click closes it. */
-export default function Modal({ labelledBy, onClose, small, children }: Props) {
+export default function Modal({ labelledBy, onClose, small, large, children }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   useEffect(() => {
@@ -26,6 +54,8 @@ export default function Modal({ labelledBy, onClose, small, children }: Props) {
       if (event.key === "Escape") {
         event.preventDefault();
         close.current();
+      } else if (event.key === "Tab" && box.current) {
+        trapTab(event, box.current);
       }
     }
     document.addEventListener("keydown", onKeyDown);
@@ -44,7 +74,7 @@ export default function Modal({ labelledBy, onClose, small, children }: Props) {
     >
       <div
         ref={box}
-        className={small ? "dialog small" : "dialog"}
+        className={small ? "dialog small" : large ? "dialog large" : "dialog"}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}

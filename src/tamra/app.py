@@ -6,6 +6,7 @@ import os
 import secrets
 import threading
 import time
+from pathlib import Path
 
 import httpx
 import truststore
@@ -25,7 +26,12 @@ DEV_TOKEN = "dev"
 
 def build_core() -> Core:
     """Core with data in data_dir(), models in models_dir(), and the bundled llama-server."""
-    return Core(data_dir(), models_dir(), resource_dir() / "vendor" / "llama" / "llama-server.exe")
+    return Core(
+        data_dir(),
+        models_dir(),
+        resource_dir() / "vendor" / "llama" / "llama-server.exe",
+        warm_attribution=True,
+    )
 
 
 class FolderPicker:
@@ -65,6 +71,11 @@ class FilePicker:
 def open_data_folder() -> None:
     """Show Tamra's data folder in Explorer. The path is never taken from a request."""
     os.startfile(data_dir())  # type: ignore[attr-defined]  # Windows only
+
+
+def open_external(path: Path) -> None:
+    """Open a file in its default app. The server passes only paths it resolved from the store."""
+    os.startfile(path)  # type: ignore[attr-defined]  # Windows only
 
 
 def _wait_until_up(
@@ -110,6 +121,7 @@ def run(dev: bool = False) -> None:
                 pick_folder=picker,
                 pick_file=file_picker,
                 open_data_folder=None if dev else open_data_folder,
+                open_external=None if dev else open_external,
             ),
             host="127.0.0.1",
             port=port,

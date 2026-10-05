@@ -45,6 +45,7 @@ The modules follow the RAG pipeline. Each owns one stage:
 - `llm`: generation providers.
 - `answer`: the prompt, `[n]` citations, and persisted sources.
 - `attribution`: maps a selected answer span to its source passage.
+- `viewer`: reads a collection file, finds a passage, and renders PDF pages and highlight boxes.
 - `models`: the model catalog, download/import, and hardware tiers.
 - `settings`: typed, validated app settings, saved through the store.
 - `secrets`: API keys in Windows Credential Manager (`keyring`).

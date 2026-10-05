@@ -33,6 +33,11 @@ def _blob(vector: np.ndarray) -> bytes:
     return np.asarray(vector, dtype=np.float32).tobytes()
 
 
+def _source(row: Sequence) -> SourceRecord:
+    """A SourceRecord from (n, chunk_id, file_id, rel_path, text_snapshot, location_json, hash)."""
+    return SourceRecord(row[0], row[1], row[2], row[3], row[4], json.loads(row[5]), row[6])
+
+
 class Store:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
@@ -107,6 +112,13 @@ class Store:
                 (collection_id,),
             ).fetchall()
         return [FileRecord(*row) for row in rows]
+
+    def get_file(self, file_id: int) -> FileRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {_FILE_COLUMNS} FROM files WHERE id = ?", (file_id,)
+            ).fetchone()
+        return FileRecord(*row) if row else None
 
     def next_pending_file(self, collection_id: int) -> FileRecord | None:
         with self._lock:
@@ -416,6 +428,22 @@ class Store:
             ).fetchone()
         return question[1], (answer[0] if answer else None)
 
+    def get_message(self, message_id: int) -> MessageRecord | None:
+        """One message with its saved sources, or None if there is no such message."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, role, content, provider, model, created_at FROM messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            source_rows = self._conn.execute(
+                "SELECT n, chunk_id, file_id, rel_path, text_snapshot, location_json,"
+                " file_hash_at_answer FROM message_sources WHERE message_id = ? ORDER BY n",
+                (message_id,),
+            ).fetchall()
+        return MessageRecord(*row, sources=tuple(_source(r) for r in source_rows))
+
     def list_messages(self, chat_id: int) -> list[MessageRecord]:
         with self._lock:
             rows = self._conn.execute(
@@ -432,7 +460,5 @@ class Store:
             ).fetchall()
         sources: dict[int, list[SourceRecord]] = {}
         for row in source_rows:
-            sources.setdefault(row[0], []).append(
-                SourceRecord(row[1], row[2], row[3], row[4], row[5], json.loads(row[6]), row[7])
-            )
+            sources.setdefault(row[0], []).append(_source(row[1:]))
         return [MessageRecord(*row, sources=tuple(sources.get(row[0], ()))) for row in rows]

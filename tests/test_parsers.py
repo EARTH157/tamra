@@ -67,6 +67,16 @@ def test_docx_paragraphs_carry_their_heading_path(tmp_path):
     ]
 
 
+def test_docx_units_know_their_own_heading_level(tmp_path):
+    path = make_docx(
+        tmp_path / "h.docx",
+        [(1, "Chapter"), (0, "Chapter"), (2, "Section"), (0, "Body")],
+    )
+    doc = parse_file(path)
+    assert [u.heading_level for u in doc.units] == [1, 0, 2, 0]
+    assert Unit("plain", line=1).heading_level == 0
+
+
 def test_a_broken_docx_raises_parse_error(tmp_path):
     bad = tmp_path / "bad.docx"
     bad.write_bytes(b"PK not really a zip")

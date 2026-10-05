@@ -62,6 +62,18 @@ def test_assistant_messages_keep_their_sources(store):
     assert messages[0].sources == ()
 
 
+def test_get_message_returns_one_message_with_its_sources(store):
+    chat = store.create_chat()
+    store.add_user_message(chat.id, "How long is the lease?")
+    message_id = store.add_assistant_message(
+        chat.id, "Three years [1].", provider="local", model="qwen", sources=[source(2), source(1)]
+    )
+    message = store.get_message(message_id)
+    assert message == store.list_messages(chat.id)[1]
+    assert [s.n for s in message.sources] == [1, 2]
+    assert store.get_message(message_id + 100) is None
+
+
 def test_last_exchange_returns_the_latest_question_and_its_answer(store):
     chat = store.create_chat()
     assert store.last_exchange(chat.id) == (None, None)

@@ -37,7 +37,11 @@ Sources:
 Example answer format: The rent is 10,000 baht [1]."""
 
 AUTO_CITE_MIN_OVERLAP = 0.5  # share of the answer's trigrams found in one source
-_MARKER = re.compile(r"\[(\d+)\]")
+# One citation marker: [1], [12] or a group such as [1, 2]. tamra.attribution and the UI
+# (ui/src/citations.ts) read the same form.
+MARKER_GROUP = r"\[\d{1,3}(?:\s*,\s*\d{1,3})*\]"
+_MARKER = re.compile(MARKER_GROUP)
+_DIGITS = re.compile(r"\d+")
 
 
 @dataclass(frozen=True)
@@ -78,7 +82,8 @@ def detect_language(text: str) -> str:
 
 def cited_numbers(text: str, source_count: int) -> list[int]:
     """The [n] markers in text that name one of the sources."""
-    return [n for n in map(int, _MARKER.findall(text)) if 1 <= n <= source_count]
+    numbers = (int(n) for group in _MARKER.findall(text) for n in _DIGITS.findall(group))
+    return [n for n in numbers if 1 <= n <= source_count]
 
 
 def auto_citation(answer: str, sources: list[SourceRecord]) -> int | None:
@@ -121,6 +126,7 @@ def source_payload(source: SourceRecord) -> dict:
     """What the UI shows for a source."""
     return {
         "n": source.n,
+        "file_id": source.file_id,  # None once the file left the index
         "file": source.rel_path,
         "label": location_label(source.location),
         "text": source.text,
@@ -160,12 +166,16 @@ class AnswerService:
         *,
         model_id: str,
         settings: AnswerSettings | None = None,
+        on_saved: Callable[[int], None] | None = None,
     ):
+        """on_saved(message_id) runs after a generated answer is saved, on the answering thread:
+        it must return quickly (start a thread for slow work). Its failures are only logged."""
         self._store = store
         self._embed_query = embed_query
         self._route = route
         self._model_id = model_id
         self._settings = settings or AnswerSettings()
+        self._on_saved = on_saved
         self._state = threading.Lock()  # guards _answering and _after
         self._answering = False
         self._after: list[Callable[[], None]] = []
@@ -321,6 +331,8 @@ class AnswerService:
                 message_id = self._store.add_assistant_message(
                     chat_id, content, provider=route.name, model=label, sources=sources
                 )
+                if self._on_saved is not None and sources:
+                    _run(lambda: self._on_saved(message_id))
         if error:
             yield {"type": "error", "message": error, "reason": reason}
         if message_id is not None:

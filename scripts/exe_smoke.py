@@ -13,12 +13,16 @@ folder and a scratch models folder that holds only the embedding model (hard-lin
 3. Asks one question with "think" on; the 0.5B model cannot think, so this only checks that the
    request is accepted.
 4. Adds a file to check the folder watcher.
-5. API mode: starts a second llama-server with the same model, a free port and a throwaway API
+5. Checks a source: attribution of a sentence of the lease answer (at least one match), locating
+   the first match in its PDF (found, with highlight boxes), the page route (PNG bytes), and the
+   text route for a cited text file. Timings are recorded: the first attribution call, a repeat
+   (cached), and a page render at scale 1.5.
+6. API mode: starts a second llama-server with the same model, a free port and a throwaway API
    key, points the "openai" provider at it, saves the key through the API (the real Windows
    Credential Manager, service "Tamra"), asks one question (provider must be "openai"), switches
    back to local and asks again. The key is deleted at the end and the deletion is verified. The
    step is skipped when a key for "openai" is already stored: that one is never touched.
-6. Ends the exe by PID and checks that its llama-server ended with it.
+7. Ends the exe by PID and checks that its llama-server ended with it.
 """
 
 import argparse
@@ -44,6 +48,8 @@ from tamra.llm.llama_server import LlamaServer
 
 ROOT = Path(__file__).resolve().parents[1]
 PORT = 8765
+PNG_SIGNATURE = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+PAGE_SCALE = 1.5  # the viewer's default render scale
 SMOKE_IDS = ("th-leave-annual", "en-lease-rent", "zh-warranty-sofa", "none-world-cup")
 CITATION = re.compile(r"\[(\d+)\]")
 
@@ -142,6 +148,124 @@ def check_answer(question: dict, events: list[dict]) -> dict:
         "cited": cited,
         "problems": problems,
     }
+
+
+def sentence_to_check(answer: str, sources: list[dict]) -> str:
+    """A sentence of the answer that cites a PDF source (else the first), markers removed."""
+    pieces: list[str] = []
+    for piece in (p.strip() for p in re.split(r"(?<=[.!?])\s+", answer)):
+        if pieces and not CITATION.sub("", piece).strip():
+            pieces[-1] += " " + piece  # "...month. [1]": the marker belongs to the sentence before
+        elif piece:
+            pieces.append(piece)
+    pdf_numbers = {s["n"] for s in sources if s["file"].lower().endswith(".pdf")}
+    for piece in pieces:
+        cited = {int(n) for n in CITATION.findall(piece)}
+        if cited & pdf_numbers:
+            return _unmarked(piece)
+    return _unmarked(pieces[0] if pieces else answer)
+
+
+def _unmarked(text: str) -> str:
+    """The text without citation markers or the space before them."""
+    return re.sub(r"\s*(?:" + CITATION.pattern + ")", "", text).strip()
+
+
+def timed(call) -> tuple[httpx.Response, float]:
+    started = time.monotonic()
+    response = call()
+    return response, round(time.monotonic() - started, 3)
+
+
+def check_source_viewer(
+    client: httpx.Client,
+    lease: dict | None,
+    text_answer: dict | None,
+    report: dict,
+    problems: list[str],
+) -> None:
+    """Attribution, locate, the page image and the text view, on answers that were just saved."""
+    viewer: dict = {}
+    report["viewer"] = viewer
+    if lease is None or not lease["sources"]:
+        problems.append("viewer: the lease answer was not saved with sources")
+        return
+    sentence = sentence_to_check(lease["content"], lease["sources"])
+    viewer["sentence"] = sentence[:200]
+    first, first_s = timed(
+        lambda: client.post(
+            "/api/attribution", json={"message_id": lease["id"], "selection": sentence}, timeout=120
+        )
+    )
+    if first.status_code != 200:
+        problems.append(f"viewer: attribution gave {first.status_code}")
+        return
+    again, cached_s = timed(
+        lambda: client.post(
+            "/api/attribution", json={"message_id": lease["id"], "selection": sentence}, timeout=120
+        )
+    )
+    viewer["attribution_first_s"] = first_s
+    viewer["attribution_repeat_s"] = cached_s
+    matches = first.json()["matches"]
+    viewer["matches"] = [{k: m[k] for k in ("n", "label", "file", "changed")} for m in matches]
+    if not matches:
+        problems.append("viewer: attribution found no match for a sentence of the answer")
+    elif again.json()["matches"] != matches:
+        problems.append("viewer: a repeated attribution gave a different result")
+    pdf_match = next((m for m in matches if m["file"].lower().endswith(".pdf")), None)
+    if matches and pdf_match is None:
+        problems.append("viewer: no match is in a PDF source")
+    if pdf_match is not None:
+        located = client.get(
+            f"/api/sources/{lease['id']}/{pdf_match['n']}/locate",
+            params={"start": pdf_match["start"], "end": pdf_match["end"]},
+        )
+        if located.status_code != 200:
+            problems.append(f"viewer: locate gave {located.status_code}")
+        else:
+            where = located.json()
+            viewer["locate"] = {
+                k: where.get(k) for k in ("kind", "found", "page", "page_count", "changed")
+            }
+            viewer["locate"]["rects"] = len(where.get("rects") or [])
+            if not where.get("found") or where.get("kind") != "pdf":
+                problems.append(f"viewer: the PDF match was not found in its file: {where}")
+            elif not where.get("rects"):
+                problems.append("viewer: locating a PDF passage returned no highlight boxes")
+            else:
+                page_url = f"/api/files/{where['file_id']}/pages/{where['page']}"
+                client.get(page_url, params={"scale": PAGE_SCALE})  # warm pdfium and the file
+                page, page_s = timed(lambda: client.get(page_url, params={"scale": PAGE_SCALE}))
+                viewer["page_png"] = {
+                    "status": page.status_code,
+                    "bytes": len(page.content),
+                    "render_s": page_s,
+                    "scale": PAGE_SCALE,
+                }
+                if page.status_code != 200 or not page.content.startswith(PNG_SIGNATURE):
+                    problems.append("viewer: the page route did not return a PNG")
+    text_source = next(
+        (
+            s
+            for s in (text_answer or {}).get("sources", [])
+            if s["file_id"] is not None and s["file"].lower().endswith((".txt", ".md"))
+        ),
+        None,
+    )
+    if text_source is None:
+        problems.append("viewer: no cited text source to check the text route with")
+        return
+    shown = client.get(f"/api/files/{text_source['file_id']}/text")
+    body = shown.json() if shown.status_code == 200 else {}
+    viewer["text"] = {
+        "file": text_source["file"],
+        "status": shown.status_code,
+        "kind": body.get("kind"),
+        "lines": len(body.get("lines", [])),
+    }
+    if body.get("kind") != "text" or not any(line.strip() for line in body.get("lines", [])):
+        problems.append("viewer: the text route returned no lines for a cited text file")
 
 
 def link_embedding_model(src: Path, dest: Path) -> None:
@@ -348,6 +472,7 @@ def main() -> int:
                 report["index_counts"] = index["counts"]
                 if index["counts"]["indexed"] != total:
                     problems.append(f"not every file was indexed: {index['problems']}")
+                saved_answers: dict[str, dict] = {}
                 for question_id in SMOKE_IDS:
                     question = questions[question_id]
                     chat_id = client.post("/api/chats").json()["id"]
@@ -361,6 +486,15 @@ def main() -> int:
                     if question["file"] and answers and answers[-1]["provider"] != "local":
                         result["problems"].append("the answer was not recorded as provider local")
                     report["answers"].append(result)
+                    if answers:
+                        saved_answers[question_id] = answers[-1]
+                check_source_viewer(
+                    client,
+                    saved_answers.get("en-lease-rent"),
+                    saved_answers.get("zh-warranty-sofa"),
+                    report,
+                    problems,
+                )
                 check_thinking_accepted(client, questions[SMOKE_IDS[1]], report, problems)
                 (docs / "watcher-check.md").write_text(
                     "The rooftop garden opens at 6 pm on Fridays.", encoding="utf-8"

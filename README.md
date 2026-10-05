@@ -7,7 +7,7 @@ app for Windows. Point it at a folder of documents and ask questions in Thai, En
 Chinese. Answers cite the passages they came from, and you can select any part of an
 answer to see the exact source text that supports it.
 
-> **Status: pre-alpha.** Milestone M2 works: index a folder, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, with a Settings page and an English or Thai interface. There is no installer yet (M6). See the [roadmap](#roadmap).
+> **Status: pre-alpha.** Milestone M3 works: index a folder, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, check any sentence against its source and open the PDF at the highlighted passage, with a Settings page and an English or Thai interface. There is no installer yet (M6). See the [roadmap](#roadmap).
 
 ## Planned features
 
@@ -40,6 +40,25 @@ Choose a folder of PDF, Word, text, or Markdown files, wait for indexing, and as
 `Tamra.exe` looks for models in `%LOCALAPPDATA%\Tamra\models` or in the folder named by
 `TAMRA_MODELS_DIR`; see [Models](#models). The Qwen2.5-0.5B test model that `fetch_assets.py`
 downloads is very small, so expect rough answers from it, especially in Thai and Chinese.
+
+## Checking a source
+
+Every answer cites its sources with numbers like [1]. To check a claim, select a sentence in
+the answer and press **Check source**, or click a number to check the sentence that ends at it.
+A panel opens beside the answer. It shows your selection next to the passage Tamra found in the
+sources of that answer, with a label: **Strong match** or **Partial match**. Tamra only looks in
+the sources the answer used; it does not search your other documents.
+
+Press **Open file** to see the passage in the document itself. A PDF opens as the real page,
+with a yellow mark on the passage, and you can zoom and turn pages. A Word, text, or Markdown
+file opens as text with the matching lines marked. If you have changed the file since the answer
+was written, Tamra says so and still tries to find the passage. **Open with default app** in
+that window opens the file in your usual program for it. Tamra only reads your files; it never
+changes them.
+
+The yellow mark shows where the passage is. A "strong match" means the wording matches, not
+that the claim is true or fully supported: the passage may be on the same topic and say
+something different. You still judge the claim by reading it.
 
 ## Models
 
@@ -99,7 +118,7 @@ language is.
 | M0 | Foundation: project scaffold, CI, packaging spike |
 | M1 | Core loop: index a folder, hybrid search, cited answers with a local model |
 | M2 | Cloud API mode, settings, model download/import, hardware-based model tiers |
-| M3 | Source popup and document viewer with highlights |
+| M3 | Source checking and document viewer with highlights |
 | M4 | Multiple collections and chat history |
 | M5 | OCR for scanned documents |
 | M6 | Windows installer and release workflow |
