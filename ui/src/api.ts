@@ -1,6 +1,6 @@
 import { translateNow } from "./i18n";
 import { createSseParser } from "./sse";
-import type { AnswerEvent, AnswerMode } from "./types";
+import type { AnswerEvent, AnswerMode, AttributionResult, Locate } from "./types";
 
 const STORAGE_KEY = "tamra.token";
 let token = "";
@@ -100,4 +100,27 @@ export async function streamAnswer(
     feed(decoder.decode(value, { stream: true }));
   }
   feed(decoder.decode());
+}
+
+/** Find where a selected part of a saved answer comes from, among that answer's own sources. */
+export function attribute(
+  messageId: number,
+  selection: string,
+  n: number | null,
+): Promise<AttributionResult> {
+  return api<AttributionResult>("POST", "/api/attribution", {
+    message_id: messageId,
+    selection,
+    ...(n === null ? {} : { n }),
+  });
+}
+
+/** Where a passage of a source's snapshot is in the current file (the whole snapshot if no range). */
+export function locateSource(
+  messageId: number,
+  n: number,
+  range?: { start: number; end: number },
+): Promise<Locate> {
+  const query = range ? `?start=${range.start}&end=${range.end}` : "";
+  return api<Locate>("GET", `/api/sources/${messageId}/${n}/locate${query}`);
 }

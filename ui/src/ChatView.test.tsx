@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import ChatView, { fileName, folderOf } from "./ChatView";
+import ChatView from "./ChatView";
+import { fileName, folderOf } from "./SourcePanel";
 import { click, json, type Mounted, mockFetch, mount, settle, sse, typeInto } from "./test-utils";
 
 let view: Mounted | undefined;
@@ -72,6 +73,23 @@ describe("ChatView", () => {
               ]
             : [],
         }),
+      "POST /api/attribution": () =>
+        json({
+          matches: [
+            {
+              n: 1,
+              start: 0,
+              end: 30,
+              text: "The lease term is three years.",
+              label: "strong",
+              file_id: 3,
+              file: "lease.pdf",
+              location_label: "p. 2",
+              changed: false,
+            },
+          ],
+        }),
+      "GET /api/sources/2/1/locate?start=0&end=30": () => json({ detail: "File not found." }, 404),
       "POST /api/chats/5/messages": () => {
         saved = true;
         return sse([

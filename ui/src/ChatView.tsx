@@ -1,13 +1,16 @@
 import { BookOpen, FileText, Info, Lightbulb, SearchX, X } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import AnswerText, { TextWithParagraphs } from "./AnswerText";
-import { api, streamAnswer } from "./api";
+import AnswerText, { type Highlight } from "./AnswerText";
+import { api, attribute, streamAnswer } from "./api";
 import { errorText } from "./apiErrors";
+import CheckSourceButton from "./CheckSourceButton";
 import Composer from "./Composer";
 import { useT } from "./i18n";
 import { canThink, useModels } from "./models";
 import { isNotFound } from "./notFound";
+import { type Selected, sentenceBefore } from "./selection";
 import { useSettings } from "./settings";
+import SourcePanel, { type Check, fileName, folderOf, sourceLabel } from "./SourcePanel";
 import Thinking, { type Thought, thoughtSeconds } from "./Thinking";
 import type {
   AnswerMode,
@@ -17,6 +20,7 @@ import type {
   SettingsChanges,
   SettingsTab,
   Source,
+  ViewerRequest,
 } from "./types";
 
 /** A message for the user, with the reason the model call failed when the core gave one. */
@@ -93,6 +97,9 @@ export default function ChatView({
   const [thoughts, setThoughts] = useState<Record<number, Thought>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
+  // A selection being checked against the sources of its answer. It and `opened` are never both set.
+  const [check, setCheck] = useState<Check | null>(null);
+  const checkSeq = useRef(0); // a check that was replaced or closed is ignored when it answers
   // The CPU-fallback line is shown until dismissed, then not again while the app stays open.
   const [cpuNoticeDismissed, setCpuNoticeDismissed] = useState(false);
   const asking = useRef(false);
@@ -109,6 +116,8 @@ export default function ChatView({
   useEffect(() => {
     if (asking.current) return; // this chat was just created for the question being answered
     setOpened(null);
+    checkSeq.current++;
+    setCheck(null);
     setNotice(null);
     setThoughts({});
     setDetail(null);
@@ -139,6 +148,8 @@ export default function ChatView({
     setQuestion("");
     setNotice(null);
     setOpened(null);
+    checkSeq.current++;
+    setCheck(null);
     let state: Pending = {
       question: text,
       mode,
@@ -216,6 +227,47 @@ export default function ChatView({
     }
   }
 
+  function closePanel() {
+    checkSeq.current++;
+    setOpened(null);
+    setCheck(null);
+  }
+
+  /** Find where a selected part of a saved answer comes from; the panel shows the progress. */
+  function startCheck(messageId: number, selected: Selected, n: number | null) {
+    const id = ++checkSeq.current;
+    setOpened(null);
+    setCheck({
+      id,
+      messageId,
+      selection: selected.text,
+      start: selected.start,
+      end: selected.end,
+      n,
+      status: "loading",
+      matches: [],
+      index: 0,
+      error: null,
+    });
+    attribute(messageId, selected.text, n)
+      .then((result) =>
+        setCheck((c) => (c?.id === id ? { ...c, status: "ready", matches: result.matches } : c)),
+      )
+      .catch((e: Error) =>
+        setCheck((c) => (c?.id === id ? { ...c, status: "error", error: errorText(e, t) } : c)),
+      );
+  }
+
+  /** A source card or passage: show that snapshot as it is. */
+  function openSource(owner: number | "pending", source: Source) {
+    checkSeq.current++;
+    setCheck(null);
+    setOpened({ owner, source });
+  }
+
+  // The "Open file" button of the panel. The document viewer (the next task) takes it over.
+  function openViewer(_request: ViewerRequest) {}
+
   function stop() {
     api("POST", "/api/answer/cancel").catch((e: Error) => setNotice({ message: e.message }));
   }
@@ -244,8 +296,18 @@ export default function ChatView({
   const ready = chatId === null || detail !== null;
   const empty = ready && messages.length === 0 && !pending && !notice;
   const lastAnswer = [...messages].reverse().find((message) => message.role === "assistant");
-  const activeFor = (owner: number | "pending") =>
-    opened?.owner === owner ? opened.source.n : null;
+  // The chips of the source being shown are drawn filled.
+  const activeFor = (owner: number | "pending") => {
+    if (check?.messageId === owner) {
+      return check.status === "ready" ? (check.matches[check.index]?.n ?? null) : check.n;
+    }
+    return opened?.owner === owner ? opened.source.n : null;
+  };
+  // The span being checked stays marked in its answer while the panel is open.
+  const highlightFor = (owner: number): Highlight | null =>
+    check?.messageId === owner ? { start: check.start, end: check.end } : null;
+  const panelOwner = check?.messageId ?? opened?.owner ?? null;
+  const panelMessage = messages.find((message) => message.id === panelOwner);
 
   return (
     <div className="chat-view">
@@ -268,6 +330,7 @@ export default function ChatView({
             ) : (
               <Answer
                 key={message.id}
+                messageId={message.id}
                 text={message.content}
                 sources={message.sources}
                 thinking={
@@ -277,7 +340,9 @@ export default function ChatView({
                 hint={message === lastAnswer}
                 collectionName={collection}
                 active={activeFor(message.id)}
-                onOpen={(source) => setOpened({ owner: message.id, source })}
+                highlight={highlightFor(message.id)}
+                onOpen={(source) => openSource(message.id, source)}
+                onCheck={(selected, n) => startCheck(message.id, selected, n)}
               />
             ),
           )}
@@ -296,7 +361,7 @@ export default function ChatView({
                   collectionName={collection}
                   done={pending.done}
                   active={activeFor("pending")}
-                  onOpen={(source) => setOpened({ owner: "pending", source })}
+                  onOpen={(source) => openSource("pending", source)}
                 />
               ) : (
                 !pending.error && (
@@ -364,7 +429,18 @@ export default function ChatView({
           onManageModels={() => onOpenSettings("model")}
         />
       </div>
-      {opened && <SourcePanel source={opened.source} onClose={() => setOpened(null)} />}
+      {(check || opened) && (
+        <SourcePanel
+          sources={panelMessage?.sources ?? []}
+          messageId={typeof panelOwner === "number" ? panelOwner : null}
+          check={check}
+          source={opened?.source ?? null}
+          onIndexChange={(index) => setCheck((c) => (c ? { ...c, index } : c))}
+          onOpenSource={(source) => panelOwner !== null && openSource(panelOwner, source)}
+          onOpenViewer={openViewer}
+          onClose={closePanel}
+        />
+      )}
     </div>
   );
 }
@@ -407,6 +483,8 @@ function metaOf(
 }
 
 type AnswerProps = {
+  /** The saved message's id; absent while the answer is being streamed (it cannot be checked yet). */
+  messageId?: number;
   text: string;
   sources: Source[];
   thinking?: ReactNode;
@@ -415,7 +493,11 @@ type AnswerProps = {
   collectionName: string;
   done?: boolean;
   active: number | null;
+  highlight?: Highlight | null;
+  /** Open a source as it is, without comparing it to anything. */
   onOpen: (source: Source) => void;
+  /** Check a part of the saved answer: a selection, or the sentence of a clicked chip (with `n`). */
+  onCheck?: (selected: Selected, n: number | null) => void;
 };
 
 /**
@@ -423,6 +505,7 @@ type AnswerProps = {
  * hint. A reply that has sources but no text is a search-only result: the passages are the reply.
  */
 function Answer({
+  messageId,
   text,
   sources,
   thinking,
@@ -431,9 +514,12 @@ function Answer({
   collectionName,
   done = true,
   active,
+  highlight = null,
   onOpen,
+  onCheck,
 }: AnswerProps) {
   const t = useT();
+  const textRoot = useRef<HTMLDivElement>(null);
   if (done && isNotFound(text, sources.length)) {
     return (
       <div className="message assistant">
@@ -475,14 +561,24 @@ function Answer({
     <div className="message assistant">
       {thinking}
       <AnswerText
+        ref={textRoot}
         text={text}
         sourceCount={sources.length}
         active={active}
-        onCite={(n) => {
+        highlight={highlight}
+        onCite={(n, index) => {
           const source = sourceOf(sources, n);
-          if (source) onOpen(source);
+          if (!source) return;
+          if (messageId === undefined || !onCheck) return onOpen(source);
+          // A chip checks the sentence it ends, against its own source.
+          const { start, end } = sentenceBefore(text, index);
+          if (end <= start) return onOpen(source); // nothing before it to check
+          onCheck({ text: text.slice(start, end), start, end }, n);
         }}
       />
+      {messageId !== undefined && onCheck && (
+        <CheckSourceButton rootRef={textRoot} content={text} onCheck={(selected) => onCheck(selected, null)} />
+      )}
       {sources.length > 0 && (
         <ul className="source-cards">
           {sources.map((source) => (
@@ -513,44 +609,5 @@ function Answer({
         <p className="answer-hint">{t("chat.citeHint")}</p>
       )}
     </div>
-  );
-}
-
-/** Where a source is: its page or section, then its folder ("p. 2 · Contracts/2026"). */
-function sourceLabel(source: Source): string {
-  return [source.label, folderOf(source.file)].filter(Boolean).join(" · ");
-}
-
-/** The file name of a collection-relative path ("a/b/c.pdf" -> "c.pdf"). */
-export function fileName(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1);
-}
-
-/** The folder part of a collection-relative path ("a/b/c.pdf" -> "a/b"; "" at the top). */
-export function folderOf(path: string): string {
-  const cut = path.lastIndexOf("/");
-  return cut < 0 ? "" : path.slice(0, cut);
-}
-
-function SourcePanel({ source, onClose }: { source: Source; onClose: () => void }) {
-  const t = useT();
-  return (
-    <aside className="source-panel" aria-label={t("chat.sourcePanel")}>
-      <header>
-        <FileText size={20} />
-        <div className="source-title">
-          <strong title={source.file}>{fileName(source.file)}</strong>
-          <span>{sourceLabel(source)}</span>
-        </div>
-        <button type="button" className="icon-button" aria-label={t("chat.closeSource")} onClick={onClose}>
-          <X size={18} />
-        </button>
-      </header>
-      <div className="source-body">
-        <div className="paper">
-          <TextWithParagraphs text={source.text} />
-        </div>
-      </div>
-    </aside>
   );
 }

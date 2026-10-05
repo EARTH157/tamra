@@ -17,7 +17,7 @@ describe("AnswerText", () => {
     expect(button?.textContent).toBe("2");
     expect(view.container.textContent).toBe("Three years 2.");
     await click(button);
-    expect(onCite).toHaveBeenCalledWith(2);
+    expect(onCite).toHaveBeenCalledWith(2, 12);
   });
 
   it("shows markup from the model as text", async () => {

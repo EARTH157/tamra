@@ -26,10 +26,56 @@ export type Chat = { id: number; title: string; created_at: string; updated_at: 
 
 export type Source = {
   n: number;
+  /** The file's id in the index; null once it left the index (absent in payloads before M3). */
+  file_id?: number | null;
   file: string;
   label: string;
   text: string;
   location: Record<string, unknown>;
+};
+
+/** One place in a source's snapshot that an answer span matches (POST /api/attribution). */
+export type Match = {
+  n: number;
+  /** Character offsets into the source's snapshot text; `text` is that slice. */
+  start: number;
+  end: number;
+  text: string;
+  label: "strong" | "partial";
+  file_id: number | null;
+  file: string;
+  location_label: string;
+  /** The file is gone from the index or differs from what the answer saw. */
+  changed: boolean;
+};
+
+export type AttributionResult = { matches: Match[] };
+
+/** GET /api/sources/{message_id}/{n}/locate: where a snapshot passage is in the current file. */
+export type Locate = {
+  file_id: number;
+  kind: "pdf" | "text" | "docx";
+  changed: boolean;
+  found: boolean;
+  /** PDF only. */
+  page_count?: number;
+  page?: number;
+  /** Fractions of the page, top-left origin: [x0, y0, x1, y1]. */
+  rects?: number[][];
+  /** Text: 1-based lines; DOCX: paragraph indices. The end is exclusive. For a PDF, offsets in the page text. */
+  start?: number;
+  end?: number;
+};
+
+/** What the viewer needs to open a file at a source passage (the Task 5 hand-off). */
+export type ViewerRequest = {
+  messageId: number;
+  n: number;
+  fileId: number;
+  file: string;
+  /** Snapshot offsets of the passage; null for the whole snapshot. */
+  start: number | null;
+  end: number | null;
 };
 
 export type Message = {

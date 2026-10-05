@@ -68,6 +68,21 @@ describe("theme tokens", () => {
     expect(dark["--primary-soft"]).toBe("#1f4a45");
   });
 
+  it("keep the highlight sampled from the answer-with-source frame", () => {
+    const light = effective("light", "green");
+    expect(light["--highlight"]).toBe("#fbe7a1");
+    expect(light["--highlight-edge"]).toBe("#e9b824");
+  });
+
+  for (const theme of ["light", "dark"] as const) {
+    it(`keep text on the highlight readable: ${theme}`, () => {
+      const t = effective(theme, "green");
+      expect(t["--highlight"], "highlight token").toMatch(/^#[0-9a-f]{6}$/);
+      expect(t["--highlight-edge"], "edge token").toMatch(/^#[0-9a-f]{6}$/);
+      expect(contrast(t["--text"], t["--highlight"])).toBeGreaterThanOrEqual(MIN);
+    });
+  }
+
   for (const theme of ["light", "dark"] as const) {
     for (const accent of ACCENTS) {
       it(`keep accent text readable: ${theme} ${accent}`, () => {
