@@ -136,13 +136,16 @@ class Store:
             )
         return self.get_collection(collection_id)
 
-    def delete_collection(self, collection_id: int) -> int:
-        """Delete a project with its index and its home chats; returns how many chats went.
+    def delete_collection(self, collection_id: int) -> int | None:
+        """Delete a project with its index and its home chats; returns how many chats went
+        (0 for a project with none), or None if the project is unknown.
 
         Other chats that also searched it lose it from their scope; one left with an empty scope
         falls back to its home project.
         """
         with self._lock, self._conn:
+            if self.get_collection(collection_id) is None:
+                return None
             deleted = self._conn.execute(
                 "DELETE FROM chats WHERE collection_id = ?", (collection_id,)
             ).rowcount
@@ -199,15 +202,21 @@ class Store:
             ).fetchone()
         return FileRecord(*row) if row else None
 
-    def next_pending_file_any(self, model_id: str) -> FileRecord | None:
+    def next_pending_file_any(
+        self, model_id: str, exclude: Sequence[int] = ()
+    ) -> FileRecord | None:
         """The oldest pending file across the projects indexed with this embedding model.
-        A project with another model is stale: it is skipped until it is rebuilt."""
+        A project with another model is stale: it is skipped until it is rebuilt, and so are
+        the projects named in exclude."""
         columns = ", ".join(f"f.{name.strip()}" for name in _FILE_COLUMNS.split(","))
+        marks = ",".join("?" * len(exclude))
+        skip = f" AND f.collection_id NOT IN ({marks})" if exclude else ""
         with self._lock:
             row = self._conn.execute(
                 f"SELECT {columns} FROM files f JOIN collections c ON c.id = f.collection_id"
-                " WHERE f.status = 'pending' AND c.embedding_model_id = ? ORDER BY f.id LIMIT 1",
-                (model_id,),
+                f" WHERE f.status = 'pending' AND c.embedding_model_id = ?{skip}"
+                " ORDER BY f.id LIMIT 1",
+                (model_id, *exclude),
             ).fetchone()
         return FileRecord(*row) if row else None
 
@@ -406,7 +415,9 @@ class Store:
         ).fetchall()
         scopes: dict[int, list[int]] = {}
         for chat_id, collection_id in self._conn.execute(
-            "SELECT chat_id, collection_id FROM chat_collections ORDER BY collection_id"
+            "SELECT chat_id, collection_id FROM chat_collections"
+            f" WHERE chat_id IN (SELECT id FROM chats{where}) ORDER BY collection_id",
+            params,
         ):
             scopes.setdefault(chat_id, []).append(collection_id)
         return [Chat(*row, scope=scopes.get(row[0], [])) for row in rows]
@@ -437,6 +448,24 @@ class Store:
                 )
         scope = [] if collection_id is None else [collection_id]
         return Chat(cursor.lastrowid, title, created, created, collection_id, scope)
+
+    def adopt_homeless_chats(self, collection_id: int) -> int:
+        """Give every chat that has no home project this one as its home and its search scope;
+        returns how many were adopted. ValueError if the project is unknown."""
+        with self._lock, self._conn:
+            self._require_collections([collection_id])
+            chat_ids = [
+                row[0]
+                for row in self._conn.execute("SELECT id FROM chats WHERE collection_id IS NULL")
+            ]
+            self._conn.execute(
+                "UPDATE chats SET collection_id = ? WHERE collection_id IS NULL", (collection_id,)
+            )
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO chat_collections (chat_id, collection_id) VALUES (?, ?)",
+                [(chat_id, collection_id) for chat_id in chat_ids],
+            )
+        return len(chat_ids)
 
     def get_chat(self, chat_id: int) -> Chat | None:
         with self._lock:

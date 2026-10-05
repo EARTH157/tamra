@@ -107,6 +107,27 @@ def test_a_v2_database_without_a_project_upgrades_with_homeless_chats(tmp_path):
         store.close()
 
 
+def test_the_v3_migration_renames_duplicate_names_before_the_unique_index(tmp_path):
+    path = tmp_path / "tamra.db"
+    conn = connect(path)
+    conn.executescript("BEGIN;\n" + _V1 + _V2 + "\nPRAGMA user_version = 2;\nCOMMIT;")
+    for collection_id, name in ((1, "Docs"), (2, "docs"), (3, "Other"), (4, "DOCS")):
+        conn.execute(
+            "INSERT INTO collections (id, name, folder_path, embedding_model_id, created_at)"
+            f" VALUES ({collection_id}, '{name}', 'C:/{collection_id}', 'm', '{NOW}')"
+        )
+    conn.commit()
+    conn.close()
+    store = Store.open(path)
+    try:
+        names = {c.id: c.name for c in store.list_collections()}
+        assert names == {1: "Docs", 2: "docs (2)", 3: "Other", 4: "DOCS (4)"}
+        with pytest.raises(ValueError, match="name taken"):
+            store.create_collection("OTHER", "D:/x", MODEL)
+    finally:
+        store.close()
+
+
 # Collections ----------------------------------------------------------------------------------
 
 
@@ -179,7 +200,8 @@ def test_delete_collection_removes_its_index_and_home_chats(store):
     assert vector_count(store) == 1
     assert store.search_keyword([two.id], '"gam"', 10)
     assert store._conn.execute("SELECT count(*) FROM files").fetchone()[0] == 1
-    assert store.delete_collection(999) == 0
+    assert store.delete_collection(999) is None
+    assert store.delete_collection(two.id) == 1  # a project with one home chat
 
 
 def test_a_chat_that_also_searched_a_deleted_project_loses_it_from_its_scope(store):
@@ -202,6 +224,39 @@ def test_a_chat_left_with_an_empty_scope_falls_back_to_its_home(store):
 
 
 # Chats ----------------------------------------------------------------------------------------
+
+
+def test_homeless_chats_are_adopted_by_a_project(store):
+    one = store.create_collection("One", "D:/one", MODEL)
+    two = store.create_collection("Two", "D:/two", MODEL)
+    homed = store.create_chat("Homed", two.id)
+    first = store.create_chat("First")
+    second = store.create_chat("Second")
+    assert store.adopt_homeless_chats(one.id) == 2
+    for chat_id in (first.id, second.id):
+        adopted = store.get_chat(chat_id)
+        assert (adopted.collection_id, adopted.scope) == (one.id, [one.id])
+    assert (store.get_chat(homed.id).collection_id, store.get_chat(homed.id).scope) == (
+        two.id,
+        [two.id],
+    )
+    assert store.adopt_homeless_chats(one.id) == 0
+    with pytest.raises(ValueError):
+        store.adopt_homeless_chats(999)
+
+
+def test_a_chats_scope_is_read_for_that_chat_only(store):
+    one = store.create_collection("One", "D:/one", MODEL)
+    two = store.create_collection("Two", "D:/two", MODEL)
+    mine = store.create_chat("Mine", one.id)
+    store.set_chat_scope(mine.id, [one.id, two.id])
+    other = store.create_chat("Other", two.id)
+    assert store.get_chat(mine.id).scope == [one.id, two.id]
+    assert store.get_chat(other.id).scope == [two.id]
+    assert {c.id: c.scope for c in store.list_chats()} == {
+        mine.id: [one.id, two.id],
+        other.id: [two.id],
+    }
 
 
 def test_a_new_chat_searches_its_home_project(store):
@@ -343,3 +398,12 @@ def test_next_pending_file_any_skips_a_stale_project(store):
     assert store.next_pending_file_any(MODEL).id == waiting
     store.set_file_status(waiting, "indexing")
     assert store.next_pending_file_any(MODEL) is None
+
+
+def test_next_pending_file_any_skips_excluded_projects(store):
+    one = store.create_collection("One", "D:/one", MODEL)
+    two = store.create_collection("Two", "D:/two", MODEL)
+    store.add_file(one.id, "a.md", 1, 1.0)
+    waiting = store.add_file(two.id, "b.md", 1, 1.0)
+    assert store.next_pending_file_any(MODEL, [one.id]).id == waiting
+    assert store.next_pending_file_any(MODEL, [one.id, two.id]) is None

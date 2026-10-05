@@ -1,4 +1,4 @@
-"""Keep a collection's index in step with its folder: reconcile, then index one file at a time."""
+"""Keep every project's index in step with its folder: reconcile, then index one file at a time."""
 
 import logging
 import os
@@ -27,8 +27,8 @@ class EmbedderLike(Protocol):
 
 @dataclass(frozen=True)
 class IndexerState:
-    current: str | None  # file being indexed right now
-    error: str | None  # what stops indexing (missing folder, unavailable model)
+    current: str | None  # file of this project being indexed right now
+    error: str | None  # what stops indexing it (missing folder, unavailable model)
 
 
 class _Pause(Exception):
@@ -38,14 +38,15 @@ class _Pause(Exception):
 def scan_folder(folder: Path) -> dict[str, tuple[int, float]]:
     """Supported documents under folder: forward-slash relative path -> (size, mtime).
 
-    Skips dot-files and dot-folders, Office lock files (~$*), and hidden or system items.
+    Skips dot-files and dot-folders, Office lock files (~$*), hidden or system items, and
+    symlinks and directory junctions (a link may point outside the folder or back into it).
     """
     found: dict[str, tuple[int, float]] = {}
-    for root, dirs, names in os.walk(folder):
-        dirs[:] = [d for d in dirs if not _ignored(Path(root, d))]
+    for root, dirs, names in os.walk(folder, followlinks=False):
+        dirs[:] = [d for d in dirs if not _ignored(Path(root, d)) and not _is_link(Path(root, d))]
         for name in names:
             path = Path(root, name)
-            if path.suffix.lower() not in SUPPORTED or _ignored(path):
+            if path.suffix.lower() not in SUPPORTED or _ignored(path) or _is_link(path):
                 continue
             try:
                 info = path.stat()
@@ -53,6 +54,10 @@ def scan_folder(folder: Path) -> dict[str, tuple[int, float]]:
                 continue
             found[path.relative_to(folder).as_posix()] = (info.st_size, info.st_mtime)
     return found
+
+
+def _is_link(path: Path) -> bool:
+    return path.is_symlink() or os.path.isjunction(path)
 
 
 def _ignored(path: Path) -> bool:
@@ -66,7 +71,11 @@ def _ignored(path: Path) -> bool:
 
 
 class Indexer:
-    """The single background worker of spec §5. Requests are coalesced into passes."""
+    """The single background worker of spec §5, shared by every project.
+
+    Requests are coalesced into passes: a pass reconciles the requested projects, then indexes
+    pending files, oldest first across all projects.
+    """
 
     def __init__(
         self,
@@ -83,10 +92,11 @@ class Indexer:
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stopping = threading.Event()
-        self._reconcile_requested = False
-        self._rebuild_requested = False
-        self._current: str | None = None
-        self._error: str | None = None
+        self._reconcile_all = False
+        self._reconcile: set[int] = set()
+        self._rebuild: set[int] = set()
+        self._current: tuple[int, str] | None = None  # (project, file) being indexed now
+        self._errors: dict[int, str] = {}
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -101,45 +111,76 @@ class Indexer:
             self._thread.join(timeout)
             self._thread = None
 
-    def request_reconcile(self) -> None:
+    def request_reconcile(self, collection_id: int | None = None) -> None:
+        """Compare a project's folder with its index; None means every project."""
         with self._lock:
-            self._reconcile_requested = True
+            if collection_id is None:
+                self._reconcile_all = True
+            else:
+                self._reconcile.add(collection_id)
         self._wake.set()
 
-    def request_rebuild(self) -> None:
+    def request_rebuild(self, collection_id: int) -> None:
         with self._lock:
-            self._rebuild_requested = True
-            self._reconcile_requested = True
+            self._rebuild.add(collection_id)
+            self._reconcile.add(collection_id)
         self._wake.set()
 
-    def state(self) -> IndexerState:
+    def forget(self, collection_id: int) -> None:
+        """Drop what is remembered about a project that was deleted."""
         with self._lock:
-            return IndexerState(self._current, self._error)
+            self._reconcile.discard(collection_id)
+            self._rebuild.discard(collection_id)
+            self._errors.pop(collection_id, None)
+
+    def state(self, collection_id: int) -> IndexerState:
+        """What the worker is doing for this project. It reads memory only, no store queries."""
+        with self._lock:
+            working = self._current is not None and self._current[0] == collection_id
+            return IndexerState(
+                self._current[1] if working else None, self._errors.get(collection_id)
+            )
 
     def process(self) -> None:
         """Handle the pending requests and index pending files, on the calling thread."""
         with self._lock:
-            rebuild, reconcile = self._rebuild_requested, self._reconcile_requested
-            self._rebuild_requested = self._reconcile_requested = False
-        collections = self._store.list_collections()
-        collection = collections[0] if collections else None
-        if collection is not None and rebuild:
-            self._store.reset_index(collection.id, self._model_id)
-            collection = self._store.get_collection(collection.id)
-        if collection is None or collection.embedding_model_id != self._model_id:
-            self._set_error(None)  # nothing to do; a stale collection reports itself
-            return
-        folder = Path(collection.folder_path)
-        if not folder.is_dir():
-            self._set_error(f"Folder not found: {folder}")
-            return
-        if reconcile:
-            self._reconcile(collection.id, folder)
-        self._set_error(None)
+            reconcile_all, reconcile, rebuild = self._reconcile_all, self._reconcile, self._rebuild
+            self._reconcile_all, self._reconcile, self._rebuild = False, set(), set()
+        blocked: list[int] = []  # projects whose files cannot be indexed in this pass
+        for collection in self._store.list_collections():
+            if collection.id in rebuild:
+                self._store.reset_index(collection.id, self._model_id)
+                collection = self._store.get_collection(collection.id)
+                if collection is None:
+                    continue
+            if collection.embedding_model_id != self._model_id:
+                self._set_error(collection.id, None)  # nothing to do; a stale project says so
+                continue
+            folder = Path(collection.folder_path)
+            if not folder.is_dir():
+                self._set_error(collection.id, f"Folder not found: {folder}")
+                blocked.append(collection.id)
+                continue
+            self._set_error(collection.id, None)
+            if reconcile_all or collection.id in reconcile:
+                try:
+                    self._reconcile_project(collection.id, folder)
+                except Exception as e:  # one project must not stop the others
+                    log.exception("reconciling project %s failed", collection.id)
+                    self._set_error(collection.id, f"{type(e).__name__}: {e}")
+                    blocked.append(collection.id)
         try:
-            self._index_pending(collection.id, folder)
+            self._index_pending(blocked)
         except _Pause as pause:
-            self._set_error(str(pause))
+            self._report_pause(str(pause), blocked)
+
+    def _report_pause(self, message: str, blocked: list[int]) -> None:
+        """Tell every project that is waiting to be indexed why it is not."""
+        for collection in self._store.list_collections():
+            if collection.id in blocked or collection.embedding_model_id != self._model_id:
+                continue
+            if self._store.status_counts(collection.id)["pending"]:
+                self._set_error(collection.id, message)
 
     def _run(self) -> None:
         while not self._stopping.is_set():
@@ -151,18 +192,25 @@ class Indexer:
                 self.process()
             except Exception as e:  # keep the worker alive; the state says what went wrong
                 log.exception("indexer pass failed")
-                self._set_error(f"{type(e).__name__}: {e}")
+                try:
+                    for collection in self._store.list_collections():
+                        self._set_error(collection.id, f"{type(e).__name__}: {e}")
+                except Exception:  # the store itself failed; the log has it
+                    log.exception("indexer cannot report the failure")
 
-    def _set_error(self, error: str | None) -> None:
+    def _set_error(self, collection_id: int, error: str | None) -> None:
         with self._lock:
-            self._error = error
+            if error is None:
+                self._errors.pop(collection_id, None)
+            else:
+                self._errors[collection_id] = error
 
     def _token_spans(self) -> TokenSpans:
         if self._spans is None:
             self._spans = self._token_spans_factory()
         return self._spans
 
-    def _reconcile(self, collection_id: int, folder: Path) -> None:
+    def _reconcile_project(self, collection_id: int, folder: Path) -> None:
         on_disk = scan_folder(folder)
         known = {record.rel_path: record for record in self._store.list_files(collection_id)}
         for rel_path, record in known.items():
@@ -181,21 +229,29 @@ class Indexer:
                 )
                 self._store.update_file_stat(record.id, size, mtime, pending=changed)
 
-    def _index_pending(self, collection_id: int, folder: Path) -> None:
+    def _index_pending(self, blocked: list[int]) -> None:
         while not self._stopping.is_set():
             with self._lock:
-                if self._reconcile_requested or self._rebuild_requested:
+                if self._reconcile_all or self._reconcile or self._rebuild:
                     self._wake.set()  # a newer request wins; the worker loops back to it
                     return
-            record = self._store.next_pending_file(collection_id)
+            record = self._store.next_pending_file_any(self._model_id, blocked)
             if record is None:
                 return
-            self._index_file(record.id, record.rel_path, folder / record.rel_path)
+            collection = self._store.get_collection(record.collection_id)
+            if collection is None:  # deleted since the file was picked
+                continue
+            folder = Path(collection.folder_path)
+            if not folder.is_dir():  # e.g. the drive went away during the pass
+                self._set_error(collection.id, f"Folder not found: {folder}")
+                blocked.append(collection.id)
+                continue
+            self._index_file(collection.id, record.id, record.rel_path, folder / record.rel_path)
 
-    def _index_file(self, file_id: int, rel_path: str, path: Path) -> None:
+    def _index_file(self, collection_id: int, file_id: int, rel_path: str, path: Path) -> None:
         self._store.set_file_status(file_id, "indexing")
         with self._lock:
-            self._current = rel_path
+            self._current = (collection_id, rel_path)
         try:
             try:
                 embedder = self._embedder()
@@ -222,7 +278,7 @@ class Indexer:
                     file_id, chunks, vectors, content_hash=content_hash, note=doc.note
                 )
             except LookupError:
-                return  # the file left the collection while it was being indexed
+                return  # the file left the project while it was being indexed
         except _Pause:
             raise
         except (ParseError, OSError) as e:

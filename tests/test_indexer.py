@@ -1,3 +1,4 @@
+import _winapi
 import ctypes
 import os
 import shutil
@@ -7,7 +8,7 @@ import pytest
 from docgen import LATIN_THAI, make_docx, make_pdf
 from fakes import FakeEmbedder, fake_spans
 
-from tamra.ingest.indexer import Indexer, scan_folder
+from tamra.ingest.indexer import Indexer, IndexerState, scan_folder
 from tamra.store import Store
 
 MODEL = "model-1"
@@ -52,7 +53,7 @@ def test_new_documents_are_indexed(env):
         "sub/b.txt": "indexed",
     }
     assert keyword(store, "lease") and keyword(store, "Parking") and keyword(store, "Cats")
-    assert indexer.state().error is None
+    assert indexer.state(store.list_collections()[0].id).error is None
 
 
 def test_unchanged_files_are_not_reindexed(env):
@@ -129,7 +130,7 @@ def test_a_stale_collection_waits_for_a_rebuild(env):
     (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
     run(indexer)
     assert store.list_files(store.list_collections()[0].id) == []
-    indexer.request_rebuild()
+    indexer.request_rebuild(store.list_collections()[0].id)
     indexer.process()
     assert store.list_collections()[0].embedding_model_id == MODEL
     assert files(store)["a.md"].status == "indexed"
@@ -141,7 +142,7 @@ def test_a_missing_folder_is_reported_and_the_index_kept(env):
     run(indexer)
     shutil.rmtree(docs)
     run(indexer)
-    assert indexer.state().error.startswith("Folder not found")
+    assert indexer.state(store.list_collections()[0].id).error.startswith("Folder not found")
     assert files(store)["a.md"].status == "indexed"
 
 
@@ -158,7 +159,9 @@ def test_an_unavailable_model_pauses_indexing_without_failing_files(tmp_path):
     try:
         indexer = Indexer(store, missing, lambda: fake_spans, MODEL)
         run(indexer)
-        assert indexer.state().error.startswith("Embedding model unavailable")
+        assert indexer.state(store.list_collections()[0].id).error.startswith(
+            "Embedding model unavailable"
+        )
         assert files(store)["a.md"].status == "pending"
     finally:
         store.close()
@@ -234,4 +237,185 @@ def test_the_background_worker_indexes_and_stops(env):
         time.sleep(0.05)
     assert files(store)["a.md"].status == "indexed"
     indexer.stop()
-    assert indexer.state().current is None
+    assert indexer.state(store.list_collections()[0].id).current is None
+
+
+# --- several projects, one worker ---
+
+
+@pytest.fixture
+def two(tmp_path):
+    folders = []
+    for name in ("alpha", "beta"):
+        folder = tmp_path / name
+        folder.mkdir()
+        folders.append(folder)
+    store = Store.open(tmp_path / "tamra.db")
+    embedder = FakeEmbedder()
+    indexer = Indexer(store, lambda: embedder, lambda: fake_spans, MODEL)
+    projects = [store.create_collection(f.name, str(f), MODEL) for f in folders]
+    yield folders, projects, store, embedder, indexer
+    indexer.stop()
+    store.close()
+
+
+def statuses(store, project):
+    return {f.rel_path: f.status for f in store.list_files(project.id)}
+
+
+def test_every_project_is_indexed_by_one_pass(two):
+    (alpha, beta), (a, b), store, _, indexer = two
+    (alpha / "a.md").write_text("Lease terms.", encoding="utf-8")
+    (beta / "b.md").write_text("Parking rules.", encoding="utf-8")
+    indexer.request_reconcile()
+    indexer.process()
+    assert statuses(store, a) == {"a.md": "indexed"}
+    assert statuses(store, b) == {"b.md": "indexed"}
+    assert indexer.state(a.id) == indexer.state(b.id) == IndexerState(None, None)
+
+
+def test_the_background_worker_indexes_all_projects(two):
+    (alpha, beta), (a, b), store, _, indexer = two
+    (alpha / "a.md").write_text("Lease terms.", encoding="utf-8")
+    (beta / "b.md").write_text("Parking rules.", encoding="utf-8")
+    indexer.start()
+    indexer.request_reconcile()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not (
+        set(statuses(store, a).values()) == {"indexed"}
+        and set(statuses(store, b).values()) == {"indexed"}
+    ):
+        time.sleep(0.05)
+    assert statuses(store, a) == {"a.md": "indexed"}
+    assert statuses(store, b) == {"b.md": "indexed"}
+
+
+def test_a_request_for_one_project_reconciles_only_that_project(two):
+    (alpha, beta), (a, b), store, _, indexer = two
+    indexer.request_reconcile()
+    indexer.process()
+    (alpha / "a.md").write_text("Lease terms.", encoding="utf-8")
+    (beta / "b.md").write_text("Parking rules.", encoding="utf-8")
+    indexer.request_reconcile(a.id)
+    indexer.process()
+    assert statuses(store, a) == {"a.md": "indexed"}
+    assert statuses(store, b) == {}
+    indexer.request_reconcile(b.id)
+    indexer.process()
+    assert statuses(store, b) == {"b.md": "indexed"}
+
+
+def test_rebuilding_one_project_leaves_the_other_indexed(two):
+    (alpha, beta), (a, b), store, embedder, indexer = two
+    (alpha / "a.md").write_text("Lease terms.", encoding="utf-8")
+    (beta / "b.md").write_text("Parking rules.", encoding="utf-8")
+    indexer.request_reconcile()
+    indexer.process()
+    beta_hash = store.list_files(b.id)[0].content_hash
+    calls = embedder.calls
+    indexer.request_rebuild(a.id)
+    indexer.process()
+    assert embedder.calls == calls + 1  # only alpha's file was embedded again
+    assert statuses(store, a) == {"a.md": "indexed"}
+    assert [(f.status, f.content_hash) for f in store.list_files(b.id)] == [("indexed", beta_hash)]
+    assert store.search_keyword([b.id], '"Par"', 10)
+
+
+def test_a_missing_folder_blocks_only_its_own_project(two):
+    (alpha, beta), (a, b), store, _, indexer = two
+    (alpha / "a.md").write_text("Lease terms.", encoding="utf-8")
+    indexer.request_reconcile()
+    indexer.process()
+    store.reset_index(a.id, MODEL)  # alpha's file is pending again
+    shutil.rmtree(alpha)
+    (beta / "b.md").write_text("Parking rules.", encoding="utf-8")
+    indexer.request_reconcile()
+    indexer.process()
+    assert indexer.state(a.id).error.startswith("Folder not found")
+    assert indexer.state(b.id) == IndexerState(None, None)
+    assert statuses(store, a) == {"a.md": "pending"}  # waits for the folder, is not failed
+    assert statuses(store, b) == {"b.md": "indexed"}
+
+
+def test_a_stale_project_does_not_hold_back_the_others(two):
+    (alpha, beta), (a, b), store, _, indexer = two
+    store.reset_index(a.id, "old-model")
+    (alpha / "a.md").write_text("Lease terms.", encoding="utf-8")
+    (beta / "b.md").write_text("Parking rules.", encoding="utf-8")
+    indexer.request_reconcile()
+    indexer.process()
+    assert statuses(store, a) == {}
+    assert statuses(store, b) == {"b.md": "indexed"}
+
+
+def test_an_unavailable_model_is_reported_for_each_project_with_waiting_files(tmp_path):
+    store = Store.open(tmp_path / "tamra.db")
+    try:
+        projects = []
+        for name, text in (("alpha", "Lease terms."), ("beta", None)):
+            folder = tmp_path / name
+            folder.mkdir()
+            if text:
+                (folder / "a.md").write_text(text, encoding="utf-8")
+            projects.append(store.create_collection(name, str(folder), MODEL))
+
+        def missing():
+            raise FileNotFoundError("model.onnx not found")
+
+        indexer = Indexer(store, missing, lambda: fake_spans, MODEL)
+        indexer.request_reconcile()
+        indexer.process()
+        assert indexer.state(projects[0].id).error.startswith("Embedding model unavailable")
+        assert indexer.state(projects[1].id).error is None  # nothing waiting there
+    finally:
+        store.close()
+
+
+def test_state_names_the_file_of_the_project_being_indexed(two):
+    (alpha, beta), (a, b), store, _, indexer = two
+    (alpha / "a.md").write_text("Lease terms.", encoding="utf-8")
+    seen = []
+
+    class WatchingEmbedder(FakeEmbedder):
+        def embed(self, texts, batch_size=16):
+            seen.append((indexer.state(a.id).current, indexer.state(b.id).current))
+            return super().embed(texts, batch_size)
+
+    watching = WatchingEmbedder()
+    indexer._embedder = lambda: watching
+    indexer.request_reconcile()
+    indexer.process()
+    assert seen == [("a.md", None)]
+    assert indexer.state(a.id).current is None
+
+
+def test_a_forgotten_project_has_no_state(two):
+    (alpha, _), (a, _), store, _, indexer = two
+    shutil.rmtree(alpha)
+    indexer.request_reconcile(a.id)
+    indexer.process()
+    assert indexer.state(a.id).error
+    indexer.forget(a.id)
+    assert indexer.state(a.id) == IndexerState(None, None)
+
+
+# --- links ---
+
+
+def test_scan_skips_directory_junctions_and_symlinks(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("x", encoding="utf-8")
+    folder = tmp_path / "docs"
+    (folder / "real").mkdir(parents=True)
+    (folder / "real" / "kept.md").write_text("x", encoding="utf-8")
+    _winapi.CreateJunction(str(outside), str(folder / "junction"))
+    assert (folder / "junction" / "secret.md").exists()  # the junction really leads outside
+    assert set(scan_folder(folder)) == {"real/kept.md"}
+
+    try:
+        (folder / "dirlink").symlink_to(outside, target_is_directory=True)
+        (folder / "filelink.md").symlink_to(outside / "secret.md")
+    except OSError:
+        return  # creating symlinks needs a privilege this account lacks
+    assert set(scan_folder(folder)) == {"real/kept.md"}

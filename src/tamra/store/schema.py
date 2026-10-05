@@ -95,7 +95,10 @@ CREATE TABLE chat_collections (
     PRIMARY KEY (chat_id, collection_id)
 );
 CREATE INDEX chat_collections_by_collection ON chat_collections(collection_id);
+UPDATE collections SET name = name || ' (' || id || ')'
+    WHERE id NOT IN (SELECT MIN(id) FROM collections GROUP BY name COLLATE NOCASE);
 CREATE UNIQUE INDEX collections_name_nocase ON collections(name COLLATE NOCASE);
+CREATE INDEX files_pending ON files(id) WHERE status = 'pending';
 UPDATE chats SET collection_id = (SELECT id FROM collections ORDER BY id LIMIT 1);
 INSERT INTO chat_collections (chat_id, collection_id)
     SELECT id, collection_id FROM chats WHERE collection_id IS NOT NULL;
