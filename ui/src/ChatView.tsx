@@ -8,7 +8,7 @@ import Composer from "./Composer";
 import { useT } from "./i18n";
 import { canThink, useModels } from "./models";
 import { isNotFound } from "./notFound";
-import { type Selected, sentenceBefore } from "./selection";
+import { MIN_SELECTION, type Selected, sentenceBefore } from "./selection";
 import { useSettings } from "./settings";
 import SourcePanel, { type Check, fileName, folderOf, sourceLabel } from "./SourcePanel";
 import Thinking, { type Thought, thoughtSeconds } from "./Thinking";
@@ -572,7 +572,7 @@ function Answer({
           if (messageId === undefined || !onCheck) return onOpen(source);
           // A chip checks the sentence it ends, against its own source.
           const { start, end } = sentenceBefore(text, index);
-          if (end <= start) return onOpen(source); // nothing before it to check
+          if (end - start < MIN_SELECTION) return onOpen(source); // too little before it to check
           onCheck({ text: text.slice(start, end), start, end }, n);
         }}
       />

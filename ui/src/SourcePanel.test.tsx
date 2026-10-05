@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SourcePanel, { type Check } from "./SourcePanel";
-import { buttonByText, click, json, type Mounted, mockFetch, mount } from "./test-utils";
+import { buttonByText, click, json, type Mounted, mockFetch, mount, settle } from "./test-utils";
 import type { Match, Source } from "./types";
 
 let view: Mounted | undefined;
@@ -245,6 +246,63 @@ describe("SourcePanel", () => {
     await view.unmount();
     view = await mount(<SourcePanel {...base} source={{ ...sources[0], file_id: null }} />);
     expect(buttonByText(view.container, "Open file")).toBeUndefined();
+  });
+
+  it("reads the core's offsets as code points when the snapshot has an emoji before the window", async () => {
+    const text = "😀😀 Leave is six days. Rent is monthly.";
+    const startCp = Array.from("😀😀 ").length; // 3 code points, 5 UTF-16 units
+    const endCp = startCp + Array.from("Leave is six days.").length;
+    const emoji: Match = { ...match, start: startCp, end: endCp, text: "Leave is six days." };
+    mockFetch({ [locateUrl(1, emoji)]: () => json(locatePdf) });
+    view = await mount(
+      <SourcePanel
+        {...base}
+        sources={[{ ...sources[0], text }, sources[1]]}
+        check={check({ matches: [emoji] })}
+      />,
+    );
+    expect(view.container.querySelector(".snapshot-hit")?.textContent).toBe("Leave is six days.");
+    expect(view.container.querySelector(".paper")?.textContent).toBe(text);
+  });
+
+  it("shows no snapshot when the answer's sources are missing", async () => {
+    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf) });
+    view = await mount(<SourcePanel {...base} sources={[]} check={check()} />);
+    expect(view.container.querySelector(".paper")).toBeNull();
+    expect(view.container.querySelector(".snapshot-hit")).toBeNull();
+    expect(view.container.querySelector(".compare-row")).not.toBeNull();
+  });
+
+  it("does not show the page of the previous match while the next one is being located", async () => {
+    const calls = new Map<string, () => void>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/locate?start=0&end=18")) {
+          await new Promise<void>((resolve) => calls.set(url, resolve)); // never answers in time
+          return json({ file_id: 8, kind: "pdf", changed: false, found: true, page: 9, page_count: 9 });
+        }
+        return json(locatePdf);
+      }),
+    );
+    function Host() {
+      const [index, setIndex] = useState(0);
+      return (
+        <SourcePanel
+          {...base}
+          check={check({ matches: [match, second], index })}
+          onIndexChange={setIndex}
+        />
+      );
+    }
+    view = await mount(<Host />);
+    expect(subtitle()).toBe("page 14 of 32");
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    expect(subtitle()).toBe("line 3"); // the saved label, not the old page
+    for (const release of calls.values()) release();
+    await settle();
+    expect(subtitle()).toBe("page 9 of 9");
   });
 
   it("closes", async () => {

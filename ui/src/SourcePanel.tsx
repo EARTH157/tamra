@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { TextWithParagraphs } from "./AnswerText";
 import { locateSource } from "./api";
 import { type TranslationKey, useT } from "./i18n";
+import { cpToUtf16 } from "./offsets";
 import type { Locate, Match, Source, ViewerRequest } from "./types";
 
 /** The file name of a collection-relative path ("a/b/c.pdf" -> "c.pdf"). */
@@ -91,7 +92,8 @@ export default function SourcePanel({
   const matches = check?.status === "ready" ? check.matches : [];
   const match = matches[check?.index ?? 0] ?? null;
   const located = useLocated(messageId, match);
-  const snapshot = match ? (sources.find((s) => s.n === match.n)?.text ?? match.text) : null;
+  // Without the answer's sources there is no snapshot to offset into: show none.
+  const snapshot = match ? (sources.find((s) => s.n === match.n)?.text ?? null) : null;
 
   const title = match ? match.file : (source?.file ?? null);
   const subtitle = match ? whereLine(match, located, t) : source ? sourceLabel(source) : "";
@@ -235,11 +237,12 @@ export default function SourcePanel({
   );
 }
 
-/** The snapshot text with the matched window highlighted and scrolled into view. */
+/** The snapshot text with the matched window (code-point offsets) highlighted and scrolled into view. */
 function Snapshot({ text, start, end }: { text: string; start: number; end: number }) {
   const mark = useRef<HTMLElement>(null);
-  const from = Math.max(0, Math.min(start, text.length));
-  const to = Math.max(from, Math.min(end, text.length));
+  // The core's offsets count code points; the string is indexed in UTF-16 units.
+  const from = cpToUtf16(text, start);
+  const to = Math.max(from, cpToUtf16(text, end));
   useEffect(() => {
     mark.current?.scrollIntoView?.({ block: "center" });
   }, [from, to, text]);
@@ -256,19 +259,23 @@ function Snapshot({ text, start, end }: { text: string; start: number; end: numb
   );
 }
 
-/** Where the shown passage is in the current file; null until known, and when it cannot be told. */
+/**
+ * Where the shown passage is in the current file; null until known, and when it cannot be told. A
+ * result is only used for the passage it was asked for, so a step to the next match never shows
+ * the page of the previous one for a frame.
+ */
 function useLocated(messageId: number | null, match: Match | null): Locate | null {
-  const [located, setLocated] = useState<Locate | null>(null);
+  const [result, setResult] = useState<{ key: string; located: Locate } | null>(null);
   const n = match?.n;
   const start = match?.start;
   const end = match?.end;
+  const key = `${messageId}:${n}:${start}:${end}`;
   useEffect(() => {
-    setLocated(null);
     if (messageId === null || n === undefined || start === undefined || end === undefined) return;
     let current = true;
     locateSource(messageId, n, { start, end })
-      .then((result) => {
-        if (current) setLocated(result);
+      .then((located) => {
+        if (current) setResult({ key, located });
       })
       .catch(() => {
         // The header keeps the saved label.
@@ -276,6 +283,6 @@ function useLocated(messageId: number | null, match: Match | null): Locate | nul
     return () => {
       current = false;
     };
-  }, [messageId, n, start, end]);
-  return located;
+  }, [messageId, n, start, end, key]);
+  return result?.key === key ? result.located : null;
 }

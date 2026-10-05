@@ -119,6 +119,70 @@ describe("selectionInside", () => {
     expect(selectionInside(b, "Another answer.")).toBeNull();
   });
 
+  it("maps Thai text, which has no spaces to split on", async () => {
+    const content = "พนักงานใหม่ลาพักร้อนได้ 6 วัน [1] ส่วนอื่นได้ 10 วัน";
+    const { a } = await mountAnswers(content);
+    const first = textOf(a, 0);
+    select([first, 6], [first, 22]);
+    expect(selectionInside(a, content)).toEqual({
+      text: content.slice(6, 22),
+      start: 6,
+      end: 22,
+    });
+    select([first, 3], [textOf(a, 1), 5]);
+    const picked = selectionInside(a, content);
+    expect(picked?.text).toBe(content.slice(3, content.indexOf("[1]") + 3 + 5));
+    expect(picked?.text).toContain("[1]");
+  });
+
+  it("gives the same offsets for a selection made backwards", async () => {
+    const content = "Three years [1] and more.";
+    const { a } = await mountAnswers(content);
+    window
+      .getSelection()!
+      .setBaseAndExtent(textOf(a, 1), 4, textOf(a, 0), 6); // anchor after focus
+    expect(window.getSelection()!.anchorNode).toBe(textOf(a, 1));
+    expect(selectionInside(a, content)).toEqual({ text: "years [1] and", start: 6, end: 19 });
+  });
+
+  it("maps a boundary in an empty paragraph break to the next text", async () => {
+    const content = "First part.\n\nSecond part.";
+    const { a } = await mountAnswers(content);
+    const gap = a.querySelector(".para-break")!;
+    select([gap, 0], [textOf(a, 1), 6]);
+    expect(selectionInside(a, content)).toEqual({ text: "Second", start: 13, end: 19 });
+  });
+
+  it("takes a triple click on the last paragraph, which ends at the start of the next block", async () => {
+    const content = "First part.\n\nSecond part.";
+    const { a, b } = await mountAnswers(content, "Another answer.");
+    select([textOf(a, 1), 0], [textOf(b, 0), 0]);
+    expect(selectionInside(a, content)).toEqual({
+      text: "Second part.",
+      start: 13,
+      end: 25,
+    });
+    select([textOf(a, 1), 0], [b.closest(".message")!, 0]);
+    expect(selectionInside(a, content)?.text).toBe("Second part.");
+    // The next block's start is no excuse to reach further in.
+    select([textOf(a, 1), 0], [textOf(b, 0), 3]);
+    expect(selectionInside(a, content)).toBeNull();
+  });
+
+  it("is null when the selection starts before the answer text, in the thinking block", async () => {
+    const content = "Hello world";
+    view = await mount(
+      <div className="message">
+        <p className="thinking">Let me think about this.</p>
+        <AnswerText text={content} sourceCount={0} onCite={() => {}} />
+      </div>,
+    );
+    const root = view.container.querySelector<HTMLElement>(".answer-text")!;
+    const thinking = view.container.querySelector(".thinking")!.firstChild!;
+    select([thinking, 3], [textOf(root, 0), 5]);
+    expect(selectionInside(root, content)).toBeNull();
+  });
+
   it("reaches to the end of the text when the selection runs past it inside the message", async () => {
     const content = "Hello world";
     const { a } = await mountAnswers(content);

@@ -174,6 +174,61 @@ describe("checking a source from an answer", () => {
     expect(checkButton()).toBeUndefined();
   });
 
+  it("keeps the button away after Escape: the keyup of the same key does not bring it back", async () => {
+    await open(() => json({ matches: [] }));
+    const first = answerText().querySelector("span[data-start]")!;
+    await selectIn(first, 0, 5);
+    expect(checkButton()).toBeDefined();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", bubbles: true }));
+    });
+    expect(checkButton()).toBeUndefined();
+    // A new selection shows it again.
+    await selectIn(first, 0, 9);
+    expect(checkButton()).toBeDefined();
+  });
+
+  it("shows the button again for the same selection after the mouse is pressed and released", async () => {
+    await open(() => json({ matches: [] }));
+    const first = answerText().querySelector("span[data-start]")!;
+    await selectIn(first, 0, 5);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(checkButton()).toBeUndefined();
+    await act(async () => {
+      document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    await selectIn(first, 0, 5);
+    expect(checkButton()).toBeDefined();
+  });
+
+  it("places the button under the selection, inside the window, and above it near the bottom", async () => {
+    await open(() => json({ matches: [] }));
+    const first = answerText().querySelector("span[data-start]")!;
+    let rect = { right: 1000, top: 100, bottom: 120 };
+    const rects = vi.fn(() => [rect]);
+    Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: rects });
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(150);
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(32);
+    try {
+      await selectIn(first, 0, 5);
+      expect(checkButton()?.style.left).toBe(`${window.innerWidth - 150 - 8}px`);
+      expect(checkButton()?.style.top).toBe("126px");
+      rect = { right: 40, top: window.innerHeight - 30, bottom: window.innerHeight - 10 };
+      await selectIn(first, 0, 9);
+      expect(checkButton()?.style.left).toBe("40px");
+      expect(checkButton()?.style.top).toBe(`${window.innerHeight - 30 - 6 - 32}px`);
+    } finally {
+      width.mockRestore();
+      height.mockRestore();
+      delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
+    }
+  });
+
   it("hides the button on scroll and when the selection is cleared", async () => {
     await open(() => json({ matches: [] }));
     const first = answerText().querySelector("span[data-start]")!;
@@ -252,6 +307,18 @@ describe("checking a source from an answer", () => {
     expect(checkButton()).toBeUndefined();
     finish();
     await settle();
+  });
+
+  it("opens the source as it is when too little text comes before the chip", async () => {
+    calls = mockFetch({
+      "GET /api/chats/5": () =>
+        json({ ...chat, messages: [message(2, "assistant", "A [1] and more [2].", sources)] }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    await click(answerText().querySelectorAll("button.cite")[0]); // only "A" before it
+    expect(attributionBody()).toBeUndefined();
+    expect(view.container.querySelector(".source-panel .paper")?.textContent).toBe(sources[0].text);
+    expect(view.container.querySelector(".source-panel .compare")).toBeNull();
   });
 
   it("shows an error when the check fails", async () => {

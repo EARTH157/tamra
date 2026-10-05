@@ -7,8 +7,6 @@ export const MAX_SELECTION = 2000;
 /** A selected part of an answer: offsets in the message content, and that exact substring. */
 export type Selected = { text: string; start: number; end: number };
 
-type Edge = "start" | "end";
-
 /** The element of the answer text that carries content offsets (data-start/data-end), if any. */
 function carrier(node: Node, root: HTMLElement): HTMLElement | null {
   const element = node instanceof HTMLElement ? node : node.parentElement;
@@ -51,40 +49,62 @@ function contentOffset(node: Node, offset: number, root: HTMLElement): number | 
     const last = carriersIn(children[i]).at(-1);
     if (last) return offsetsOf(last)[1];
   }
-  return null;
+  // A node with nothing to read an offset from (an empty paragraph break): the nearest carrier
+  // after it, else the nearest before it.
+  const all = carriersIn(root);
+  const next = all.find((c) => node.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING);
+  if (next) return offsetsOf(next)[0];
+  const previous = all.filter((c) => node.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_PRECEDING);
+  const last = previous.at(-1);
+  return last ? offsetsOf(last)[1] : null;
+}
+
+/** Whether (container, 0) is the very first position inside `node`: its first-child chain. */
+function isFirstPosition(container: Node, node: Node | null): boolean {
+  for (let n = node; n; n = n.firstChild) if (n === container) return true;
+  return false;
+}
+
+/** The first node after `scope` in document order that is not inside it. */
+function nodeAfter(scope: Node): Node | null {
+  let n: Node | null = scope;
+  while (n && !n.nextSibling) n = n.parentNode;
+  return n?.nextSibling ?? null;
 }
 
 /**
  * The selection when it lies inside one answer's text. `root` is the element that holds the
- * rendered text (AnswerText) and `content` the message content it was rendered from. A selection
- * that reaches into another message gives null, and so does one that is collapsed, or shorter
- * than MIN_SELECTION or longer than MAX_SELECTION once trimmed. Offsets are mapped back through the
+ * rendered text (AnswerText) and `content` the message content it was rendered from. The
+ * selection has to start inside the text; its end may run on into the rest of the same message
+ * (the source cards), or stop at the start of the next block as a triple click on the last
+ * paragraph does, and then reaches to the end of the text. A selection that starts elsewhere or
+ * reaches into another message gives null, and so does one that is collapsed, or shorter than
+ * MIN_SELECTION or longer than MAX_SELECTION once trimmed. Offsets are mapped back through the
  * citation chips, so `text` is always the raw substring of `content`.
  */
 export function selectionInside(root: HTMLElement, content: string): Selected | null {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
   const range = selection.getRangeAt(0);
-  const scope = root.closest(".message") ?? root; // the thinking block and the cards share it
-  const edge = (container: Node, offset: number, which: Edge): number | null => {
+  if (!root.contains(range.startContainer)) return null;
+  const scope = root.closest(".message") ?? root; // the cards share it with the text
+  const startAt = contentOffset(range.startContainer, range.startOffset, root);
+  const endAt = ((): number | null => {
+    const { endContainer: container, endOffset: offset } = range;
     if (root.contains(container)) return contentOffset(container, offset, root);
-    if (!scope.contains(container)) return null;
-    // Outside the text but in the same message: before it, after it, or an ancestor boundary.
-    let after: boolean;
-    if (container.contains(root)) {
+    if (scope.contains(container)) {
+      // Past the text, inside the same message (or on a boundary of an ancestor of the text).
+      if (!container.contains(root)) return content.length;
       let branch: Node = root;
       while (branch.parentNode !== container) branch = branch.parentNode as Node;
-      const index = [...container.childNodes].indexOf(branch as ChildNode);
-      after = offset > index;
-    } else {
-      after = !!(root.compareDocumentPosition(container) & Node.DOCUMENT_POSITION_FOLLOWING);
+      return offset > [...container.childNodes].indexOf(branch as ChildNode) ? content.length : null;
     }
-    if (which === "start") return after ? null : 0;
-    return after ? content.length : null;
-  };
-  let start = edge(range.startContainer, range.startOffset, "start");
-  let end = edge(range.endContainer, range.endOffset, "end");
-  if (start === null || end === null) return null;
+    // A triple click on the last paragraph ends at the start of the next block.
+    return offset === 0 && isFirstPosition(container, nodeAfter(scope)) ? content.length : null;
+  })();
+  if (startAt === null || endAt === null) return null;
+  let start = startAt;
+  let end = endAt;
   while (start < end && /\s/.test(content[start])) start++;
   while (end > start && /\s/.test(content[end - 1])) end--;
   if (end - start < MIN_SELECTION || end - start > MAX_SELECTION) return null;
