@@ -97,10 +97,29 @@ def windows(text: str, spans: TokenSpans) -> list[tuple[int, int]]:
         last = min(first + WINDOW_TOKENS, count)
         start = 0 if first == 0 else offsets[first][0]
         end = len(text) if last == count else offsets[last - 1][1]
-        ranges.append((start, end))
+        ranges.append(_snap_to_words(text, start, end))
         if last == count:
             break
     return ranges
+
+
+def _in_word(c: str) -> bool:
+    """A letter or digit of a script that separates words with spaces (Latin, Greek, Cyrillic)."""
+    return c.isalnum() and ord(c) < 0x0530
+
+
+def _snap_to_words(text: str, start: int, end: int, reach: int = 24) -> tuple[int, int]:
+    """Widen a token-cut range so it does not start or end inside a word ("rent i|s 18,500").
+
+    Thai and CJK have no spaces between words, so their token edges are kept as they are.
+    """
+    limit = max(0, start - reach)
+    while start > limit and _in_word(text[start - 1]) and _in_word(text[start]):
+        start -= 1
+    limit = min(len(text), end + reach)
+    while end < limit and _in_word(text[end - 1]) and _in_word(text[end]):
+        end += 1
+    return start, end
 
 
 def cited_in(content: str, selection: str) -> set[int]:

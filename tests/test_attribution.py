@@ -130,6 +130,29 @@ def test_the_last_window_ends_the_text_without_a_tiny_tail():
     assert len(fake_spans(text[ranges[-1][0] : ranges[-1][1]])) >= WINDOW_STRIDE
 
 
+def test_windows_do_not_start_or_end_inside_a_latin_word():
+    def subword_spans(text):  # every word becomes two-character tokens, as bge splits words
+        return [
+            (m.start() + i, min(m.start() + i + 2, m.end()))
+            for m in re.finditer(r"\S+", text)
+            for i in range(0, m.end() - m.start(), 2)
+        ]
+
+    text = " ".join(["rentals", "is", "eighteen"] * 30)
+    for start, end in windows(text, subword_spans):
+        assert start == 0 or text[start - 1] == " "
+        assert end == len(text) or text[end] == " "
+
+
+def test_thai_window_edges_are_kept_at_token_boundaries():
+    def char_spans(text):
+        return [(i, i + 1) for i in range(len(text))]
+
+    text = "ค่าเช่ารายเดือน" * 10
+    ranges = windows(text, char_spans)
+    assert ranges[1][0] == WINDOW_STRIDE  # no widening without spaces
+
+
 # --- cited_in ---
 
 
