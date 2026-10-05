@@ -4,6 +4,8 @@ Everything here only reads files. Callers pass a folder and a relative path; the
 filesystem path taken from a request.
 """
 
+import math
+import re
 import struct
 import zlib
 from dataclasses import dataclass
@@ -12,14 +14,20 @@ from typing import Literal
 
 import numpy as np
 import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_c
+from pypdfium2._helpers.bitmap import PdfPosConv
 
-from tamra.ingest.parsers import ParsedDoc, Unit
+from tamra.ingest.parsers import PDFIUM_LOCK, ParsedDoc, Unit
 
-MIN_PART_CHARS = 12  # a passage part shorter than this is too ambiguous to locate
+MIN_PART_CHARS = 12  # the anchor part must have this many normalised characters
+NEAR_CHARS = 40  # a shorter part counts when it sits this close to the part beside it
+REACH_UNITS = 3  # a part is searched this many units from the part beside it
 MIN_SCALE = 0.5
 MAX_SCALE = 3.0
+MAX_PIXELS = 25_000_000
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_WHITESPACE = re.compile(r"\s+")
 
 
 class ViewerError(Exception):
@@ -28,11 +36,18 @@ class ViewerError(Exception):
 
 def resolve_file(folder: str, rel_path: str) -> Path:
     """The file at folder/rel_path, which must exist and stay inside the collection folder."""
-    root = Path(folder).resolve()
-    path = (root / rel_path).resolve()
-    if path != root and root not in path.parents:
+    try:
+        root = Path(folder).resolve()
+        path = (root / rel_path).resolve()
+    except (OSError, ValueError) as e:  # ValueError: an embedded NUL byte
+        raise ViewerError("invalid path") from e
+    if not path.is_relative_to(root):
         raise ViewerError("outside the collection folder")
-    if not path.is_file():
+    try:
+        is_file = path.is_file()
+    except (OSError, ValueError) as e:
+        raise ViewerError("invalid path") from e
+    if not is_file:
         raise ViewerError("file not found")
     return path
 
@@ -52,32 +67,37 @@ class Found:
     end: int
 
 
+def _fold(text: str) -> str:
+    """Whitespace runs become one space and case is folded: the form passages are matched in."""
+    return _WHITESPACE.sub(" ", text).casefold()
+
+
 class _Normalized:
-    """A unit's text, normalised for matching, with a map back to offsets in the original."""
+    """A unit's text in `_fold` form, with a map from each character back to the original."""
 
     def __init__(self, text: str):
         chars: list[str] = []
         origin: list[int] = []
-        for i, c in enumerate(text):
-            if c.isspace():
-                if chars and chars[-1] == " ":
-                    continue
-                chars.append(" ")
-                origin.append(i)
-            else:
-                for folded in c.casefold():
+
+        def add(begin: int, stop: int) -> None:
+            for i in range(begin, stop):
+                for folded in text[i].casefold():
                     chars.append(folded)
                     origin.append(i)
+
+        position = 0
+        for run in _WHITESPACE.finditer(text):
+            add(position, run.start())
+            chars.append(" ")
+            origin.append(run.start())
+            position = run.end()
+        add(position, len(text))
         self.text = "".join(chars)
         self.origin = origin
 
     def span(self, start: int, end: int) -> tuple[int, int]:
         """Original offsets for the normalised range [start, end); the range ends on a non-space."""
         return self.origin[start], self.origin[end - 1] + 1
-
-
-def _normalize(text: str) -> str:
-    return _Normalized(text).text.strip()
 
 
 def _in_hint(unit: Unit, kind: str, hint: dict | None) -> bool:
@@ -91,6 +111,33 @@ def _in_hint(unit: Unit, kind: str, hint: dict | None) -> bool:
     return unit.line <= hint["line_end"] and hint["line_start"] <= last_line
 
 
+class _Units:
+    """Lazy per-unit normalisation: a cheap folded string first, the index map only on a hit."""
+
+    def __init__(self, units: list[Unit]):
+        self._units = units
+        self._folded: dict[int, str] = {}
+        self._full: dict[int, _Normalized] = {}
+
+    def __len__(self) -> int:
+        return len(self._units)
+
+    def contains(self, index: int, part: str) -> bool:
+        folded = self._folded.get(index)
+        if folded is None:
+            folded = self._folded[index] = _fold(self._units[index].text)
+        return part in folded
+
+    def full(self, index: int) -> _Normalized:
+        if index not in self._full:
+            self._full[index] = _Normalized(self._units[index].text)
+        return self._full[index]
+
+
+# (unit index, normalised start, normalised end) of a matched part
+_Match = tuple[int, int, int]
+
+
 def locate(doc: ParsedDoc, passage: str, hint: dict | None = None) -> Found | None:
     """Find `passage` (a chunk or a window of one) in the units of `doc`.
 
@@ -99,83 +146,93 @@ def locate(doc: ParsedDoc, passage: str, hint: dict | None = None) -> Found | No
     searched first, so repeated text resolves to the right occurrence.
     """
     parts = [
-        p for p in (_normalize(part) for part in passage.replace("\r\n", "\n").split("\n\n")) if p
+        p
+        for p in (_fold(part).strip() for part in passage.replace("\r\n", "\n").split("\n\n"))
+        if p
     ]
     if not parts:
         return None
     anchor_index = max(range(len(parts)), key=lambda i: len(parts[i]))
-    if len(parts[anchor_index]) < MIN_PART_CHARS:
+    anchor = parts[anchor_index]
+    if len(anchor) < MIN_PART_CHARS:
         return None
 
-    norms = [_Normalized(unit.text) for unit in doc.units]
-    order = [i for i, u in enumerate(doc.units) if _in_hint(u, doc.kind, hint)]
-    order += [i for i in range(len(doc.units)) if i not in order]
-
-    anchor = parts[anchor_index]
+    units = _Units(doc.units)
+    hinted = [i for i, u in enumerate(doc.units) if _in_hint(u, doc.kind, hint)]
+    hinted_set = set(hinted)
+    order = hinted + [i for i in range(len(doc.units)) if i not in hinted_set]
     for unit_index in order:
-        at = norms[unit_index].text.find(anchor)
-        if at >= 0:
+        if units.contains(unit_index, anchor):
+            at = units.full(unit_index).text.find(anchor)
             break
     else:
         return None
 
-    # (unit index, normalised start, normalised end) of every part that was found
-    first = last = (unit_index, at, at + len(anchor))
-    # A PDF chunk can run onto the next page, but the box offsets are per page: stay on one.
-    reach = range(unit_index, unit_index + 1) if doc.kind == "pdf" else range(len(doc.units))
+    # A PDF chunk can run onto the next page, but box offsets are per page: stay on one.
+    spread = 0 if doc.kind == "pdf" else REACH_UNITS
 
+    first = last = (unit_index, at, at + len(anchor))
     cursor = first
     for part in reversed(parts[:anchor_index]):
-        found = _search_back(norms, part, cursor[0], cursor[1], reach)
+        found = _search_back(units, part, cursor, spread)
         if found:
             first = cursor = found
     cursor = last
     for part in parts[anchor_index + 1 :]:
-        found = _search_forward(norms, part, cursor[0], cursor[2], reach)
+        found = _search_forward(units, part, cursor, spread)
         if found:
             last = cursor = found
+    return _to_found(doc, units, first, last)
 
-    return _to_found(doc, norms, first, last)
 
-
-def _search_back(
-    norms: list[_Normalized], part: str, unit: int, before: int, reach: range
-) -> tuple[int, int, int] | None:
-    if len(part) < MIN_PART_CHARS:
-        return None
-    for i in range(unit, reach.start - 1, -1):
-        if i not in reach:
+def _search_forward(units: _Units, part: str, cursor: _Match, spread: int) -> _Match | None:
+    """The part after `cursor`: ahead within `spread` units if long, else only right beside it."""
+    index, _, end = cursor
+    short = len(part) < MIN_PART_CHARS
+    for i in range(index, min(index + spread, len(units) - 1) + 1):
+        if short and i > index + 1:
+            return None  # only the next unit's opening counts
+        if not units.contains(i, part):
+            if short and i > index:
+                return None
             continue
-        limit = before if i == unit else len(norms[i].text)
-        at = norms[i].text.rfind(part, 0, limit)
+        text = units.full(i).text
+        begin = end if i == index else 0
+        stop = begin + NEAR_CHARS if short else len(text)
+        at = text.find(part, begin, stop)
         if at >= 0:
             return i, at, at + len(part)
+        if short and i > index:
+            return None
     return None
 
 
-def _search_forward(
-    norms: list[_Normalized], part: str, unit: int, after: int, reach: range
-) -> tuple[int, int, int] | None:
-    if len(part) < MIN_PART_CHARS:
-        return None
-    for i in range(unit, reach.stop):
-        if i not in reach:
+def _search_back(units: _Units, part: str, cursor: _Match, spread: int) -> _Match | None:
+    """The part before `cursor`: behind within `spread` units if long, else only right beside it."""
+    index, start, _ = cursor
+    short = len(part) < MIN_PART_CHARS
+    for i in range(index, max(index - spread, 0) - 1, -1):
+        if short and i < index - 1:
+            return None  # only the previous unit's closing counts
+        if not units.contains(i, part):
+            if short and i < index:
+                return None
             continue
-        at = norms[i].text.find(part, after if i == unit else 0)
+        text = units.full(i).text
+        stop = start if i == index else len(text)
+        begin = max(stop - NEAR_CHARS, 0) if short else 0
+        at = text.rfind(part, begin, stop)
         if at >= 0:
             return i, at, at + len(part)
+        if short and i < index:
+            return None
     return None
 
 
-def _to_found(
-    doc: ParsedDoc,
-    norms: list[_Normalized],
-    first: tuple[int, int, int],
-    last: tuple[int, int, int],
-) -> Found:
+def _to_found(doc: ParsedDoc, units: _Units, first: _Match, last: _Match) -> Found:
     first_unit, last_unit = doc.units[first[0]], doc.units[last[0]]
-    start, _ = norms[first[0]].span(first[1], first[2])
-    _, end = norms[last[0]].span(last[1], last[2])
+    start, _ = units.full(first[0]).span(first[1], first[2])
+    _, end = units.full(last[0]).span(last[1], last[2])
     if doc.kind == "pdf":
         return Found("pdf", first_unit.page, first_unit.char + start, first_unit.char + end)
     if doc.kind == "docx":
@@ -188,50 +245,56 @@ def _to_found(
     )
 
 
+# PDFium is not thread-safe, so each function below holds PDFIUM_LOCK from open to close.
+
+
 def pdf_page_count(path: Path) -> int:
-    pdf = _open_pdf(path)
-    try:
-        return len(pdf)
-    finally:
-        pdf.close()
+    with PDFIUM_LOCK:
+        pdf = _open_pdf(path)
+        try:
+            return len(pdf)
+        finally:
+            pdf.close()
 
 
 def render_pdf_page(path: Path, page: int, scale: float) -> bytes:
-    """A PNG of the 1-based `page`, at `scale` x 72 dpi (clamped to 0.5..3.0)."""
-    scale = min(max(scale, MIN_SCALE), MAX_SCALE)
-    pdf = _open_pdf(path)
-    try:
-        pdf_page = _get_page(pdf, page)
+    """A PNG of the 1-based `page`, at `scale` x 72 dpi (clamped to 0.5..3.0, at most 25 MP)."""
+    scale = min(max(scale, MIN_SCALE), MAX_SCALE) if math.isfinite(scale) else 1.0
+    with PDFIUM_LOCK:
+        pdf = _open_pdf(path)
         try:
-            bitmap = pdf_page.render(scale=scale)
+            pdf_page = _get_page(pdf, page)
             try:
-                pixels = bitmap.to_numpy()
-                rgb = _to_rgb(pixels)
-                height, width = rgb.shape[:2]
-                return _encode_png(rgb.tobytes(), width, height)
+                width, height = pdf_page.get_size()
+                if width * height * scale * scale > MAX_PIXELS:
+                    scale = 0.999 * math.sqrt(MAX_PIXELS / (width * height))  # sizes round up
+                bitmap = pdf_page.render(scale=scale)
+                try:
+                    return _encode_png(_to_rgb(bitmap.to_numpy()))
+                finally:
+                    bitmap.close()
             finally:
-                bitmap.close()
+                pdf_page.close()
         finally:
-            pdf_page.close()
-    finally:
-        pdf.close()
+            pdf.close()
 
 
-def _to_rgb(pixels):
+def _to_rgb(pixels: np.ndarray) -> np.ndarray:
     """The bitmap as an (h, w, 3) RGB array; pdfium renders BGR, BGRx, BGRA or gray."""
     if pixels.ndim == 2:  # gray
         return np.stack([pixels] * 3, axis=-1)
     return np.ascontiguousarray(pixels[:, :, 2::-1])  # B, G, R(, A) -> R, G, B
 
 
-def _encode_png(rgb: bytes, width: int, height: int) -> bytes:
-    """A minimal 8-bit RGB PNG with filter 0 on every row."""
-    stride = width * 3
-    raw = b"".join(b"\x00" + rgb[y * stride : (y + 1) * stride] for y in range(height))
+def _encode_png(rgb: np.ndarray) -> bytes:
+    """A minimal 8-bit RGB PNG from an (h, w, 3) uint8 array, with filter 0 on every row."""
+    height, width = rgb.shape[:2]
+    rows = np.zeros((height, 1 + width * 3), dtype=np.uint8)
+    rows[:, 1:] = rgb.reshape(height, width * 3)
     return (
         _PNG_SIGNATURE
         + _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-        + _chunk(b"IDAT", zlib.compress(raw, 6))
+        + _chunk(b"IDAT", zlib.compress(rows.tobytes(), 6))
         + _chunk(b"IEND", b"")
     )
 
@@ -245,41 +308,75 @@ def _chunk(kind: bytes, data: bytes) -> bytes:
     )
 
 
+_DEVICE_UNITS = 1000  # device pixels per point: pdfium maps to integers, so ask for fine ones
+
+
 def pdf_rects(
     path: Path, page: int, start: int, end: int
 ) -> list[tuple[float, float, float, float]]:
     """Boxes covering page text [start, end), as (x0, y0, x1, y1) fractions with a top-left origin.
 
-    The offsets are positions in the page's get_text_range() text, as in `Found`.
+    The offsets are positions in the page's get_text_range() text, as in `Found`. The boxes are
+    where the text appears in the rendered page, so page rotation and the crop box are applied.
     """
-    pdf = _open_pdf(path)
-    try:
-        pdf_page = _get_page(pdf, page)
+    if end <= start:
+        return []
+    with PDFIUM_LOCK:
+        pdf = _open_pdf(path)
         try:
-            left, bottom, right, top = pdf_page.get_bbox()
-            width, height = right - left, top - bottom
-            if width <= 0 or height <= 0 or end <= start:
-                return []
-            textpage = pdf_page.get_textpage()
+            pdf_page = _get_page(pdf, page)
             try:
-                rects = []
-                for i in range(textpage.count_rects(start, end - start)):
-                    x0, y0, x1, y1 = textpage.get_rect(i)
-                    rects.append(
-                        (
-                            _unit((x0 - left) / width),
-                            _unit(1 - (y1 - bottom) / height),
-                            _unit((x1 - left) / width),
-                            _unit(1 - (y0 - bottom) / height),
-                        )
-                    )
-                return rects
+                return _page_rects(pdf_page, start, end)
             finally:
-                textpage.close()
+                pdf_page.close()
         finally:
-            pdf_page.close()
+            pdf.close()
+
+
+def _page_rects(pdf_page, start: int, end: int) -> list[tuple[float, float, float, float]]:
+    width, height = pdf_page.get_size()  # as rendered: rotation and crop box applied
+    if width <= 0 or height <= 0:
+        return []
+    device_w, device_h = round(width * _DEVICE_UNITS), round(height * _DEVICE_UNITS)
+    to_device = PdfPosConv(pdf_page, (0, 0, device_w, device_h, 0))
+    textpage = pdf_page.get_textpage()
+    try:
+        first, after = _char_range(textpage, start, end)
+        rects = []
+        for i in range(textpage.count_rects(first, after - first)):
+            left, bottom, right, top = textpage.get_rect(i)
+            corners = [to_device.to_bitmap(x, y) for x in (left, right) for y in (bottom, top)]
+            xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+            rects.append(
+                (
+                    _unit(min(xs) / device_w),
+                    _unit(min(ys) / device_h),
+                    _unit(max(xs) / device_w),
+                    _unit(max(ys) / device_h),
+                )
+            )
+        return rects
     finally:
-        pdf.close()
+        textpage.close()
+
+
+def _char_range(textpage, start: int, end: int) -> tuple[int, int]:
+    """pdfium char indices (first, after-last) for text offsets [start, end).
+
+    Offsets count Python characters in get_text_range(); pdfium counts UTF-16 units (an emoji is
+    two) and leaves some characters out of the text, so both differences are mapped here.
+    """
+    text = textpage.get_text_range()
+    start, end = min(max(start, 0), len(text)), min(max(end, 0), len(text))
+    units_before = start + sum(ord(c) > 0xFFFF for c in text[:start])
+    units_through = end + sum(ord(c) > 0xFFFF for c in text[:end])
+    first = pdfium_c.FPDFText_GetCharIndexFromTextIndex(textpage, units_before)
+    last = pdfium_c.FPDFText_GetCharIndexFromTextIndex(textpage, max(units_through - 1, 0))
+    if first < 0:
+        first = units_before
+    if last < 0:
+        last = units_through - 1
+    return first, max(last + 1, first)
 
 
 def _unit(value: float) -> float:
@@ -289,7 +386,7 @@ def _unit(value: float) -> float:
 def _open_pdf(path: Path) -> pdfium.PdfDocument:
     try:
         return pdfium.PdfDocument(path)
-    except pdfium.PdfiumError as e:
+    except (pdfium.PdfiumError, OSError) as e:
         raise ViewerError(f"cannot open PDF: {e}") from e
 
 
@@ -311,13 +408,8 @@ def text_view(doc: ParsedDoc) -> dict:
         return {
             "kind": "docx",
             "paragraphs": [
-                {
-                    "index": unit.paragraph,
-                    "text": unit.text,
-                    "heading": bool(unit.heading_path)
-                    and unit.heading_path[-1] == unit.text.strip(),
-                }
-                for unit in doc.units
+                {"index": u.paragraph, "text": u.text, "heading": u.heading_level > 0}
+                for u in doc.units
             ],
         }
     raise ViewerError("a PDF is shown as page images")
