@@ -115,10 +115,38 @@ The controller ran the dev core on a scratch data folder with the corpus from
 - Selecting a sentence shows the **Check source** button next to the selection.
 - **Open file** opens the PDF viewer with the real page image and yellow boxes exactly on the cited
   text. Another source card switches the viewer to a TXT view with numbered Thai lines highlighted.
-- Zoom (50 to 200 percent) resizes the page and the boxes follow it. This was a bug that review
-  found (the page kept its width while the label changed) and that was fixed and re-checked.
+- Zoom resizes the page and the boxes follow it: 150% was checked visually; 50% and 200% are
+  covered by unit tests. This was a bug that review found (the page kept its width while the label
+  changed) and that was fixed and re-checked.
 - Another defect found during these checks was fixed: a window that started in the middle of a
   Latin word (windows now snap to word boundaries).
+
+## Deviations from the spec
+
+The spec (`docs/superpowers/specs/2026-10-02-tamra-design.md`) now describes what was built; these
+are the places where the first version of it differed, and why.
+
+- **pdf.js became `pypdfium2`.** Spec section 8 had pdf.js render the page in the browser. The core
+  renders the page to PNG with `pypdfium2` instead, and the highlight rectangles come from the same
+  pdfium text page that indexing used, so the coordinates match exactly. It also needs no large JS
+  dependency, no worker and no CSP `worker-src` change, and the page is the PDF's own rendering, so
+  Thai shaping is right.
+- **No `pdf_char_boxes` table.** Spec section 4 stored per-page character boxes. Boxes are computed
+  on demand from the current file, so there is no schema change and nothing to keep in step with
+  the file.
+- **A panel instead of a popup.** The attribution result is the right-side source panel (compare the
+  answer with the document, a strong or partial label, previous and next, the changed warning), not
+  a popup near the selection.
+- **A modal instead of a side panel for the viewer.** The document viewer is a modal over the chat,
+  opened by "Open file" in the panel. "Open with default app" is in the viewer.
+- **Rectangles are also computed for a changed file.** The spec only showed the stored snapshot when
+  `file_hash_at_answer` differed from the file. The viewer opens the current file and searches it
+  for the passage as well as it can; the "document changed since this answer" warning is always
+  shown in that case, because the passage it finds may not be the one the answer used.
+- **Chip semantics.** Clicking an `[n]` chip attributes the sentence that ends at that chip,
+  restricted to source `n` (the spec only said it opens the same popup). The chip marks the
+  source being shown as active, and a sentence with no text before the chip opens the source as it
+  is, without a comparison.
 
 ## Not done in M3
 
@@ -142,4 +170,20 @@ The controller ran the dev core on a scratch data folder with the corpus from
   slices a snapshot; the type does not say so.
 - **A matcher that checks support.** "Strong match" is similar wording only (see the known
   limitation above). Deciding whether a passage supports a claim would need an entailment model.
+- **The cross-page PDF locate test is weak.** `test_locate_pdf_part_across_pages_returns_the_page_of_the_longest_part`
+  uses a hand-written passage joined with a blank line, not a chunk the real chunker cut across a
+  page break, and it only checks that the longer side wins. Only the part on that page is
+  highlighted, and the part on the other page is not.
+- **The "document changed" banner is hidden when the answer's sources are missing.** It is drawn
+  with the snapshot, and a match whose source is not among the message's sources has no snapshot,
+  so neither is shown. Every match comes from the message's own sources, so this cannot happen with
+  real data.
+- **`Core.file_path` resolves against the single collection.** It reads `get_collection()` and does
+  not check that the file belongs to it. M4 adds more collections, so it must add `collection_id`
+  to `FileRecord` and check it there.
+- **Very large pages are scaled down silently (M6).** A page above the pixel cap is rendered
+  smaller than asked, so the displayed size differs from the zoom the user chose.
+- **The document cache cap is keyed on file size (M7).** The parsed-document cache skips files above
+  a byte limit and keeps the eight most recent others; a parsed document's memory use is not
+  proportional to its file size, so the cap is only a rough guard.
 - **Anthropic and the real window** are still the owner's checks, as in M2.

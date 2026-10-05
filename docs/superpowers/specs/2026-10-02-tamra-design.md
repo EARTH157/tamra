@@ -56,6 +56,7 @@ pywebview window (WebView2)
                                                  ├─ llm         OpenAICompatible (llama-server child | Ollama | LM Studio) | Anthropic
                                                  ├─ answer      prompt, stream, record sources
                                                  ├─ attribution selection → source passage
+                                                 ├─ viewer      render PDF pages, find highlight boxes, show text
                                                  ├─ models      hardware detect, download, import, verify
                                                  └─ store       SQLite (+ FTS5, sqlite-vec)
 ```
@@ -76,7 +77,6 @@ which is started on demand in local mode and stopped when the app exits.
   character offsets (PDF), heading path and paragraph index (DOCX), or line range (TXT/MD).
 - `chunks_fts` — FTS5 table over `chunks.text`, `tokenize='trigram'`
 - `chunk_vectors` — `sqlite-vec` virtual table, 1024-dim float32, keyed by chunk id
-- `pdf_char_boxes(file_id, page, data)` — compact per-page character boxes for highlighting
 - `chats(id, title, created_at, updated_at)`, `chat_collections(chat_id, collection_id)`
 - `messages(id, chat_id, role, content, provider, model, created_at)`
 - `message_sources(message_id, n, chunk_id, file_id, text_snapshot, location_json, file_hash_at_answer)`
@@ -84,6 +84,9 @@ which is started on demand in local mode and stopped when the app exits.
 
 Deleting a file's chunks and inserting the new ones happens in one transaction, so a crash
 never leaves a file half-indexed.
+
+No character boxes are stored. The viewer (§8) computes the highlight boxes of a PDF page on
+demand from the current file.
 
 ## 5. Ingestion and indexing
 
@@ -100,8 +103,8 @@ never leaves a file half-indexed.
 - **Pipeline per file:** parse → chunk → embed → write. It runs on a single background
   worker queue. The UI shows per-file status and overall progress.
 - **Parsers:**
-  - PDF: `pypdfium2`. Text per page plus character boxes. A page with no text layer is
-    flagged `needs_ocr` (skipped until M5).
+  - PDF: `pypdfium2`. Text per page; no character boxes are stored (see §4). A page with no
+    text layer is flagged `needs_ocr` (skipped until M5).
   - DOCX: `python-docx`. Paragraphs with their heading path.
   - TXT/MD: encoding detected with `charset-normalizer` (Thai TIS-620/CP874 files are
     common), then line-tracked text.
@@ -141,12 +144,15 @@ never leaves a file half-indexed.
 | Local mode: model file missing | Route to model download/import |
 | Model load failure (e.g. Vulkan unavailable) | Fall back to CPU, show a notice |
 
-## 7. Source attribution popup
+## 7. Source attribution panel
 
 - **Trigger:** selecting text inside an assistant message shows a small "Check source"
-  button near the selection. Clicking it opens the popup. It does not open automatically,
-  because selecting text to copy is common. Clicking an `[n]` chip opens the same popup.
-- **Matching (`POST /attribution {message_id, selected_text}`):**
+  button near the selection. Clicking it opens the source panel. It does not open
+  automatically, because selecting text to copy is common. Clicking an `[n]` chip opens the
+  same panel for the sentence that ends at that chip, restricted to source `n`.
+- **Matching (`POST /api/attribution {message_id, selection, n?}`):** `n` limits the
+  candidates to one source. An optional `start` (the selection's offset in the message) tells
+  apart a sentence the answer repeats.
   1. Candidates are only that message's `message_sources`. No corpus-wide search, so the
      match reflects what the model was given.
   2. If the selection, or the sentence containing it, has `[n]` markers, those sources
@@ -156,22 +162,24 @@ never leaves a file half-indexed.
   4. Score = cosine similarity (selection vs window), boosted by character-trigram overlap
      so numbers, names, and terms that must match exactly are weighted.
   5. Return the top 1–3 windows above threshold, or "no clear source found".
-- **Popup shows:** file name, page or heading, the chunk text with the best window
-  highlighted, and a match label ("strong match" / "partial match", never a raw score).
-  It also has next/previous controls for multiple sources and an "Open in document"
-  button. If `file_hash_at_answer` differs from the current file, show the snapshot with a
-  "document changed since this answer" warning.
+- **The panel shows:** the right-side source panel compares the answer with the document:
+  the selected answer text next to the best window of the source snapshot, highlighted, with
+  the file name, the page or heading, and a match label ("strong match" / "partial match",
+  never a raw score). It has previous/next controls for multiple matches and an "Open file"
+  button, which opens the document viewer (§8). If `file_hash_at_answer` differs from the
+  current file, the panel shows the snapshot with a "document changed since this answer"
+  warning.
 
 ## 8. Document viewer
 
-A side panel in the app.
+A modal over the chat, opened by "Open file" in the source panel (§7).
 
 | Type | Display |
 |---|---|
-| PDF | pdf.js renders the real page. The highlight overlay is drawn from `pdf_char_boxes`, mapped from the matched window's character offsets. |
-| DOCX / TXT / MD | Extracted text, scrolled to the location with the passage highlighted (not the original formatting). |
+| PDF | The core renders the real page to PNG with `pypdfium2`. The highlight rectangles come from the same pdfium text page that indexing used, mapped from the matched window's character offsets, and are drawn over the image. |
+| DOCX / TXT / MD | Extracted text with line or paragraph numbers, scrolled to the location with the passage highlighted (not the original formatting). |
 
-Every type also has "Open with default app" (`os.startfile`).
+Every type also has "Open with default app" (`os.startfile`) in the viewer.
 
 ## 9. Models and settings
 
@@ -201,8 +209,8 @@ Every type also has "Open with default app" (`os.startfile`).
 
 ## 10. OCR (M5)
 
-- PDF pages flagged `needs_ocr` are run through OCR. Word boxes are stored in the same
-  shape as `pdf_char_boxes`, so highlighting works unchanged.
+- PDF pages flagged `needs_ocr` are run through OCR. The viewer takes their word boxes in the
+  same form as the pdfium text boxes it uses today, so highlighting works unchanged.
 - **Engine:** decided by a spike at the start of M5. Compare Tesseract (tha/chi_sim/eng),
   RapidOCR, and Windows built-in OCR on real Thai, Chinese, and English scans, scoring
   accuracy, speed, bundle size, and license.
