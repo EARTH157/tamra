@@ -416,6 +416,26 @@ class Store:
             ).fetchone()
         return question[1], (answer[0] if answer else None)
 
+    def get_message(self, message_id: int) -> MessageRecord | None:
+        """One message with its saved sources, or None if there is no such message."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, role, content, provider, model, created_at FROM messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            source_rows = self._conn.execute(
+                "SELECT message_id, n, chunk_id, file_id, rel_path, text_snapshot,"
+                " location_json, file_hash_at_answer FROM message_sources"
+                " WHERE message_id = ? ORDER BY n",
+                (message_id,),
+            ).fetchall()
+        sources = tuple(
+            SourceRecord(r[1], r[2], r[3], r[4], r[5], json.loads(r[6]), r[7]) for r in source_rows
+        )
+        return MessageRecord(*row, sources=sources)
+
     def list_messages(self, chat_id: int) -> list[MessageRecord]:
         with self._lock:
             rows = self._conn.execute(
