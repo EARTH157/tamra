@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Project } from "./types";
 
+/** The longest project name the core accepts. */
+export const NAME_MAX = 80;
+
 /** How often the projects are reloaded while a project is indexing, or while the core is unreachable. */
 export const FAST_POLL_MS = 2000;
 /** How often they are reloaded otherwise, to notice files the folder watchers found. */
@@ -23,20 +26,25 @@ export function useProjects(onReconnect?: () => void) {
   const [offline, setOffline] = useState<string | null>(null);
   const [ticks, setTicks] = useState(0); // one per reload, so the timer is set again after each
   const wasOffline = useRef(false);
+  const requests = useRef(0); // the newest reload; an older one that answers late is ignored
   const reconnect = useRef(onReconnect);
   useEffect(() => {
     reconnect.current = onReconnect;
   });
 
   const refresh = useCallback(async () => {
+    const mine = ++requests.current;
     try {
-      setProjects((await api<{ projects: Project[] }>("GET", "/api/projects")).projects);
+      const loaded = (await api<{ projects: Project[] }>("GET", "/api/projects")).projects;
+      if (mine !== requests.current) return; // a newer reload (after a change) has the truth
+      setProjects(loaded);
       setOffline(null);
       if (wasOffline.current) {
         wasOffline.current = false;
         reconnect.current?.();
       }
     } catch (e) {
+      if (mine !== requests.current) return;
       wasOffline.current = true;
       setOffline((e as Error).message);
     } finally {

@@ -11,8 +11,10 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import ChatList, { RenameRow } from "./ChatList";
+import ChatList from "./ChatList";
 import { useT } from "./i18n";
+import { NAME_MAX } from "./projects";
+import RenameRow from "./RenameRow";
 import RowMenu, { SubMenu } from "./RowMenu";
 import type { Chat, Project } from "./types";
 
@@ -37,8 +39,11 @@ function saveExpanded(expanded: Set<number>) {
   }
 }
 
-/** Which projects are open. The active project is opened whenever it changes; the set is remembered. */
-function useExpanded(activeProjectId: number | null) {
+/**
+ * Which projects are open. A project is opened whenever `revealId` changes to it (a chat was opened
+ * in it, or it was clicked); the set is remembered.
+ */
+function useExpanded(revealId: number | null) {
   const [expanded, setExpanded] = useState(loadExpanded);
 
   function change(id: number, open: boolean) {
@@ -53,8 +58,8 @@ function useExpanded(activeProjectId: number | null) {
   }
 
   useEffect(() => {
-    if (activeProjectId !== null) change(activeProjectId, true);
-  }, [activeProjectId]);
+    if (revealId !== null) change(revealId, true);
+  }, [revealId]);
 
   return { expanded, change };
 }
@@ -70,7 +75,10 @@ type Props = {
   projects: Project[] | null;
   chats: Chat[];
   activeChatId: number | null;
+  /** The project in use, shown in bold (it may be the first one, by default). */
   activeProjectId: number | null;
+  /** The project to open: the one the user chose or opened a chat in, not a default. */
+  revealProjectId: number | null;
   /** An answer is being written: chats cannot be switched, and indexes and folders cannot change. */
   busy: boolean;
   onSelectChat: (id: number) => void;
@@ -96,6 +104,7 @@ export default function ProjectTree({
   chats,
   activeChatId,
   activeProjectId,
+  revealProjectId,
   busy,
   onSelectChat,
   onSelectProject,
@@ -110,7 +119,7 @@ export default function ProjectTree({
   onDeleteChat,
 }: Props) {
   const t = useT();
-  const { expanded, change } = useExpanded(activeProjectId);
+  const { expanded, change } = useExpanded(revealProjectId);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const trigger = useRef<HTMLElement | null>(null);
@@ -135,6 +144,22 @@ export default function ProjectTree({
     change(project.id, !open);
     if (!open) onSelectProject(project.id); // opening a project makes it the one new chats go to
   }
+
+  // Chats with no home project: made before any project existed, and not yet adopted by one.
+  const homeless = chats.filter((chat) => chat.project_id === null);
+  const chatList = (list: Chat[]) => (
+    <ChatList
+      chats={list}
+      activeId={activeChatId}
+      disabled={busy}
+      editingId={editing?.kind === "chat" ? editing.id : null}
+      menuId={menu?.kind === "chat" ? menu.id : null}
+      onSelect={onSelectChat}
+      onOpenMenu={(chat, button) => openMenu("chat", chat.id, button)}
+      onRename={onRenameChat}
+      onStopEditing={() => setEditing(null)}
+    />
+  );
 
   const menuProject = menu?.kind === "project" ? projects?.find((p) => p.id === menu.id) : undefined;
   const menuChat = menu?.kind === "chat" ? chats.find((c) => c.id === menu.id) : undefined;
@@ -170,7 +195,7 @@ export default function ProjectTree({
                   <RenameRow
                     value={project.name}
                     label={t("project.nameLabel")}
-                    maxLength={80}
+                    maxLength={NAME_MAX}
                     onDone={() => setEditing(null)}
                     onSave={(name) => onRenameProject(project.id, name)}
                   />
@@ -206,29 +231,25 @@ export default function ProjectTree({
                   (mine.length === 0 ? (
                     <p className="project-empty">{t("projectTree.noChats")}</p>
                   ) : (
-                    <ChatList
-                      chats={mine}
-                      activeId={activeChatId}
-                      disabled={busy}
-                      editingId={editing?.kind === "chat" ? editing.id : null}
-                      menuId={menu?.kind === "chat" ? menu.id : null}
-                      onSelect={onSelectChat}
-                      onOpenMenu={(chat, button) => openMenu("chat", chat.id, button)}
-                      onRename={onRenameChat}
-                      onStopEditing={() => setEditing(null)}
-                    />
+                    chatList(mine)
                   ))}
               </li>
             );
           })}
         </ul>
+        {homeless.length > 0 && (
+          <div className="project-group">
+            <div className="project-group-label">{t("projectTree.otherChats")}</div>
+            {chatList(homeless)}
+          </div>
+        )}
       </nav>
       {menu && menuProject && (
         <RowMenu
           above={menu.above}
           below={menu.below}
           left={menu.left}
-          label={t("project.menu")}
+          label={t("projectTree.options", { name: menuProject.name })}
           heading={menuProject.name}
           onClose={closeMenu}
         >
@@ -303,7 +324,7 @@ export default function ProjectTree({
           above={menu.above}
           below={menu.below}
           left={menu.left}
-          label={t("chatList.menu")}
+          label={t("chatList.options", { title: menuChat.title || t("chatList.untitled") })}
           onClose={closeMenu}
         >
           <button

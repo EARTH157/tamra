@@ -39,7 +39,6 @@ export const en = {
 
   "chatList.untitled": "New chat",
   "chatList.options": "Options for {title}",
-  "chatList.menu": "Chat options",
   "chatList.rename": "Rename",
   "chatList.delete": "Delete chat",
   "chatList.renameLabel": "Chat title",
@@ -48,9 +47,9 @@ export const en = {
 
   "projectTree.label": "Projects and chats",
   "projectTree.options": "Options for project {name}",
+  "projectTree.otherChats": "Other chats",
   "projectTree.noChats": "No chats yet. Ask a question to start one.",
 
-  "project.menu": "Project options",
   "project.settings": "Project settings",
   "project.delete": "Delete project",
   "project.nameLabel": "Project name",
@@ -75,11 +74,15 @@ export const en = {
     "\"{name}\" and its search index will be removed from this computer. Your folder and its files are not touched.",
 
   "project.err.nameTaken": "A project with this name already exists.",
-  "project.err.nameLength": "The project name must be 1 to 80 characters.",
+  "project.err.nameLength":
+    "The project name must be 1 to 80 characters, without control or format characters.",
+  "project.err.folderNotAllowed":
+    "Choose a folder of documents, not a whole drive or Tamra's own data folder.",
   "project.err.folderNotFound": "That folder does not exist.",
-  "project.err.folderRelative": "Enter the full folder path, for example C:\\Users\\me\\Documents.",
   "project.err.folderUsed": "Another project already uses this folder.",
   "project.err.notFound": "This project no longer exists.",
+  "project.err.generic": "The project could not be changed.",
+  "project.err.titleEmpty": "The chat title must not be empty.",
   "project.err.busy": "An answer is being written. Wait for it to finish.",
 
   "chat.defaultCollection": "your documents",

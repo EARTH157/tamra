@@ -24,18 +24,20 @@ const PROJECT_ERRORS: Record<string, TranslationKey> = {
   "Another project already has this name.": "project.err.nameTaken",
   "This folder is already used by another project.": "project.err.folderUsed",
   "Folder not found.": "project.err.folderNotFound",
-  "The project name must be 1 to 80 characters.": "project.err.nameLength",
+  "The project name must be 1 to 80 characters, without control or format characters.":
+    "project.err.nameLength",
+  "Choose a folder of documents, not a whole drive or Tamra's own folder.":
+    "project.err.folderNotAllowed",
+  "The project could not be changed.": "project.err.generic",
+  "The chat title must not be empty.": "project.err.titleEmpty",
   "Project not found.": "project.err.notFound",
   "Unknown project.": "project.err.notFound",
   "An answer is being written. Wait for it to finish.": "project.err.busy",
 };
 
-/** The text to show when a project call was refused: the user's language for the core's fixed refusals. */
+/** The text to show when a project or chat call was refused: the user's language for the core's fixed refusals. */
 export function projectErrorText(error: Error, t: Translate): string {
   if (error instanceof ApiError) {
-    if (error.status === 400 && error.message.startsWith("Choose a full folder path")) {
-      return t("project.err.folderRelative");
-    }
     const key = PROJECT_ERRORS[error.message];
     if (key) return t(key);
   }

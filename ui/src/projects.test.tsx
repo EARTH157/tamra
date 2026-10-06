@@ -113,6 +113,35 @@ describe("useProjects polling", () => {
     expect(onReconnect).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores a reload that answers after a change, so a deleted project stays gone", async () => {
+    const stale = [project(1, 1), project(0, 2)];
+    let release: (response: Response) => void = () => {};
+    let gets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "DELETE") return json({ chats_deleted: 0 });
+        gets++;
+        if (gets === 1) return json({ projects: stale }); // the first load; project 1 is indexing
+        if (gets === 2) return new Promise<Response>((resolve) => (release = resolve)); // slow poll
+        return json({ projects: [stale[0]] }); // after the delete
+      }),
+    );
+    await mountProbe();
+    expect(latest?.projects).toHaveLength(2);
+    await advance(FAST_POLL_MS); // the poll starts and is left waiting
+    expect(gets).toBe(2);
+
+    await act(async () => {
+      await latest!.remove(2);
+    });
+    expect(latest?.projects).toHaveLength(1);
+    await act(async () => {
+      release(json({ projects: stale })); // the old answer, with the deleted project
+    });
+    expect(latest?.projects).toHaveLength(1);
+  });
+
   it("calls the project routes, and reloads after each", async () => {
     const calls = mockFetch({
       "GET /api/projects": () => json({ projects: [project(0)] }),

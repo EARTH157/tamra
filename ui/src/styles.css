@@ -527,6 +527,23 @@ svg.lucide {
   padding-left: 30px; /* in line with the project's name */
 }
 
+.project-group {
+  margin-top: 8px;
+}
+
+.project-group-label {
+  margin: 0 10px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.project-group .chat-title {
+  padding-left: 9px;
+}
+
 .project-empty {
   margin: 0 10px 6px 30px;
   color: var(--muted);

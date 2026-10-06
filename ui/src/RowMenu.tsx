@@ -72,8 +72,19 @@ export default function RowMenu({ above, below, left, label, heading, onClose, c
       if (target instanceof Element && target.closest(".row-more")) return; // the toggle
       close.current(false);
     }
+    // Esc closes the menu wherever focus is, e.g. after a click on the menu's padding. A key the
+    // menu already handled (it called preventDefault) is not handled twice.
+    function escape(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      close.current(true);
+    }
     document.addEventListener("mousedown", outside);
-    return () => document.removeEventListener("mousedown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", outside);
+      document.removeEventListener("keydown", escape);
+    };
   }, []);
 
   function onKeyDown(event: KeyboardEvent) {
@@ -112,19 +123,27 @@ type SubMenuProps = {
 export function SubMenu({ label, icon, disabled, children }: SubMenuProps) {
   const [open, setOpen] = useState(false);
   const [flip, setFlip] = useState(false); // the flyout opens to the left when the right has no room
+  const [lift, setLift] = useState(0); // and moves up by this much when the bottom has no room
   const trigger = useRef<HTMLButtonElement>(null);
   const fly = useRef<HTMLDivElement>(null);
   const focusFirst = useRef(false);
 
   function show(fromKeyboard: boolean) {
     focusFirst.current = fromKeyboard;
+    if (open && fromKeyboard) levelItems(fly.current)[0]?.focus(); // the pointer already opened it
     setOpen(true);
   }
 
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setLift(0);
+      return;
+    }
     const rect = fly.current?.getBoundingClientRect();
-    if (rect) setFlip(rect.right > window.innerWidth - MARGIN);
+    if (rect) {
+      setFlip(rect.right > window.innerWidth - MARGIN);
+      setLift(Math.max(0, rect.bottom - (window.innerHeight - MARGIN))); // keep the bottom on screen
+    }
     if (focusFirst.current) levelItems(fly.current)[0]?.focus();
   }, [open]);
 
@@ -155,6 +174,7 @@ export function SubMenu({ label, icon, disabled, children }: SubMenuProps) {
   return (
     <div
       className="submenu-wrap"
+      role="none"
       onMouseEnter={() => !disabled && show(false)}
       onMouseLeave={() => setOpen(false)}
     >
@@ -163,6 +183,7 @@ export function SubMenu({ label, icon, disabled, children }: SubMenuProps) {
         type="button"
         role="menuitem"
         className="menu-item"
+        aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
@@ -179,6 +200,7 @@ export function SubMenu({ label, icon, disabled, children }: SubMenuProps) {
           className={flip ? "menu submenu flip" : "menu submenu"}
           role="menu"
           aria-label={label}
+          style={lift ? { top: -6 - lift } : undefined}
           onKeyDown={onFlyKey}
         >
           {children}

@@ -92,7 +92,9 @@ export default function App() {
 
   function newChat() {
     setProblem(null);
-    setProjectId(activeProject?.id ?? null); // stay in the project of the chat being left
+    // Stay in the project of the chat being left; with no chat open, keep what was chosen (which
+    // may be nothing: the first project is then only a default).
+    if (activeChat?.project_id != null) setProjectId(activeChat.project_id);
     setActiveId(null);
     setView("chat");
   }
@@ -102,7 +104,7 @@ export default function App() {
       const chat = await api<Chat>("PATCH", `/api/chats/${id}`, { title });
       setChats((list) => list.map((item) => (item.id === id ? chat : item)));
     } catch (e) {
-      setProblem((e as Error).message);
+      setProblem(projectErrorText(e as Error, t));
     }
   }
 
@@ -165,7 +167,9 @@ export default function App() {
       throw new Error(projectErrorText(e as Error, t)); // shown in the dialog, which stays open
     }
     if (activeChat?.project_id === id) setActiveId(null);
-    setProjectId((current) => (current === id ? null : current));
+    // The current project is gone: the open chat's project takes over, else the first one (null).
+    const other = activeChat?.project_id;
+    setProjectId((current) => (current !== id ? current : other != null && other !== id ? other : null));
     setDialog(null);
     await refreshChats();
   }
@@ -207,6 +211,7 @@ export default function App() {
           chats={chats}
           activeChatId={activeId}
           activeProjectId={activeProject?.id ?? null}
+          revealProjectId={projectId}
           busy={busy}
           onSelectChat={selectChat}
           onSelectProject={setProjectId}

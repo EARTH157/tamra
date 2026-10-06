@@ -95,10 +95,16 @@ describe("projectErrorText", () => {
     [400, "Folder not found.", "That folder does not exist."],
     [
       400,
-      "Choose a full folder path, for example C:\\Users\\me\\Documents.",
-      "Enter the full folder path, for example C:\\Users\\me\\Documents.",
+      "The project name must be 1 to 80 characters, without control or format characters.",
+      "The project name must be 1 to 80 characters, without control or format characters.",
     ],
-    [400, "The project name must be 1 to 80 characters.", "The project name must be 1 to 80 characters."],
+    [
+      400,
+      "Choose a folder of documents, not a whole drive or Tamra's own folder.",
+      "Choose a folder of documents, not a whole drive or Tamra's own data folder.",
+    ],
+    [400, "The project could not be changed.", "The project could not be changed."],
+    [400, "The chat title must not be empty.", "The chat title must not be empty."],
     [404, "Project not found.", "This project no longer exists."],
     [404, "Unknown project.", "This project no longer exists."],
     [409, "An answer is being written. Wait for it to finish.", "An answer is being written. Wait for it to finish."],
@@ -112,6 +118,15 @@ describe("projectErrorText", () => {
     const text = projectErrorText(new ApiError(status, detail), th);
     expect(text).not.toBe(detail);
     expect(text).toMatch(/[฀-๿]/); // Thai script
+  });
+
+  it("words the newer refusals in natural Thai", () => {
+    const thai = (detail: string) => projectErrorText(new ApiError(400, detail), th);
+    expect(thai("Choose a folder of documents, not a whole drive or Tamra's own folder.")).toBe(
+      "เลือกโฟลเดอร์เอกสาร ไม่ใช่ทั้งไดรฟ์หรือโฟลเดอร์ข้อมูลของ Tamra",
+    );
+    expect(thai("The project could not be changed.")).toBe("ไม่สามารถเปลี่ยนแปลงโปรเจกต์ได้");
+    expect(thai("The chat title must not be empty.")).toBe("ชื่อแชทต้องไม่ว่าง");
   });
 
   it("falls back to the general wording for anything else", () => {

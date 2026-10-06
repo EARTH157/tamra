@@ -5,9 +5,8 @@ import FolderField from "./FolderField";
 import { useT } from "./i18n";
 import { IndexBody } from "./IndexStatus";
 import Modal from "./Modal";
+import { NAME_MAX } from "./projects";
 import type { Project } from "./types";
-
-const NAME_MAX = 80; // the core refuses longer names
 
 type NewProps = {
   /** Create the project: resolve to close the dialog; reject with an ApiError to show why it was refused. */

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { Chat, Project } from "./types";
 import {
@@ -15,6 +16,10 @@ import {
 } from "./test-utils";
 
 let view: Mounted | undefined;
+
+beforeEach(() => {
+  localStorage.setItem("tamra.expandedProjects", "[1]"); // Contracts is open: no project opens by itself
+});
 
 afterEach(async () => {
   await view?.unmount();
@@ -110,6 +115,16 @@ describe("The project tree", () => {
     expect(JSON.parse(localStorage.getItem("tamra.expandedProjects") ?? "[]")).toEqual([2]);
   });
 
+  it("does not open the first project by itself", async () => {
+    localStorage.clear();
+    boot({ projects: [contracts, hr], chats: [lease, leave] });
+    view = await mount(<App />);
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle("HR Documents")?.getAttribute("aria-expanded")).toBe("false");
+    expect(card().querySelector(".collection-name")?.textContent).toBe("Contracts"); // still the default
+    expect(localStorage.getItem("tamra.expandedProjects")).toBeNull();
+  });
+
   it("starts with the projects that were left open", async () => {
     localStorage.setItem("tamra.expandedProjects", "[2]");
     boot({ projects: [contracts, hr], chats: [lease, leave] });
@@ -162,7 +177,7 @@ describe("The project menu", () => {
     boot({ projects: [contracts], chats: [] });
     view = await mount(<App />);
     await click(projectMenuButton("Contracts"));
-    expect(menu()?.getAttribute("aria-label")).toBe("Project options");
+    expect(menu()?.getAttribute("aria-label")).toBe("Options for project Contracts");
     expect(items(menu())).toEqual([
       "Project settings",
       "Rename",
@@ -515,6 +530,141 @@ describe("The chat menu: Move to project", () => {
     await click(buttonByText(menu()!, "Move to project"));
     await click(buttonByText(menu()!.querySelector('[role="menu"]')!, "HR Documents"));
     expect(cardName()).toBe("HR Documents");
+  });
+});
+
+describe("Row menu details", () => {
+  it("gives the menus the name of what they belong to", async () => {
+    boot({ projects: [contracts, hr], chats: [lease] });
+    view = await mount(<App />);
+    await click(chatMenuButton("Lease length"));
+    expect(menu()?.getAttribute("aria-label")).toBe("Options for Lease length");
+  });
+
+  it("names the Move to project item by its text, and keeps the wrapper out of the tree", async () => {
+    boot({ projects: [contracts, hr], chats: [lease] });
+    view = await mount(<App />);
+    await click(chatMenuButton("Lease length"));
+    const move = buttonByText(menu()!, "Move to project");
+    expect(move?.getAttribute("aria-label")).toBe("Move to project");
+    expect(move?.closest(".submenu-wrap")?.getAttribute("role")).toBe("none");
+  });
+
+  it("closes on Esc when focus is not in the menu", async () => {
+    boot({ projects: [contracts], chats: [lease] });
+    view = await mount(<App />);
+    await click(projectMenuButton("Contracts"));
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(menu()?.contains(document.activeElement)).toBe(false);
+    await press(document.body, "Escape");
+    expect(menu()).toBeNull();
+  });
+
+  it("moves focus into the flyout on ArrowRight even when the pointer already opened it", async () => {
+    boot({ projects: [contracts, hr], chats: [lease] });
+    view = await mount(<App />);
+    await click(chatMenuButton("Lease length"));
+    const move = buttonByText(menu()!, "Move to project")!;
+    await act(async () => {
+      move.parentElement!.dispatchEvent(
+        new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }),
+      );
+    });
+    const flyout = menu()!.querySelector('[role="menu"]');
+    expect(flyout).not.toBeNull(); // opened by hovering
+    expect(menu()!.contains(document.activeElement) && !flyout!.contains(document.activeElement)).toBe(
+      true,
+    ); // focus stayed on the outer menu
+    await press(move, "ArrowRight");
+    expect(document.activeElement?.textContent).toBe("HR Documents");
+  });
+
+  it("keeps the flyout's bottom inside the window", async () => {
+    boot({ projects: [contracts, hr], chats: [lease] });
+    vi.stubGlobal("innerHeight", 300);
+    vi.stubGlobal("innerWidth", 1000);
+    const rect = (top: number, height: number) =>
+      ({ top, left: 0, width: 190, height, bottom: top + height, right: 190, x: 0, y: top }) as DOMRect;
+    const spy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        if (this.classList.contains("submenu")) return rect(200, 150); // bottom 350 > 292
+        return rect(0, 40);
+      });
+    try {
+      view = await mount(<App />);
+      await click(chatMenuButton("Lease length"));
+      await click(buttonByText(menu()!, "Move to project"));
+      const flyout = menu()!.querySelector<HTMLElement>('[role="menu"]');
+      expect(flyout?.style.top).toBe(`${-6 - (350 - 292)}px`);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("The current project", () => {
+  it("passes to the open chat's project when the current one is deleted", async () => {
+    let core: Core = { projects: [contracts, hr], chats: [leave] };
+    boot(core, {
+      "GET /api/projects": () => json({ projects: core.projects }),
+      "GET /api/chats/5": () => json({ ...leave, messages: [] }),
+      "DELETE /api/projects/1": () => {
+        core = { projects: [hr], chats: [leave] };
+        return json({ chats_deleted: 0 });
+      },
+    });
+    view = await mount(<App />);
+    await click(toggle("HR Documents"));
+    await click(view.container.querySelector('button[title="Leave policy"]'));
+    await click(toggle("Contracts")); // seeded open: this closes it
+    await click(toggle("Contracts")); // this opens it, and makes it the current project
+    expect(cardName()).toBe("Contracts");
+    await click(projectMenuButton("Contracts"));
+    await click(buttonByText(menu()!, "Delete project"));
+    await click(buttonByText(dialog()!, "Delete project"));
+    expect(cardName()).toBe("HR Documents");
+    expect(view.container.querySelector(".chat-row.active .chat-title")?.textContent).toBe(
+      "Leave policy",
+    ); // the open chat is in another project and stays open
+  });
+
+  it("does not make the first project the current one when New chat is pressed", async () => {
+    boot({ projects: [contracts, hr], chats: [] });
+    view = await mount(<App />);
+    await click(buttonByText(view.container, "New chat"));
+    await click(toggle("Contracts")); // seeded open: closes it
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("false");
+    await click(buttonByText(view.container, "New chat"));
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("false"); // not forced open
+  });
+});
+
+describe("Chats without a project", () => {
+  const orphan: Chat = { ...chat(8, "Old question", 1), project_id: null, scope: [] };
+
+  it("lists them under Other chats, only when there are some", async () => {
+    boot({ projects: [contracts], chats: [lease] });
+    view = await mount(<App />);
+    expect(view.container.textContent).not.toContain("Other chats");
+    await view.unmount();
+    boot({ projects: [contracts], chats: [lease, orphan] });
+    view = await mount(<App />);
+    const group = view.container.querySelector(".project-group");
+    expect(group?.querySelector(".project-group-label")?.textContent).toBe("Other chats");
+    expect(group?.querySelector(".chat-title")?.textContent).toBe("Old question");
+  });
+
+  it("lets you move one into any project", async () => {
+    const calls = boot({ projects: [contracts, hr], chats: [orphan] }, {
+      "PATCH /api/chats/8": () => json({ ...orphan, project_id: 2, scope: [2] }),
+    });
+    view = await mount(<App />);
+    await click(chatMenuButton("Old question"));
+    await click(buttonByText(menu()!, "Move to project"));
+    expect(items(menu()!.querySelector('[role="menu"]'))).toEqual(["Contracts", "HR Documents"]);
+    await click(buttonByText(menu()!.querySelector('[role="menu"]')!, "HR Documents"));
+    expect(calls).toContainEqual({ key: "PATCH /api/chats/8", body: { project_id: 2 } });
   });
 });
 

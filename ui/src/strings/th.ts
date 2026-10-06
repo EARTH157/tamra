@@ -39,7 +39,6 @@ export const th: Record<TranslationKey, string> = {
 
   "chatList.untitled": "แชทใหม่",
   "chatList.options": "ตัวเลือกของ {title}",
-  "chatList.menu": "ตัวเลือกแชท",
   "chatList.rename": "เปลี่ยนชื่อ",
   "chatList.delete": "ลบแชท",
   "chatList.renameLabel": "ชื่อแชท",
@@ -48,9 +47,9 @@ export const th: Record<TranslationKey, string> = {
 
   "projectTree.label": "โปรเจกต์และแชท",
   "projectTree.options": "ตัวเลือกของโปรเจกต์ {name}",
+  "projectTree.otherChats": "แชทอื่น ๆ",
   "projectTree.noChats": "ยังไม่มีแชท ลองถามคำถามเพื่อเริ่มแชทแรก",
 
-  "project.menu": "ตัวเลือกโปรเจกต์",
   "project.settings": "การตั้งค่าโปรเจกต์",
   "project.delete": "ลบโปรเจกต์",
   "project.nameLabel": "ชื่อโปรเจกต์",
@@ -75,11 +74,14 @@ export const th: Record<TranslationKey, string> = {
     "“{name}” และดัชนีการค้นหาของโปรเจกต์นี้จะถูกลบออกจากคอมพิวเตอร์เครื่องนี้ โฟลเดอร์และไฟล์ของคุณจะไม่ถูกแตะต้อง",
 
   "project.err.nameTaken": "มีโปรเจกต์ชื่อนี้อยู่แล้ว",
-  "project.err.nameLength": "ชื่อโปรเจกต์ต้องมี 1 ถึง 80 ตัวอักษร",
+  "project.err.nameLength": "ชื่อโปรเจกต์ต้องมี 1 ถึง 80 ตัวอักษร และห้ามมีอักขระควบคุม",
+  "project.err.folderNotAllowed":
+    "เลือกโฟลเดอร์เอกสาร ไม่ใช่ทั้งไดรฟ์หรือโฟลเดอร์ข้อมูลของ Tamra",
   "project.err.folderNotFound": "ไม่พบโฟลเดอร์นี้",
-  "project.err.folderRelative": "ใส่ที่อยู่โฟลเดอร์แบบเต็ม เช่น C:\\Users\\me\\Documents",
   "project.err.folderUsed": "มีโปรเจกต์อื่นใช้โฟลเดอร์นี้อยู่แล้ว",
   "project.err.notFound": "ไม่มีโปรเจกต์นี้แล้ว",
+  "project.err.generic": "ไม่สามารถเปลี่ยนแปลงโปรเจกต์ได้",
+  "project.err.titleEmpty": "ชื่อแชทต้องไม่ว่าง",
   "project.err.busy": "กำลังเขียนคำตอบอยู่ รอให้เสร็จก่อน",
 
   "chat.defaultCollection": "เอกสารของคุณ",
