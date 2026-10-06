@@ -32,6 +32,8 @@ const PROJECT_ERRORS: Record<string, TranslationKey> = {
   "The chat title must not be empty.": "project.err.titleEmpty",
   "Project not found.": "project.err.notFound",
   "Unknown project.": "project.err.notFound",
+  "Choose at least one project to search.": "project.err.scopeEmpty",
+  "Chat not found.": "chat.err.notFound",
   "An answer is being written. Wait for it to finish.": "project.err.busy",
 };
 

@@ -1449,6 +1449,7 @@ svg.lucide {
 }
 
 .chip svg:first-child {
+  flex: none;
   color: var(--muted);
 }
 
@@ -1457,8 +1458,16 @@ svg.lucide {
 }
 
 .chip-chevron {
+  flex: none;
   margin-right: -2px;
   color: var(--muted);
+}
+
+/* A chip's label can be a long project name: it is cut with an ellipsis */
+.chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The chips' menus open upward from the chip (PopMenu sets bottom and left) */
@@ -1512,8 +1521,13 @@ svg.lucide {
   background: var(--primary-soft);
 }
 
-.menu-entry:disabled {
+.menu-entry:disabled,
+.menu-entry[aria-disabled="true"] {
   color: var(--muted);
+}
+
+.menu-entry[aria-disabled="true"] {
+  cursor: default;
 }
 
 .entry-icon {

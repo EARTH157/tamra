@@ -107,6 +107,8 @@ describe("projectErrorText", () => {
     [400, "The chat title must not be empty.", "The chat title must not be empty."],
     [404, "Project not found.", "This project no longer exists."],
     [404, "Unknown project.", "This project no longer exists."],
+    [404, "Chat not found.", "This chat no longer exists."],
+    [400, "Choose at least one project to search.", "Choose at least one project to search."],
     [409, "An answer is being written. Wait for it to finish.", "An answer is being written. Wait for it to finish."],
   ];
 
@@ -127,6 +129,10 @@ describe("projectErrorText", () => {
     );
     expect(thai("The project could not be changed.")).toBe("ไม่สามารถเปลี่ยนแปลงโปรเจกต์ได้");
     expect(thai("The chat title must not be empty.")).toBe("ชื่อแชทต้องไม่ว่าง");
+    expect(thai("Chat not found.")).toBe("ไม่มีแชทนี้แล้ว");
+    expect(thai("Choose at least one project to search.")).toBe(
+      "เลือกโปรเจกต์ที่จะค้นหาอย่างน้อยหนึ่งโปรเจกต์",
+    );
   });
 
   it("falls back to the general wording for anything else", () => {

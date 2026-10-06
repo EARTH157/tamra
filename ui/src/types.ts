@@ -40,6 +40,8 @@ export type Source = {
   label: string;
   text: string;
   location: Record<string, unknown>;
+  /** The project the file belongs to; null once the file left the index (absent before M4). */
+  project?: string | null;
 };
 
 /** One place in a source's snapshot that an answer span matches (POST /api/attribution). */
@@ -117,6 +119,7 @@ export type ErrorReason = "offline" | "auth" | "quota" | "model_missing" | "othe
 
 export type AnswerEvent =
   | { type: "sources"; sources: Source[] }
+  | { type: "notice"; code: "stale_projects"; names: string[] }
   | { type: "thinking"; text: string }
   | { type: "token"; text: string }
   | { type: "error"; message: string; reason?: ErrorReason }
