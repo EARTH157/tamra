@@ -62,7 +62,7 @@ class _FakeStore:
 
 def test_rank_fusion_rewards_chunks_found_both_ways():
     store = _FakeStore(dense=[(1, 0.9), (2, 0.5)], keyword=[3, 1])
-    hits = hybrid_search(store, 1, np.zeros(1024, dtype=np.float32), '"abc"')
+    hits = hybrid_search(store, [1], np.zeros(1024, dtype=np.float32), '"abc"')
     assert [h.chunk_id for h in hits] == [1, 3, 2]
     assert hits[0].score == pytest.approx(1 / 61 + 1 / 62)
     assert (hits[1].similarity, hits[2].similarity) == (None, 0.5)
@@ -70,7 +70,7 @@ def test_rank_fusion_rewards_chunks_found_both_ways():
 
 def test_without_a_keyword_query_only_dense_results_count():
     store = _FakeStore(dense=[(5, 0.7)], keyword=None)
-    hits = hybrid_search(store, 1, np.zeros(1024, dtype=np.float32), None)
+    hits = hybrid_search(store, [1], np.zeros(1024, dtype=np.float32), None)
     assert [(h.chunk_id, h.similarity) for h in hits] == [(5, 0.7)]
 
 
@@ -95,10 +95,32 @@ def test_hybrid_search_finds_the_matching_chunk_in_a_real_store(tmp_path):
     ]
     store.replace_file_chunks(file_id, chunks, embedder.embed(texts), content_hash="h", note=None)
     question = "how long is the lease term"
-    hits = hybrid_search(store, collection.id, embedder.embed([question])[0], fts_query(question))
+    hits = hybrid_search(store, [collection.id], embedder.embed([question])[0], fts_query(question))
     assert store.get_chunks([hits[0].chunk_id])[0].text == "The lease term is three years"
     assert hits[0].similarity > 0.3
     assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
+    store.close()
+
+
+def test_hybrid_search_fuses_the_lists_of_several_projects(tmp_path):
+    store = Store.open(tmp_path / "t.db")
+    embedder = FakeEmbedder()
+    ids = {}
+    for name, text in (("A", "The lease term is three years"), ("B", "Parking costs fifty baht")):
+        collection = store.create_collection(name, f"C:/{name}", "m")
+        file_id = store.add_file(collection.id, f"{name}.md", 1, 1.0)
+        chunk = ChunkInput(text, {"kind": "text", "line_start": 1, "line_end": 1})
+        store.replace_file_chunks(
+            file_id, [chunk], embedder.embed([text]), content_hash="h", note=None
+        )
+        ids[name] = collection.id
+    question = "lease term parking baht"
+    vector, fts = embedder.embed([question])[0], fts_query(question)
+    both = hybrid_search(store, [ids["A"], ids["B"]], vector, fts)
+    assert {store.get_chunks([h.chunk_id])[0].rel_path for h in both} == {"A.md", "B.md"}
+    only_b = hybrid_search(store, [ids["B"]], vector, fts)
+    assert [store.get_chunks([h.chunk_id])[0].rel_path for h in only_b] == ["B.md"]
+    assert hybrid_search(store, [], vector, fts) == []
     store.close()
 
 

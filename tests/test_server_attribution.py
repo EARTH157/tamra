@@ -717,7 +717,7 @@ def indexed_lease(env: Env) -> tuple[int, int]:
     (env.folder / "lease.txt").write_text(LEASE, encoding="utf-8")
     file_id = env.add_file("lease.txt")
     env.set_hash(file_id, "h1", texts=(LEASE,))
-    return file_id, env.store.create_chat().id
+    return file_id, env.store.create_chat("", env.store.list_collections()[0].id).id
 
 
 def wait_until(predicate, timeout=10.0):

@@ -75,7 +75,7 @@ def test_a_folder_is_indexed_and_questions_are_answered(core, tmp_path):
     assert (collection.name, collection.embedding_model_id) == ("docs", MODEL_ID)
     assert collection.folder_path == str(docs.resolve())
     wait_until(lambda: indexed(core) == 1)
-    chat = core.store.create_chat()
+    chat = core.store.create_chat("", collection.id)
     events = list(core.answers.ask(chat.id, "How long is the lease term?"))
     assert events[-1]["type"] == "done"
 
@@ -459,7 +459,7 @@ def indexed_core(tmp_path, **overrides):
 
 
 def ask(core, question="How long is the lease term?", **options):
-    chat = core.store.create_chat()
+    chat = core.store.create_chat("", core.store.list_collections()[0].id)
     return chat, list(core.answers.ask(chat.id, question, **options))
 
 
@@ -630,7 +630,7 @@ def test_a_provider_is_not_closed_under_an_answer_that_is_streaming(tmp_path, mo
     local = FakeLocalLLM(FakeLLM(("one ", "two ", "three")))
     c = indexed_core(tmp_path, api_factory=ApiFactory(), llm=local)
     try:
-        chat = c.store.create_chat()
+        chat = c.store.create_chat("", c.store.list_collections()[0].id)
         stream = c.answers.ask(chat.id, "How long is the lease term?")
         assert next(stream)["type"] == "sources"
         assert next(stream) == {"type": "token", "text": "one "}
@@ -651,7 +651,7 @@ def test_switching_back_to_local_before_the_stream_ends_keeps_the_local_model(
     local = FakeLocalLLM(FakeLLM(("one ", "two ", "three")))
     c = indexed_core(tmp_path, api_factory=ApiFactory(), llm=local)
     try:
-        chat = c.store.create_chat()
+        chat = c.store.create_chat("", c.store.list_collections()[0].id)
         stream = c.answers.ask(chat.id, "How long is the lease term?")
         next(stream)
         next(stream)

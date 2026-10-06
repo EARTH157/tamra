@@ -95,7 +95,7 @@ def run_eval(corpus_dir: Path, questions: list[dict], model_dir: Path = MODEL_DI
             results = []
             for q in questions:
                 vector = embedder.embed([q["question"]])[0]
-                hits = hybrid_search(store, collection.id, vector, fts_query(q["question"]))
+                hits = hybrid_search(store, [collection.id], vector, fts_query(q["question"]))
                 chunks = store.get_chunks([h.chunk_id for h in hits])
                 results.append(
                     {

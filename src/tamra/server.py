@@ -19,7 +19,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import tamra
 from tamra import secrets as key_store
-from tamra.answer import location_label, source_payload
+from tamra.answer import location_label, source_payloads
 from tamra.core import Core, EmbedderUnavailable
 from tamra.ingest.parsers import SUPPORTED
 from tamra.llm.base import LLMError, ProviderError
@@ -277,7 +277,9 @@ def _add_routes(app: FastAPI, core: Core) -> None:
 
     @app.post("/api/chats", status_code=201)
     def create_chat() -> dict:
-        return _chat_payload(core.store.create_chat())
+        # home: the first project until chats choose one (removed in Task 4)
+        collections = core.store.list_collections()
+        return _chat_payload(core.store.create_chat("", collections[0].id if collections else None))
 
     @app.get("/api/chats/{chat_id}")
     def get_chat(chat_id: int) -> dict:
@@ -292,7 +294,7 @@ def _add_routes(app: FastAPI, core: Core) -> None:
                 "provider": m.provider,
                 "model": m.model,
                 "created_at": m.created_at,
-                "sources": [source_payload(s) for s in m.sources],
+                "sources": source_payloads(core.store, m.sources),
             }
             for m in core.store.list_messages(chat_id)
         ]
