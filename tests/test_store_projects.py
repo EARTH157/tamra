@@ -374,6 +374,15 @@ def test_keyword_search_covers_every_scoped_project(store, two_projects):
     assert len(store.search_keyword([one.id, two.id], '"lea"', 1)) == 1
 
 
+def test_keyword_search_breaks_score_ties_by_chunk_id(store):
+    project = store.create_collection("One", "D:/one", MODEL)
+    for name in ("a.md", "b.md", "c.md"):
+        add_indexed(store, project.id, name, "identical lease text", unit(1))
+    found = store.search_keyword([project.id], '"lea"', 10)
+    assert found == sorted(found) and len(found) == 3
+    assert store.search_keyword([project.id], '"lea"', 2) == found[:2]
+
+
 # Queue ----------------------------------------------------------------------------------------
 
 

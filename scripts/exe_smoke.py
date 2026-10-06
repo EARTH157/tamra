@@ -94,9 +94,10 @@ def healthy(client: httpx.Client) -> bool:
 
 def settled(client: httpx.Client, total: int) -> dict | None:
     """The index status once every file has been handled, else None."""
-    index = client.get("/api/collection").json()["index"]
-    if index is None:
+    projects = client.get("/api/projects").json()["projects"]
+    if not projects:
         return None
+    index = projects[0]["index"]
     if index["error"]:
         raise SystemExit(f"indexing stopped: {index['error']}")
     counts = index["counts"]
@@ -463,8 +464,8 @@ def main() -> int:
                 wait_for(lambda: healthy(client), 60, "the API")
                 report["startup_s"] = round(time.monotonic() - started, 1)
                 import_dev_model(client, dev_gguf, report, problems)
-                client.put(
-                    "/api/collection", json={"name": "Smoke", "folder_path": str(docs)}
+                client.post(
+                    "/api/projects", json={"name": "Smoke", "folder_path": str(docs)}
                 ).raise_for_status()
                 started = time.monotonic()
                 index = wait_for(lambda: settled(client, total), 900, "indexing")

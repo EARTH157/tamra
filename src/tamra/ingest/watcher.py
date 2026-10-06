@@ -46,7 +46,8 @@ class FolderWatcher:
             timer.cancel()
         if observer is not None:
             observer.stop()
-            observer.join(timeout=5)
+            if observer.is_alive():  # one that a racing watch() has not started cannot be joined
+                observer.join(timeout=5)
 
     def stop(self) -> None:
         """Stop watching every project."""

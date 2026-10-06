@@ -148,6 +148,8 @@ class Indexer:
             self._reconcile_all, self._reconcile, self._rebuild = False, set(), set()
         blocked: list[int] = []  # projects whose files cannot be indexed in this pass
         for collection in self._store.list_collections():
+            if self._stopping.is_set():
+                return
             if collection.id in rebuild:
                 self._store.reset_index(collection.id, self._model_id)
                 collection = self._store.get_collection(collection.id)
@@ -166,6 +168,8 @@ class Indexer:
                 try:
                     self._reconcile_project(collection.id, folder)
                 except Exception as e:  # one project must not stop the others
+                    if self._store.get_collection(collection.id) is None:
+                        continue  # deleted while it was reconciled: its failure is moot
                     log.exception("reconciling project %s failed", collection.id)
                     self._set_error(collection.id, f"{type(e).__name__}: {e}")
                     blocked.append(collection.id)

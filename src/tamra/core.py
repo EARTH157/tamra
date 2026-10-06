@@ -383,19 +383,27 @@ class Core:
 
     def projects(self) -> list[dict]:
         """Every project with its index status, ordered by name."""
-        return [
-            {
-                "id": collection.id,
-                "name": collection.name,
-                "folder_path": collection.folder_path,
-                **self._index_status(collection),
-            }
-            for collection in self.store.list_collections()
-        ]
+        return [self._project_view(collection) for collection in self.store.list_collections()]
+
+    def project(self, collection_id: int) -> dict | None:
+        """One project as `projects()` lists it; None if it is unknown."""
+        collection = self.store.get_collection(collection_id)
+        return None if collection is None else self._project_view(collection)
+
+    def _project_view(self, collection: Collection) -> dict:
+        return {
+            "id": collection.id,
+            "name": collection.name,
+            "folder_path": collection.folder_path,
+            **self._index_status(collection),
+        }
 
     def create_project(self, name: str, folder: str) -> Collection:
         """Add a project and index its folder. ValueError (with a message safe to show) if the
-        folder is not usable, is already used by another project, or the name is taken."""
+        folder is not usable, is already used by another project, or the name is taken.
+
+        Chats that have no home project (made before any project existed) are adopted by the
+        first project that remains, so the first project gives them their home and scope."""
         with self._projects_lock:
             path = self._checked_folder(folder)
             collection = self.store.create_collection(
@@ -403,7 +411,7 @@ class Core:
             )
             if len(self.store.list_collections()) == 1:
                 self.store.adopt_homeless_chats(collection.id)
-        self._watch(collection)
+            self._watch(collection)  # under the lock: a delete cannot unwatch before this
         self.indexer.request_reconcile(collection.id)
         return collection
 
@@ -425,10 +433,10 @@ class Core:
             path = self._checked_folder(folder, excluding=collection_id)
             file_ids = [f.id for f in self.store.list_files(collection_id)]
             collection = self.store.set_collection_folder(collection_id, str(path), MODEL_ID)
-        if collection is None:
-            return None
+            if collection is None:  # deleted meanwhile: there is nothing to watch
+                return None
+            self._watch(collection)
         self._forget_documents(file_ids)
-        self._watch(collection)
         self.indexer.request_reconcile(collection.id)
         return collection
 
@@ -449,11 +457,14 @@ class Core:
             file_ids.extend(f.id for f in self.store.list_files(collection_id))
             outcome.append(self.store.delete_collection(collection_id))
 
+        # The store delete comes first, inside run_if_idle (an answer may be using the project);
+        # then the watcher, the indexer's memory and the viewer cache let go of it.
         if not self.answers.run_if_idle(delete):
             raise AnswerBusy("an answer is being written")
-        self.watcher.unwatch(collection_id)
-        self.indexer.forget(collection_id)
-        self._forget_documents(file_ids)
+        with self._projects_lock:  # a folder change or a create cannot re-watch it meanwhile
+            self.watcher.unwatch(collection_id)
+            self.indexer.forget(collection_id)
+            self._forget_documents(file_ids)
         return outcome[0]
 
     def _checked_folder(self, folder: str, excluding: int | None = None) -> Path:
@@ -488,28 +499,6 @@ class Core:
                 for f in self.store.problem_files(collection.id)
             ],
         }
-
-    # The single-project calls below serve the old routes only. removed in Task 4
-
-    def set_collection(self, name: str, folder: str) -> Collection:  # removed in Task 4
-        first = self._first_collection()
-        if first is None:
-            return self.create_project(name, folder)
-        path = self._checked_folder(folder, excluding=first.id)
-        self.rename_project(first.id, name.strip() or path.name)
-        return self.change_project_folder(first.id, folder)
-
-    def rebuild(self) -> bool:  # removed in Task 4
-        first = self._first_collection()
-        return first is not None and self.rebuild_project(first.id)
-
-    def index_status(self) -> dict | None:  # removed in Task 4
-        first = self._first_collection()
-        return None if first is None else self._index_status(first)
-
-    def _first_collection(self) -> Collection | None:  # removed in Task 4
-        collections = self.store.list_collections()
-        return collections[0] if collections else None
 
     def shutdown(self) -> None:
         self._closed = True

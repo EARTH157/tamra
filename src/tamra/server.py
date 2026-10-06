@@ -20,13 +20,13 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 import tamra
 from tamra import secrets as key_store
 from tamra.answer import location_label, source_payloads
-from tamra.core import Core, EmbedderUnavailable
+from tamra.core import AnswerBusy, Core, EmbedderUnavailable
 from tamra.ingest.parsers import SUPPORTED
 from tamra.llm.base import LLMError, ProviderError
 from tamra.models.catalog import ModelEntry
 from tamra.models.hardware import _is_integrated, recommend
 from tamra.models.manager import DownloadBusy, ImportRefused
-from tamra.store import Chat, Collection
+from tamra.store import Chat
 from tamra.viewer import (
     MAX_SCALE,
     MIN_SCALE,
@@ -105,13 +105,35 @@ class SecurityHeaders:
         await self.app(scope, receive, send_with_headers)
 
 
-class CollectionBody(BaseModel):
-    name: str = Field(default="", max_length=200)
+MAX_PROJECT_NAME = 80
+
+
+class ProjectBody(BaseModel):
+    # Left out, the name is the folder's name. A name that is given is checked by the route,
+    # which answers 400 (not 422) for a blank or over-long one.
+    name: str | None = None
     folder_path: str = Field(min_length=1, max_length=1000)
 
 
-class RenameBody(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+class ProjectRenameBody(BaseModel):
+    name: str | None = None
+
+
+class FolderBody(BaseModel):
+    folder_path: str = Field(min_length=1, max_length=1000)
+
+
+class NewChatBody(BaseModel):
+    project_id: int | None = None
+
+
+class ChatChangeBody(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    project_id: int | None = None
+
+
+class ScopeBody(BaseModel):
+    project_ids: list[int]
 
 
 class QuestionBody(BaseModel):
@@ -230,12 +252,13 @@ async def _sse(events: Iterator[dict]) -> AsyncIterator[str]:
             await anyio.to_thread.run_sync(events.close)
 
 
-def _collection_payload(collection: Collection) -> dict:
+def _project_payload(view: dict) -> dict:
+    """A project as the API shows it, from `Core.projects()` / `Core.project()`."""
     return {
-        "id": collection.id,
-        "name": collection.name,
-        "folder_path": collection.folder_path,
-        "created_at": collection.created_at,
+        "id": view["id"],
+        "name": view["name"],
+        "folder_path": view["folder_path"],
+        "index": {key: view[key] for key in ("counts", "stale", "current", "error", "problems")},
     }
 
 
@@ -245,41 +268,119 @@ def _chat_payload(chat: Chat) -> dict:
         "title": chat.title,
         "created_at": chat.created_at,
         "updated_at": chat.updated_at,
+        "project_id": chat.collection_id,  # the home project; None for a chat made before any
+        "scope": chat.scope,  # the project ids a question searches
     }
 
 
-def _add_routes(app: FastAPI, core: Core) -> None:
-    @app.get("/api/collection")
-    def get_collection() -> dict:
-        collections = core.store.list_collections()
-        collection = collections[0] if collections else None
-        if collection is None:
-            return {"collection": None, "index": None}
-        return {"collection": _collection_payload(collection), "index": core.index_status()}
+def _project_name(name: str) -> str:
+    cleaned = name.strip()
+    if not cleaned or len(cleaned) > MAX_PROJECT_NAME:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The project name must be 1 to {MAX_PROJECT_NAME} characters.",
+        )
+    return cleaned
 
-    @app.put("/api/collection")
-    def put_collection(body: CollectionBody) -> dict:
+
+def _project_error(e: ValueError) -> HTTPException:
+    """The HTTP error for a ValueError from a project change, with a fixed message: a path the
+    user typed is never sent back."""
+    message = str(e)
+    if message == "name taken":
+        return HTTPException(status_code=409, detail="Another project already has this name.")
+    if message == "folder already used":
+        return HTTPException(
+            status_code=409, detail="This folder is already used by another project."
+        )
+    if message.startswith("Folder not found"):
+        return HTTPException(status_code=400, detail="Folder not found.")
+    return HTTPException(
+        status_code=400,
+        detail="Choose a full folder path, for example C:\\Users\\me\\Documents.",
+    )
+
+
+def _project_response(core: Core, collection_id: int) -> dict:
+    view = core.project(collection_id)
+    if view is None:  # deleted since the change
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return _project_payload(view)
+
+
+def _add_project_routes(app: FastAPI, core: Core) -> None:
+    @app.get("/api/projects")
+    def list_projects() -> dict:
+        return {"projects": [_project_payload(view) for view in core.projects()]}
+
+    @app.post("/api/projects", status_code=201)
+    def create_project(body: ProjectBody) -> dict:
+        name = "" if body.name is None else _project_name(body.name)
         try:
-            collection = core.set_collection(body.name, body.folder_path)
+            collection = core.create_project(name, body.folder_path)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"collection": _collection_payload(collection), "index": core.index_status()}
+            raise _project_error(e) from e
+        return _project_response(core, collection.id)
 
-    @app.post("/api/collection/rebuild", status_code=202)
-    def rebuild() -> dict:
-        if not core.rebuild():
-            raise HTTPException(status_code=404, detail="No folder has been chosen yet.")
+    @app.patch("/api/projects/{project_id}")
+    def rename_project(project_id: int, body: ProjectRenameBody) -> dict:
+        if body.name is not None:
+            try:
+                renamed = core.rename_project(project_id, _project_name(body.name))
+            except ValueError as e:
+                raise _project_error(e) from e
+            if renamed is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+        return _project_response(core, project_id)
+
+    @app.put("/api/projects/{project_id}/folder")
+    def change_folder(project_id: int, body: FolderBody) -> dict:
+        try:
+            collection = core.change_project_folder(project_id, body.folder_path)
+        except ValueError as e:
+            raise _project_error(e) from e
+        if collection is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        return _project_response(core, project_id)
+
+    @app.post("/api/projects/{project_id}/rebuild", status_code=202)
+    def rebuild_project(project_id: int) -> dict:
+        if not core.rebuild_project(project_id):
+            raise HTTPException(status_code=404, detail="Project not found.")
         return {"status": "rebuilding"}
+
+    @app.delete("/api/projects/{project_id}")
+    def delete_project(project_id: int) -> dict:
+        try:
+            deleted = core.delete_project(project_id)
+        except AnswerBusy as e:
+            raise HTTPException(
+                status_code=409, detail="An answer is being written. Wait for it to finish."
+            ) from e
+        if deleted is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        return {"chats_deleted": deleted}
+
+
+def _add_routes(app: FastAPI, core: Core) -> None:
+    _add_project_routes(app, core)
 
     @app.get("/api/chats")
     def list_chats() -> dict:
         return {"chats": [_chat_payload(chat) for chat in core.store.list_chats()]}
 
     @app.post("/api/chats", status_code=201)
-    def create_chat() -> dict:
-        # home: the first project until chats choose one (removed in Task 4)
-        collections = core.store.list_collections()
-        return _chat_payload(core.store.create_chat("", collections[0].id if collections else None))
+    def create_chat(body: NewChatBody | None = None) -> dict:
+        project_id = body.project_id if body is not None else None
+        if project_id is None:
+            # No project named: the first one is home. Before any project the chat has no home;
+            # the first project created adopts it.
+            projects = core.store.list_collections()
+            project_id = projects[0].id if projects else None
+        try:
+            return _chat_payload(core.store.create_chat("", project_id))
+        except ValueError as e:  # an unknown project
+            raise HTTPException(status_code=404, detail="Project not found.") from e
 
     @app.get("/api/chats/{chat_id}")
     def get_chat(chat_id: int) -> dict:
@@ -301,13 +402,36 @@ def _add_routes(app: FastAPI, core: Core) -> None:
         return {**_chat_payload(chat), "messages": messages}
 
     @app.patch("/api/chats/{chat_id}")
-    def rename_chat(chat_id: int, body: RenameBody) -> dict:
+    def change_chat(chat_id: int, body: ChatChangeBody) -> dict:
+        """Rename a chat and/or move it to another home project."""
+        if core.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="Chat not found.")
+        if body.project_id is not None and core.store.get_collection(body.project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
         try:
-            renamed = core.store.rename_chat(chat_id, body.title)
+            if body.title is not None:  # first: the only step that can still be refused
+                core.store.rename_chat(chat_id, body.title)
+            if body.project_id is not None:
+                core.store.move_chat(chat_id, body.project_id)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        chat = core.store.get_chat(chat_id) if renamed else None
-        if chat is None:
+        chat = core.store.get_chat(chat_id)
+        if chat is None:  # deleted meanwhile
+            raise HTTPException(status_code=404, detail="Chat not found.")
+        return _chat_payload(chat)
+
+    @app.put("/api/chats/{chat_id}/scope")
+    def set_scope(chat_id: int, body: ScopeBody) -> dict:
+        if core.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="Chat not found.")
+        if not body.project_ids:
+            raise HTTPException(status_code=400, detail="Choose at least one project to search.")
+        try:
+            core.store.set_chat_scope(chat_id, body.project_ids)
+        except ValueError as e:  # an unknown project
+            raise HTTPException(status_code=400, detail="Unknown project.") from e
+        chat = core.store.get_chat(chat_id)
+        if chat is None:  # deleted meanwhile
             raise HTTPException(status_code=404, detail="Chat not found.")
         return _chat_payload(chat)
 

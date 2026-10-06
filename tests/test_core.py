@@ -174,6 +174,7 @@ def test_deleting_a_project_stops_its_watcher_and_removes_its_files(core, tmp_pa
     file_id = core.store.list_files(first.id)[0].id
     core.document(file_id)  # fills the viewer's cache
     chat = core.store.create_chat("Home", first.id)
+    observer = core.watcher._observers[first.id]
     assert core.delete_project(first.id) == 1
     assert core.store.get_chat(chat.id) is None
     assert core.store.list_files(first.id) == []
@@ -181,9 +182,7 @@ def test_deleting_a_project_stops_its_watcher_and_removes_its_files(core, tmp_pa
     assert list(core.watcher._observers) == [second.id]
     assert not any(key[0] == file_id for key in core._documents)
     assert core.indexer.state(first.id).error is None
-    (one / "late.md").write_text("Ignored.", encoding="utf-8")
-    time.sleep(0.8)
-    assert core.store.list_files(first.id) == []
+    assert not observer.is_alive()  # its watcher thread is gone
     assert indexed(core) == 1  # the other project is untouched
     assert core.delete_project(first.id) is None
 

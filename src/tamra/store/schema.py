@@ -95,6 +95,7 @@ CREATE TABLE chat_collections (
     PRIMARY KEY (chat_id, collection_id)
 );
 CREATE INDEX chat_collections_by_collection ON chat_collections(collection_id);
+-- M1-M3 databases hold at most one collection, so renaming duplicates is only defensive.
 UPDATE collections SET name = name || ' (' || id || ')'
     WHERE id NOT IN (SELECT MIN(id) FROM collections GROUP BY name COLLATE NOCASE);
 CREATE UNIQUE INDEX collections_name_nocase ON collections(name COLLATE NOCASE);

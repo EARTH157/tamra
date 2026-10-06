@@ -374,7 +374,7 @@ class Store:
                 " JOIN chunks c ON c.id = chunks_fts.rowid"
                 " JOIN files f ON f.id = c.file_id"
                 f" WHERE chunks_fts MATCH ? AND f.collection_id IN ({marks})"
-                " ORDER BY bm25(chunks_fts) LIMIT ?",
+                " ORDER BY bm25(chunks_fts), c.id LIMIT ?",
                 (fts_query, *ids, k),
             ).fetchall()
         return [row[0] for row in rows]

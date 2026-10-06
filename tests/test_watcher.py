@@ -143,6 +143,28 @@ def test_each_project_reports_its_own_changes(tmp_path):
         watcher.stop()
 
 
+def test_concurrent_watches_of_one_project_raise_nothing(tmp_path):
+    watcher = FolderWatcher(lambda cid: None, debounce=0.2)
+    failures = []
+
+    def watch():
+        try:
+            for _ in range(5):
+                watcher.watch(1, tmp_path)
+        except BaseException as e:  # the test reports whatever a thread raised
+            failures.append(e)
+
+    try:
+        threads = [threading.Thread(target=watch) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert failures == []
+    finally:
+        watcher.stop()
+
+
 def test_unwatching_one_project_leaves_the_other_watched(tmp_path):
     one, two = tmp_path / "one", tmp_path / "two"
     one.mkdir()
@@ -153,7 +175,7 @@ def test_unwatching_one_project_leaves_the_other_watched(tmp_path):
     watcher.watch(2, two)
     try:
         (one / "x.md").write_text("x", encoding="utf-8")
-        time.sleep(0.15)  # seen, not yet reported
+        assert wait_for(lambda: 1 in watcher._timers)  # seen, not yet reported
         watcher.unwatch(1)
         assert 1 not in watcher._timers  # its pending call is cancelled
         (one / "late.md").write_text("x", encoding="utf-8")

@@ -399,6 +399,31 @@ def test_a_forgotten_project_has_no_state(two):
     assert indexer.state(a.id) == IndexerState(None, None)
 
 
+def test_a_failure_in_a_project_deleted_meanwhile_is_not_reported(two, monkeypatch, caplog):
+    _, (a, b), store, _, indexer = two
+
+    def fail_after_delete(collection_id, folder):
+        store.delete_collection(collection_id)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(indexer, "_reconcile_project", fail_after_delete)
+    indexer.request_reconcile(a.id)
+    with caplog.at_level("ERROR", logger="tamra.ingest.indexer"):
+        indexer.process()
+    assert indexer.state(a.id).error is None
+    assert "reconciling project" not in caplog.text
+    assert [c.id for c in store.list_collections()] == [b.id]
+
+
+def test_a_stopping_worker_does_not_start_the_next_project(two):
+    (alpha, _), (a, b), store, _, indexer = two
+    (alpha / "a.md").write_text("Lease terms.", encoding="utf-8")
+    indexer.stop()
+    indexer.request_reconcile()
+    indexer.process()
+    assert store.list_files(a.id) == [] and store.list_files(b.id) == []
+
+
 # --- links ---
 
 
