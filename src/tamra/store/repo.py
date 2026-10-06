@@ -39,6 +39,13 @@ def _source(row: Sequence) -> SourceRecord:
     return SourceRecord(row[0], row[1], row[2], row[3], row[4], json.loads(row[5]), row[6])
 
 
+class NameTaken(ValueError):
+    """Another project already has this name (names are compared without regard to case)."""
+
+    def __init__(self) -> None:
+        super().__init__("name taken")
+
+
 class Store:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
@@ -88,11 +95,11 @@ class Store:
         return row is not None
 
     def create_collection(self, name: str, folder_path: str, model_id: str) -> Collection:
-        """Add a project. Raises ValueError when the name is taken (case-insensitively)."""
+        """Add a project. Raises NameTaken (a ValueError) if the name is taken, in any case."""
         created = _now()
         with self._lock, self._conn:
             if self._name_taken(name):
-                raise ValueError("name taken")
+                raise NameTaken
             cursor = self._conn.execute(
                 "INSERT INTO collections (name, folder_path, embedding_model_id, created_at)"
                 " VALUES (?, ?, ?, ?)",
@@ -101,10 +108,10 @@ class Store:
         return Collection(cursor.lastrowid, name, folder_path, model_id, created)
 
     def rename_collection(self, collection_id: int, name: str) -> bool:
-        """Rename a project; False if unknown, ValueError when the name is taken."""
+        """Rename a project; False if unknown, NameTaken (a ValueError) when the name is taken."""
         with self._lock, self._conn:
             if self._name_taken(name, excluding=collection_id):
-                raise ValueError("name taken")
+                raise NameTaken
             cursor = self._conn.execute(
                 "UPDATE collections SET name = ? WHERE id = ?", (name, collection_id)
             )

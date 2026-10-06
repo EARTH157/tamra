@@ -4,7 +4,15 @@ import pytest
 from fakes import FakeEmbedder, FakeLLM, FakeLocalLLM, fake_spans
 
 from tamra.answer import AnswerSettings
-from tamra.core import AnswerBusy, Core, _build_api_provider
+from tamra.core import (
+    AnswerBusy,
+    BadName,
+    Core,
+    FolderMissing,
+    FolderNotAllowed,
+    FolderUsed,
+    _build_api_provider,
+)
 from tamra.embedder import MODEL_ID
 from tamra.llm.anthropic_api import AnthropicLLM
 from tamra.llm.base import ProviderError
@@ -13,6 +21,7 @@ from tamra.models.catalog import Catalog, ModelEntry, ModelFile
 from tamra.models.hardware import Hardware
 from tamra.models.manager import ModelManager
 from tamra.settings import Settings
+from tamra.store import NameTaken
 from tamra.viewer import FileMissing
 
 
@@ -237,12 +246,34 @@ def test_rename_project(core, tmp_path):
         core.rename_project(first.id, "   ")
 
 
+def test_names_are_validated_and_errors_are_typed(core, tmp_path):
+    docs = make_docs(tmp_path, "docs")
+    other = make_docs(tmp_path, "other")
+    assert core.create_project("  A \t B ", str(docs)).name == "A B"
+    with pytest.raises(NameTaken):
+        core.create_project("a b", str(other))
+    with pytest.raises(BadName):
+        core.create_project("x" * 81, str(other))
+    with pytest.raises(BadName):
+        core.create_project("a\u202eb", str(other))
+    assert core.create_project("", str(make_docs(tmp_path, "L" * 100))).name == "L" * 80
+    with pytest.raises(FolderMissing):
+        core.create_project("x", str(tmp_path / "missing"))
+    with pytest.raises(FolderUsed):
+        core.create_project("x", str(docs))
+    with pytest.raises(FolderNotAllowed):
+        core.create_project("x", str(core.data_dir))
+    with pytest.raises(FolderNotAllowed):
+        core.create_project("x", tmp_path.anchor)
+
+
 def test_folders_of_two_projects_may_not_overlap(core, tmp_path):
-    parent = make_docs(tmp_path, "parent")
+    wrap = make_docs(tmp_path, "wrap")
+    parent = make_docs(wrap, "parent")
     (parent / "child").mkdir()
     sibling = make_docs(tmp_path, "sibling")
     first = core.create_project("Parent", str(parent))
-    for folder in (parent, parent / "child", tmp_path):
+    for folder in (parent, parent / "child", wrap):
         with pytest.raises(ValueError, match="folder already used"):
             core.create_project("Again", str(folder))
     other = core.create_project("Sibling", str(sibling))

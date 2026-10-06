@@ -10,7 +10,7 @@ from tamra.store.models import (
     MessageRecord,
     SourceRecord,
 )
-from tamra.store.repo import FILE_STATUSES, Store
+from tamra.store.repo import FILE_STATUSES, NameTaken, Store
 
 __all__ = [
     "FILE_STATUSES",
@@ -20,6 +20,7 @@ __all__ = [
     "Collection",
     "FileRecord",
     "MessageRecord",
+    "NameTaken",
     "SourceRecord",
     "Store",
     "capabilities",

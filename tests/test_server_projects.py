@@ -146,6 +146,135 @@ def test_a_bad_folder_is_a_400_without_the_path(api):
     assert client.get("/api/projects", headers=AUTH).json() == {"projects": []}
 
 
+def test_a_long_folder_name_gives_a_name_cut_to_80_characters(api):
+    client, tmp_path = api
+    docs = folder(tmp_path, "d" * 120)
+    response = client.post("/api/projects", headers=AUTH, json={"folder_path": str(docs)})
+    assert response.status_code == 201
+    assert response.json()["name"] == "d" * 80
+
+
+def test_a_folder_name_with_a_bidi_override_gives_a_clean_name(api):
+    client, tmp_path = api
+    try:
+        docs = folder(tmp_path, "gnp\u202e.md  notes")
+    except OSError:
+        pytest.skip("the file system refuses this folder name")
+    response = client.post("/api/projects", headers=AUTH, json={"folder_path": str(docs)})
+    assert response.status_code == 201
+    assert response.json()["name"] == "gnp.md notes"
+
+
+@pytest.mark.parametrize(
+    "name", ["a\x00b", "a\x1bb", "\u202egnp.exe", "zero\u200bwidth", "a\u2066b"]
+)
+def test_control_and_format_characters_in_a_name_are_a_400(api, name):
+    client, tmp_path = api
+    docs = folder(tmp_path, "docs")
+    response = client.post(
+        "/api/projects", headers=AUTH, json={"name": name, "folder_path": str(docs)}
+    )
+    assert response.status_code == 400
+    assert "control or format" in response.json()["detail"]
+    assert client.get("/api/projects", headers=AUTH).json() == {"projects": []}
+    kept = add_project(client, "Kept", folder(tmp_path, "kept"))
+    renamed = client.patch(f"/api/projects/{kept['id']}", headers=AUTH, json={"name": name})
+    assert renamed.status_code == 400
+    assert project(client, kept["id"])["name"] == "Kept"
+
+
+def test_a_name_has_its_whitespace_collapsed(api):
+    client, tmp_path = api
+    docs = folder(tmp_path, "docs")
+    response = client.post(
+        "/api/projects",
+        headers=AUTH,
+        json={"name": "  My \t  lease\n docs ", "folder_path": str(docs)},
+    )
+    assert response.json()["name"] == "My lease docs"
+    renamed = client.patch(
+        f"/api/projects/{response.json()['id']}", headers=AUTH, json={"name": "A    B"}
+    )
+    assert renamed.json()["name"] == "A B"
+
+
+def test_a_name_longer_than_80_after_collapsing_is_a_400(api):
+    client, tmp_path = api
+    docs = folder(tmp_path, "docs")
+    name = " ".join(["word"] * 17)  # 84 characters
+    response = client.post(
+        "/api/projects", headers=AUTH, json={"name": name, "folder_path": str(docs)}
+    )
+    assert response.status_code == 400
+
+
+NOT_ALLOWED = {"detail": "Choose a folder of documents, not a whole drive or Tamra's own folder."}
+
+
+def test_a_drive_root_is_refused(api):
+    client, tmp_path = api
+    response = client.post(
+        "/api/projects", headers=AUTH, json={"name": "All", "folder_path": tmp_path.anchor}
+    )
+    assert response.status_code == 400
+    assert response.json() == NOT_ALLOWED
+
+
+def test_tamras_own_folders_and_their_parents_are_refused(api):
+    client, tmp_path = api
+    (tmp_path / "models").mkdir(exist_ok=True)
+    inside_data = tmp_path / "data" / "inner"
+    inside_data.mkdir()
+    for refused in (
+        tmp_path / "data",  # the data folder
+        inside_data,  # inside it
+        tmp_path,  # a parent of the data and models folders
+        tmp_path / "models",
+    ):
+        response = client.post(
+            "/api/projects", headers=AUTH, json={"name": "Own", "folder_path": str(refused)}
+        )
+        assert response.status_code == 400, refused
+        assert response.json() == NOT_ALLOWED
+    assert client.get("/api/projects", headers=AUTH).json() == {"projects": []}
+
+
+def test_a_normal_subfolder_next_to_tamras_is_allowed(api):
+    client, tmp_path = api
+    nested = folder(tmp_path, "docs") / "deeper"
+    nested.mkdir()
+    response = client.post("/api/projects", headers=AUTH, json={"folder_path": str(nested)})
+    assert response.status_code == 201
+
+
+def test_changing_a_folder_to_a_refused_one_is_a_400(api):
+    client, tmp_path = api
+    created = add_project(client, "Docs", folder(tmp_path, "docs"))
+    for refused in (tmp_path.anchor, str(tmp_path / "data")):
+        response = client.put(
+            f"/api/projects/{created['id']}/folder", headers=AUTH, json={"folder_path": refused}
+        )
+        assert response.status_code == 400
+        assert response.json() == NOT_ALLOWED
+
+
+def test_an_unexpected_value_error_is_a_generic_400_without_its_text(tmp_path):
+    core, client = make_api(tmp_path)
+    try:
+
+        def explode(name, folder):
+            raise ValueError("C:\\Users\\secret\\path")
+
+        core.create_project = explode
+        response = client.post(
+            "/api/projects", headers=AUTH, json={"name": "x", "folder_path": str(tmp_path)}
+        )
+        assert response.status_code == 400
+        assert response.json() == {"detail": "The project could not be changed."}
+    finally:
+        core.shutdown()
+
+
 def test_an_empty_folder_path_is_rejected(api):
     client, _ = api
     response = client.post("/api/projects", headers=AUTH, json={"name": "x", "folder_path": ""})
@@ -301,6 +430,35 @@ def test_a_new_chat_has_the_first_project_as_home_and_scope(api):
     assert set(chat) == {"id", "title", "created_at", "updated_at", "project_id", "scope"}
     assert (chat["project_id"], chat["scope"]) == (one["id"], [one["id"]])
     assert chat["title"] == ""
+
+
+def test_a_new_chat_defaults_to_the_oldest_project_not_the_first_by_name(api):
+    client, tmp_path = api
+    oldest = add_project(client, "Zulu", folder(tmp_path, "one"))
+    add_project(client, "Alpha", folder(tmp_path, "two"))
+    chat = client.post("/api/chats", headers=AUTH).json()
+    assert (chat["project_id"], chat["scope"]) == (oldest["id"], [oldest["id"]])
+
+
+def test_moving_a_chat_to_a_project_deleted_meanwhile_is_a_404(tmp_path, monkeypatch):
+    core, client = make_api(tmp_path)
+    try:
+        one = add_project(client, "Alpha", folder(tmp_path, "one"))
+        two = add_project(client, "Beta", folder(tmp_path, "two"))
+        chat_id = client.post("/api/chats", headers=AUTH).json()["id"]
+
+        def gone(chat_id, collection_id):
+            raise ValueError(f"unknown project {collection_id}")
+
+        monkeypatch.setattr(core.store, "move_chat", gone)
+        response = client.patch(
+            f"/api/chats/{chat_id}", headers=AUTH, json={"project_id": two["id"]}
+        )
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Project not found."}
+        assert client.get(f"/api/chats/{chat_id}", headers=AUTH).json()["project_id"] == one["id"]
+    finally:
+        core.shutdown()
 
 
 def test_a_chat_can_be_created_in_a_chosen_project(api):

@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import threading
+import unicodedata
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -46,6 +47,45 @@ class EmbedderUnavailable(RuntimeError):
 
 class AnswerBusy(RuntimeError):
     """An answer is being written, so a project cannot be deleted right now."""
+
+
+class BadName(ValueError):
+    """A project name that is empty, too long, or has control or format characters."""
+
+
+class FolderUsed(ValueError):
+    """The folder is, or lies inside or around, another project's folder."""
+
+
+class FolderMissing(ValueError):
+    """The path is not an absolute, existing directory."""
+
+
+class FolderNotAllowed(ValueError):
+    """A whole drive or share, or a folder that holds or lies inside Tamra's own folders."""
+
+
+MAX_PROJECT_NAME = 80
+_HIDDEN = frozenset({"Cc", "Cf"})  # control and format characters, bidi overrides among them
+
+
+def _clean_name(name: str) -> str:
+    """A project name as it is stored: whitespace collapsed, 1 to 80 characters, with no control
+    or format characters (BadName otherwise). Given and derived names both pass through it."""
+    cleaned = " ".join(name.split())
+    if not 1 <= len(cleaned) <= MAX_PROJECT_NAME:
+        raise BadName("bad name length")
+    if any(unicodedata.category(c) in _HIDDEN for c in cleaned):
+        raise BadName("bad name characters")
+    return cleaned
+
+
+def _derived_name(path: Path) -> str:
+    """The name for a project made without one: its folder's name, made fit to be a name."""
+    raw = path.name or str(path)
+    visible = "".join(c for c in raw if unicodedata.category(c) not in _HIDDEN)
+    cut = " ".join(visible.split())[:MAX_PROJECT_NAME].rstrip()
+    return _clean_name(cut or "Project")
 
 
 def _overlaps(first: Path, second: Path) -> bool:
@@ -407,7 +447,7 @@ class Core:
         with self._projects_lock:
             path = self._checked_folder(folder)
             collection = self.store.create_collection(
-                name.strip() or path.name, str(path), MODEL_ID
+                _clean_name(name) if name.strip() else _derived_name(path), str(path), MODEL_ID
             )
             if len(self.store.list_collections()) == 1:
                 self.store.adopt_homeless_chats(collection.id)
@@ -416,11 +456,9 @@ class Core:
         return collection
 
     def rename_project(self, collection_id: int, name: str) -> Collection | None:
-        """Rename a project (None if unknown, ValueError if the name is empty or taken)."""
-        name = name.strip()
-        if not name:
-            raise ValueError("name required")
-        if not self.store.rename_collection(collection_id, name):
+        """Rename a project (None if unknown; BadName if the name is not valid, NameTaken if
+        another project has it)."""
+        if not self.store.rename_collection(collection_id, _clean_name(name)):
             return None
         return self.store.get_collection(collection_id)
 
@@ -468,16 +506,23 @@ class Core:
         return outcome[0]
 
     def _checked_folder(self, folder: str, excluding: int | None = None) -> Path:
-        """The resolved folder, if it exists and does not overlap another project's folder."""
+        """The resolved folder, if it exists, is not a whole drive or one of Tamra's own folders,
+        and does not overlap another project's folder. Each refusal is its own ValueError."""
         path = Path(folder.strip()).expanduser()
         if not path.is_absolute():
-            raise ValueError("Choose a full folder path, for example C:\\Users\\me\\Documents.")
+            raise FolderMissing("Choose a full folder path, for example C:\\Users\\me\\Documents.")
         if not path.is_dir():
-            raise ValueError(f"Folder not found: {folder}")
+            raise FolderMissing(f"Folder not found: {folder}")
         path = path.resolve()
+        if path.parent == path:  # a drive or a share root
+            raise FolderNotAllowed("a whole drive")
+        # Indexing Tamra's data or models would index its own database; a parent of them (such
+        # as a profile folder that holds AppData) would do the same.
+        if _overlaps(path, self.data_dir) or _overlaps(path, self._models_dir):
+            raise FolderNotAllowed("Tamra's own folder")
         for other in self.store.list_collections():
             if other.id != excluding and _overlaps(path, Path(other.folder_path)):
-                raise ValueError("folder already used")  # its files would be indexed twice
+                raise FolderUsed("folder already used")  # its files would be indexed twice
         return path
 
     def _forget_documents(self, file_ids: list[int]) -> None:

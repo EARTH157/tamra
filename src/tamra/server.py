@@ -20,13 +20,22 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 import tamra
 from tamra import secrets as key_store
 from tamra.answer import location_label, source_payloads
-from tamra.core import AnswerBusy, Core, EmbedderUnavailable
+from tamra.core import (
+    MAX_PROJECT_NAME,
+    AnswerBusy,
+    BadName,
+    Core,
+    EmbedderUnavailable,
+    FolderMissing,
+    FolderNotAllowed,
+    FolderUsed,
+)
 from tamra.ingest.parsers import SUPPORTED
 from tamra.llm.base import LLMError, ProviderError
 from tamra.models.catalog import ModelEntry
 from tamra.models.hardware import _is_integrated, recommend
 from tamra.models.manager import DownloadBusy, ImportRefused
-from tamra.store import Chat
+from tamra.store import Chat, NameTaken
 from tamra.viewer import (
     MAX_SCALE,
     MIN_SCALE,
@@ -103,9 +112,6 @@ class SecurityHeaders:
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
-
-
-MAX_PROJECT_NAME = 80
 
 
 class ProjectBody(BaseModel):
@@ -273,32 +279,30 @@ def _chat_payload(chat: Chat) -> dict:
     }
 
 
-def _project_name(name: str) -> str:
-    cleaned = name.strip()
-    if not cleaned or len(cleaned) > MAX_PROJECT_NAME:
-        raise HTTPException(
-            status_code=400,
-            detail=f"The project name must be 1 to {MAX_PROJECT_NAME} characters.",
-        )
-    return cleaned
+BAD_NAME_DETAIL = (
+    f"The project name must be 1 to {MAX_PROJECT_NAME} characters, "
+    "without control or format characters."
+)
+# How a ValueError from a project change shows to the client: the first class that matches wins.
+# The details are fixed, so a path the user typed is never sent back.
+_PROJECT_ERRORS: tuple[tuple[type[ValueError], int, str], ...] = (
+    (NameTaken, 409, "Another project already has this name."),
+    (FolderUsed, 409, "This folder is already used by another project."),
+    (FolderMissing, 400, "Folder not found."),
+    (
+        FolderNotAllowed,
+        400,
+        "Choose a folder of documents, not a whole drive or Tamra's own folder.",
+    ),
+    (BadName, 400, BAD_NAME_DETAIL),
+)
 
 
 def _project_error(e: ValueError) -> HTTPException:
-    """The HTTP error for a ValueError from a project change, with a fixed message: a path the
-    user typed is never sent back."""
-    message = str(e)
-    if message == "name taken":
-        return HTTPException(status_code=409, detail="Another project already has this name.")
-    if message == "folder already used":
-        return HTTPException(
-            status_code=409, detail="This folder is already used by another project."
-        )
-    if message.startswith("Folder not found"):
-        return HTTPException(status_code=400, detail="Folder not found.")
-    return HTTPException(
-        status_code=400,
-        detail="Choose a full folder path, for example C:\\Users\\me\\Documents.",
-    )
+    for kind, status, detail in _PROJECT_ERRORS:
+        if isinstance(e, kind):
+            return HTTPException(status_code=status, detail=detail)
+    return HTTPException(status_code=400, detail="The project could not be changed.")
 
 
 def _project_response(core: Core, collection_id: int) -> dict:
@@ -315,9 +319,10 @@ def _add_project_routes(app: FastAPI, core: Core) -> None:
 
     @app.post("/api/projects", status_code=201)
     def create_project(body: ProjectBody) -> dict:
-        name = "" if body.name is None else _project_name(body.name)
+        if body.name is not None and not body.name.strip():
+            raise _project_error(BadName())  # left out is fine; given, it must not be blank
         try:
-            collection = core.create_project(name, body.folder_path)
+            collection = core.create_project(body.name or "", body.folder_path)
         except ValueError as e:
             raise _project_error(e) from e
         return _project_response(core, collection.id)
@@ -326,7 +331,7 @@ def _add_project_routes(app: FastAPI, core: Core) -> None:
     def rename_project(project_id: int, body: ProjectRenameBody) -> dict:
         if body.name is not None:
             try:
-                renamed = core.rename_project(project_id, _project_name(body.name))
+                renamed = core.rename_project(project_id, body.name)
             except ValueError as e:
                 raise _project_error(e) from e
             if renamed is None:
@@ -373,10 +378,10 @@ def _add_routes(app: FastAPI, core: Core) -> None:
     def create_chat(body: NewChatBody | None = None) -> dict:
         project_id = body.project_id if body is not None else None
         if project_id is None:
-            # No project named: the first one is home. Before any project the chat has no home;
-            # the first project created adopts it.
+            # No project named: the oldest one (lowest id) is home. Before any project the chat
+            # has no home; the first project created adopts it.
             projects = core.store.list_collections()
-            project_id = projects[0].id if projects else None
+            project_id = min(p.id for p in projects) if projects else None
         try:
             return _chat_payload(core.store.create_chat("", project_id))
         except ValueError as e:  # an unknown project
@@ -408,13 +413,18 @@ def _add_routes(app: FastAPI, core: Core) -> None:
             raise HTTPException(status_code=404, detail="Chat not found.")
         if body.project_id is not None and core.store.get_collection(body.project_id) is None:
             raise HTTPException(status_code=404, detail="Project not found.")
-        try:
-            if body.title is not None:  # first: the only step that can still be refused
+        if body.title is not None:  # first: it is the step a bad request can still fail
+            try:
                 core.store.rename_chat(chat_id, body.title)
-            if body.project_id is not None:
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400, detail="The chat title must not be empty."
+                ) from e
+        if body.project_id is not None:
+            try:
                 core.store.move_chat(chat_id, body.project_id)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            except ValueError as e:  # the project was deleted since the check above
+                raise HTTPException(status_code=404, detail="Project not found.") from e
         chat = core.store.get_chat(chat_id)
         if chat is None:  # deleted meanwhile
             raise HTTPException(status_code=404, detail="Chat not found.")
