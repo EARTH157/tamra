@@ -835,6 +835,18 @@ describe("New chat", () => {
     expect((await ask(calls))?.body).toEqual({ project_id: 2 });
   });
 
+  it("starts in a project opened in the tree after a chat of another project", async () => {
+    const calls = boot(
+      { projects: [contracts, hr], chats: [lease, leave] },
+      { ...routes(2), "GET /api/chats/3": () => json({ ...lease, messages: [] }) },
+    );
+    view = await mount(<App />); // a first launch opens the first project, Contracts
+    await click(view.container.querySelector('button[title="Lease length"]'));
+    await click(toggle("HR Documents"));
+    await click(buttonByText(view.container, "New chat"));
+    expect((await ask(calls))?.body).toEqual({ project_id: 2 });
+  });
+
   it("starts in the project that was opened in the tree", async () => {
     const calls = boot({ projects: [contracts, hr], chats: [lease] }, routes(2));
     view = await mount(<App />);

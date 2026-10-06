@@ -92,9 +92,8 @@ export default function App() {
 
   function newChat() {
     setProblem(null);
-    // Stay in the project of the chat being left; with no chat open, keep what was chosen (which
-    // may be nothing: the first project is then only a default).
-    if (activeChat?.project_id != null) setProjectId(activeChat.project_id);
+    // The current project already follows the open chat, or the project opened in the tree since
+    // (which wins); with neither, the first project is only a default.
     setActiveId(null);
     setView("chat");
   }
@@ -286,6 +285,12 @@ export default function App() {
               onAnswered={() => void refreshChats()}
               onOpenSettings={openSettings}
               visible={view === "chat"}
+              projects={projects}
+              chat={activeChat}
+              defaultProjectId={activeProject?.id ?? null}
+              onChatChanged={(updated) =>
+                setChats((list) => list.map((item) => (item.id === updated.id ? updated : item)))
+              }
             />
           )}
         </div>
