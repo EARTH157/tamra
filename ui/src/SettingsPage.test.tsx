@@ -15,7 +15,7 @@ import {
   typeInto,
 } from "./test-utils";
 import { localModel, modelsInfo, saved } from "./test-models";
-import type { Collection, IndexStatus, ModelsInfo, Settings, SettingsTab } from "./types";
+import type { ModelsInfo, Settings, SettingsTab } from "./types";
 
 let view: Mounted | undefined;
 
@@ -26,20 +26,6 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-const collection: Collection = {
-  id: 1,
-  name: "HR Documents",
-  folder_path: "D:\\Work\\HR Documents",
-  created_at: "t",
-};
-const index: IndexStatus = {
-  stale: false,
-  counts: { pending: 0, indexing: 0, indexed: 128, failed: 0, skipped: 0 },
-  current: null,
-  error: null,
-  problems: [],
-};
-
 const noContent = () => new Response(null, { status: 204 });
 
 type Options = {
@@ -47,7 +33,6 @@ type Options = {
   models?: ModelsInfo;
   routes?: Record<string, () => Response>;
   tab?: SettingsTab;
-  collection?: Collection | null;
   chatCount?: number;
   busy?: boolean;
 };
@@ -55,8 +40,6 @@ type Options = {
 type Harness = {
   calls: Call[];
   core: { settings: Settings; models: ModelsInfo };
-  onChangeFolder: Mock<() => void>;
-  onRebuild: Mock<() => void>;
   onChatsDeleted: Mock<() => Promise<void>>;
 };
 
@@ -82,8 +65,6 @@ async function mountPage(options: Options = {}): Promise<Harness> {
   const harness: Harness = {
     calls,
     core,
-    onChangeFolder: vi.fn<() => void>(),
-    onRebuild: vi.fn<() => void>(),
     onChatsDeleted: vi.fn<() => Promise<void>>(async () => {}),
   };
 
@@ -93,12 +74,8 @@ async function mountPage(options: Options = {}): Promise<Harness> {
       <SettingsPage
         tab={tab}
         onTabChange={setTab}
-        collection={options.collection === undefined ? collection : options.collection}
-        index={index}
         chatCount={options.chatCount ?? 4}
         busy={options.busy ?? false}
-        onChangeFolder={harness.onChangeFolder}
-        onRebuild={harness.onRebuild}
         onChatsDeleted={harness.onChatsDeleted}
       />
     );
@@ -161,7 +138,7 @@ describe("Settings tabs", () => {
   it("shows the heading, the subtitle of the open tab, and switches with the arrow keys", async () => {
     await mountPage();
     expect(find("h1").textContent).toBe("Settings");
-    expect(text()).toContain("Language, documents, and the data Tamra keeps on this computer.");
+    expect(text()).toContain("Language and the data Tamra keeps on this computer.");
     expect(tab("General").getAttribute("aria-selected")).toBe("true");
     await press(tab("General"), "ArrowRight");
     expect(tab("AI model").getAttribute("aria-selected")).toBe("true");
@@ -183,12 +160,12 @@ describe("Settings tabs", () => {
 });
 
 describe("General tab", () => {
-  it("shows the settings, the folder, the index, the data and the chats", async () => {
+  it("shows the settings, the data and the chats, and no folder or index of a project", async () => {
     await mountPage();
     expect(find<HTMLSelectElement>("select").value).toBe("en");
     expect(find('button[role="switch"]').getAttribute("aria-checked")).toBe("true");
-    expect(text()).toContain("D:\\Work\\HR Documents");
-    expect(text()).toContain("128 files indexed · built with bge-m3");
+    expect(text()).not.toContain("Documents folder"); // per project, in Project settings
+    expect(text()).not.toContain("Search index");
     expect(text()).toContain("%LOCALAPPDATA%\\Tamra");
     expect(text()).toContain("4 chats saved on this computer");
     expect(text()).toContain("Tamra · pre-alpha · Apache-2.0 license");
@@ -201,7 +178,6 @@ describe("General tab", () => {
     expect(find("h1").textContent).toBe("การตั้งค่า");
     expect(tab("ทั่วไป").getAttribute("aria-selected")).toBe("true");
     expect(text()).toContain("บันทึกแชทไว้ในเครื่องนี้ 4 แชท");
-    expect(text()).toContain("สร้างดัชนีแล้ว 128 ไฟล์ · สร้างด้วย bge-m3");
     expect(document.documentElement.lang).toBe("th");
   });
 
@@ -222,26 +198,8 @@ describe("General tab", () => {
     expect(find("h1").textContent).toBe("Settings");
   });
 
-  it("changes the folder and rebuilds the index through the app", async () => {
-    const page = await mountPage();
-    await click(buttonByText(view!.container, "Change folder"));
-    expect(page.onChangeFolder).toHaveBeenCalledTimes(1);
-    await click(buttonByText(view!.container, "Rebuild index"));
-    expect(page.onRebuild).toHaveBeenCalledTimes(1);
-  });
-
-  it("offers to choose a folder, and no index, before one is chosen", async () => {
-    const page = await mountPage({ collection: null });
-    expect(text()).toContain("No folder chosen yet");
-    expect(text()).not.toContain("Search index");
-    await click(buttonByText(view!.container, "Choose a folder"));
-    expect(page.onChangeFolder).toHaveBeenCalledTimes(1);
-  });
-
-  it("will not rebuild the index or delete chats while an answer is written", async () => {
+  it("will not delete chats while an answer is written", async () => {
     await mountPage({ busy: true });
-    expect(buttonByText(view!.container, "Rebuild index")?.disabled).toBe(true);
-    expect(buttonByText(view!.container, "Change folder")?.disabled).toBe(true);
     expect(buttonByText(view!.container, "Delete all chats")?.disabled).toBe(true);
   });
 

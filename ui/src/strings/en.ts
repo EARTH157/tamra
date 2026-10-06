@@ -8,18 +8,15 @@ export const en = {
   "common.retry": "Retry",
 
   "app.newChat": "New chat",
-  "app.chats": "Chats",
-  "app.noChatsNoFolder": "No chats yet. Add a folder of documents to start.",
-  "app.noChatsYet": "No chats yet. Ask a question to start one.",
+  "app.projects": "Projects",
+  "app.newProject": "New project",
+  "app.noProjects": "No projects yet. Add a folder of documents to start.",
   "app.coreUnreachable": "Tamra core is unreachable. Answers are paused until it reconnects.",
   "app.connecting": "Connecting to Tamra…",
 
   "folder.changeTitle": "Change documents folder",
-  "folder.chooseTitle": "Choose documents folder",
   "folder.changeText":
     "Tamra will index the new folder and answer from it. Your files are never changed.",
-  "folder.chooseText":
-    "Tamra indexes the PDF, Word, text, and Markdown files in this folder and its subfolders. Your files are never changed.",
   "folder.pathLabel": "Folder path",
   "folder.pathPlaceholder": "Full folder path, like D:\\Work\\Documents",
   "folder.browse": "Browse…",
@@ -28,7 +25,7 @@ export const en = {
   "welcome.title": "Welcome to Tamra",
   "welcome.subtitle":
     "Ask questions about your own documents and check every answer against its source.",
-  "welcome.addTitle": "Add a folder of documents",
+  "welcome.addTitle": "Add your first project",
   "welcome.addText": "Choose a folder of PDF, Word, text, or Markdown files.",
   "welcome.choose": "Choose a folder",
   "welcome.offline": "Works offline",
@@ -47,6 +44,43 @@ export const en = {
   "chatList.delete": "Delete chat",
   "chatList.renameLabel": "Chat title",
   "chatList.renameHint": "Enter to save · Esc to cancel",
+  "chatList.moveToProject": "Move to project",
+
+  "projectTree.label": "Projects and chats",
+  "projectTree.options": "Options for project {name}",
+  "projectTree.noChats": "No chats yet. Ask a question to start one.",
+
+  "project.menu": "Project options",
+  "project.settings": "Project settings",
+  "project.delete": "Delete project",
+  "project.nameLabel": "Project name",
+  "project.folderLabel": "Documents folder",
+
+  "project.new.title": "New project",
+  "project.new.text": "A project keeps one folder of documents with its own search index and chats.",
+  "project.new.namePlaceholder": "Defaults to the folder name",
+  "project.new.hint": "Reads PDF, Word, TXT, and Markdown. Your files are never changed.",
+  "project.new.create": "Create project",
+
+  "project.settings.text": "Name the project, choose its folder, and check its search index.",
+  "project.settings.index": "Search index",
+  "project.settings.save": "Save",
+
+  "project.deleteTitle": "Delete this project?",
+  "project.deleteText":
+    "\"{name}\", its search index, and its {count} chats will be removed from this computer. Your folder and its files are not touched.",
+  "project.deleteText.one":
+    "\"{name}\", its search index, and its 1 chat will be removed from this computer. Your folder and its files are not touched.",
+  "project.deleteTextNone":
+    "\"{name}\" and its search index will be removed from this computer. Your folder and its files are not touched.",
+
+  "project.err.nameTaken": "A project with this name already exists.",
+  "project.err.nameLength": "The project name must be 1 to 80 characters.",
+  "project.err.folderNotFound": "That folder does not exist.",
+  "project.err.folderRelative": "Enter the full folder path, for example C:\\Users\\me\\Documents.",
+  "project.err.folderUsed": "Another project already uses this folder.",
+  "project.err.notFound": "This project no longer exists.",
+  "project.err.busy": "An answer is being written. Wait for it to finish.",
 
   "chat.defaultCollection": "your documents",
   "chat.emptyTitle": "Ask your documents",
@@ -177,7 +211,7 @@ export const en = {
 
   "settings.open": "Settings",
   "settings.title": "Settings",
-  "settings.subtitle.general": "Language, documents, and the data Tamra keeps on this computer.",
+  "settings.subtitle.general": "Language and the data Tamra keeps on this computer.",
   "settings.subtitle.model":
     "Choose where answers are generated. Search and indexing always run on this computer.",
   "settings.subtitle.style":
@@ -191,17 +225,6 @@ export const en = {
   "settings.language": "Interface language",
   "settings.languageHint": "Answers always follow the language of your question.",
   "settings.askBeforeDelete": "Ask before deleting a chat",
-  "settings.documents": "Documents",
-  "settings.docFolder": "Documents folder",
-  "settings.noFolder": "No folder chosen yet",
-  "settings.changeFolder": "Change folder",
-  "settings.chooseFolder": "Choose a folder",
-  "settings.searchIndex": "Search index",
-  "settings.indexSummary": "{count} files indexed · built with bge-m3",
-  "settings.indexSummary.one": "1 file indexed · built with bge-m3",
-  "settings.indexPartial": "{indexed} of {total} files indexed · built with bge-m3",
-  "settings.indexNone": "No files indexed yet · built with bge-m3",
-  "settings.rebuild": "Rebuild index",
   "settings.data": "Data",
   "settings.dataFolder": "Data folder",
   "settings.openFolder": "Open folder",

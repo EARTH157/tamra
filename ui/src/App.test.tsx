@@ -20,23 +20,29 @@ afterEach(async () => {
   await view?.unmount();
   view = undefined;
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
-const collectionState = {
-  collection: { id: 1, name: "Contracts", folder_path: "C:/c", created_at: "t" },
-  index: {
-    stale: false,
-    counts: { pending: 0, indexing: 0, indexed: 2, failed: 0, skipped: 0 },
-    current: null,
-    error: null,
-    problems: [],
-  },
+const idle = {
+  stale: false,
+  counts: { pending: 0, indexing: 0, indexed: 2, failed: 0, skipped: 0 },
+  current: null,
+  error: null,
+  problems: [],
 };
-const lease = { id: 3, title: "Lease length", created_at: "t", updated_at: "t" };
+const contracts = { id: 1, name: "Contracts", folder_path: "C:/c", index: idle };
+const lease = {
+  id: 3,
+  title: "Lease length",
+  created_at: "t",
+  updated_at: "t",
+  project_id: 1,
+  scope: [1],
+};
 
 function withChats(extra: Record<string, () => Response> = {}) {
   return mockFetch({
-    "GET /api/collection": () => json(collectionState),
+    "GET /api/projects": () => json({ projects: [contracts] }),
     "GET /api/chats": () => json({ chats: [lease] }),
     ...extra,
   });
@@ -52,24 +58,26 @@ async function openMenu(container: HTMLElement) {
 }
 
 describe("App", () => {
-  it("welcomes a first run and asks for a folder", async () => {
+  it("welcomes a first run and asks for a project", async () => {
     mockFetch({
-      "GET /api/collection": () => json({ collection: null, index: null }),
+      "GET /api/projects": () => json({ projects: [] }),
       "GET /api/chats": () => json({ chats: [] }),
     });
     view = await mount(<App />);
     const text = view.container.textContent ?? "";
     expect(text).toContain("Welcome to Tamra");
-    expect(text).toContain("Add a folder of documents");
-    expect(view.container.querySelector(".section-label")?.textContent).toBe("Chats");
-    expect(text).toContain("No chats yet. Add a folder of documents to start.");
+    expect(text).toContain("Add your first project");
+    expect(view.container.querySelector(".section-label")?.textContent).toBe("Projects");
+    expect(text).toContain("No projects yet. Add a folder of documents to start.");
+    expect(view.container.querySelector(".collection-card")).toBeNull(); // no project, no card
     expect(buttonByText(view.container, "New chat")?.disabled).toBe(true);
     expect(dialog()).toBeNull();
     await click(buttonByText(view.container, "Choose a folder"));
+    expect(dialog()?.textContent).toContain("New project");
     expect(dialog()?.querySelector('input[aria-label="Folder path"]')).not.toBeNull();
   });
 
-  it("shows the index and the chats once a folder is chosen", async () => {
+  it("shows the project, its chats and its index once a project exists", async () => {
     withChats();
     view = await mount(<App />);
     expect(view.container.textContent).toContain("2 files indexed");
@@ -77,12 +85,16 @@ describe("App", () => {
     expect(view.container.textContent).toContain("Ask your documents");
   });
 
-  it("offers only Rename and Delete chat in the chat menu", async () => {
+  it("offers Rename, Move to project and Delete chat in the chat menu", async () => {
     withChats();
     view = await mount(<App />);
     const menu = await openMenu(view.container);
     const items = [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])];
-    expect(items.map((item) => item.textContent?.trim())).toEqual(["Rename", "Delete chat"]);
+    expect(items.map((item) => item.textContent?.trim())).toEqual([
+      "Rename",
+      "Move to project",
+      "Delete chat",
+    ]);
     await press(menu, "Escape");
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
@@ -136,16 +148,16 @@ describe("App", () => {
     expect(view.container.textContent).not.toContain("Lease length");
   });
 
-  it("changes the folder in a dialog and shows the server's error", async () => {
+  it("changes the folder in a dialog and shows why a folder was refused", async () => {
     let refuse = true;
+    let project = contracts;
     const calls = withChats({
-      "PUT /api/collection": () =>
-        refuse
-          ? json({ detail: "Folder not found: D:/nope" }, 400)
-          : json({
-              ...collectionState,
-              collection: { ...collectionState.collection, name: "Leases", folder_path: "D:/l" },
-            }),
+      "GET /api/projects": () => json({ projects: [project] }),
+      "PUT /api/projects/1/folder": () => {
+        if (refuse) return json({ detail: "Folder not found." }, 400);
+        project = { ...contracts, folder_path: "D:/l" };
+        return json(project);
+      },
     });
     view = await mount(<App />);
     await click(buttonByText(view.container, "Change folder"));
@@ -155,25 +167,25 @@ describe("App", () => {
     await typeInto(input, "D:/nope");
     await click(buttonByText(dialog()!, "Use this folder"));
     expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe(
-      "Folder not found: D:/nope",
+      "That folder does not exist.",
     );
     refuse = false;
     await typeInto(dialog()?.querySelector('input[aria-label="Folder path"]'), "D:/l");
     await click(buttonByText(dialog()!, "Use this folder"));
     expect(calls).toContainEqual({
-      key: "PUT /api/collection",
-      body: { name: "", folder_path: "D:/l" },
+      key: "PUT /api/projects/1/folder",
+      body: { folder_path: "D:/l" },
     });
     expect(dialog()).toBeNull();
-    expect(view.container.textContent).toContain("Leases");
+    expect(view.container.querySelector(".collection-path")?.textContent).toBe("D:/l");
   });
 
   it("shows a banner while the core is unreachable and retries on demand", async () => {
     let reachable = false;
     const calls = mockFetch({
-      "GET /api/collection": () => {
+      "GET /api/projects": () => {
         if (!reachable) throw new TypeError("Failed to fetch");
-        return json(collectionState);
+        return json({ projects: [contracts] });
       },
       "GET /api/chats": () => json({ chats: [lease] }),
     });
@@ -184,10 +196,10 @@ describe("App", () => {
     );
     reachable = true;
     const count = (key: string) => calls.filter((c) => c.key === key).length;
-    const polls = count("GET /api/collection");
+    const polls = count("GET /api/projects");
     const chatLoads = count("GET /api/chats");
     await click(buttonByText(view.container, "Retry"));
-    expect(count("GET /api/collection")).toBeGreaterThan(polls);
+    expect(count("GET /api/projects")).toBeGreaterThan(polls);
     expect(count("GET /api/chats")).toBeGreaterThan(chatLoads); // reloaded after reconnecting
     expect(view.container.textContent).not.toContain("Tamra core is unreachable");
     expect(view.container.textContent).toContain("2 files indexed");
@@ -370,18 +382,10 @@ describe("Settings in the app", () => {
     expect(view!.container.textContent).toContain("Ask your documents"); // an empty chat, not Lease length
   });
 
-  it("changes the folder and rebuilds the index from Settings", async () => {
-    const calls = await mountWithSettings(
-      {},
-      { "POST /api/collection/rebuild": () => new Response(null, { status: 204 }) },
-    );
+  it("has no folder or index rows: they belong to each project, in Project settings", async () => {
+    await mountWithSettings();
     await click(settingsButton());
-    await click(buttonByText(view!.container, "Rebuild index"));
-    expect(calls.map((c) => c.key)).toContain("POST /api/collection/rebuild");
-    const change = [...view!.container.querySelectorAll("button")].filter(
-      (b) => b.textContent === "Change folder",
-    );
-    await click(change[change.length - 1]); // the one on the Settings page
-    expect(dialog()?.textContent).toContain("Change documents folder");
+    expect(view!.container.textContent).not.toContain("Search index");
+    expect(view!.container.textContent).not.toContain("Documents folder");
   });
 });

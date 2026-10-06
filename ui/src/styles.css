@@ -405,7 +405,18 @@ svg.lucide {
   line-height: 18px;
 }
 
-.chat-list {
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 17px 2px 2px 10px;
+}
+
+.section-head .section-label {
+  margin: 0;
+}
+
+.project-tree {
   flex: 0 1 auto;
   min-height: 0;
   margin: 4px -4px 0;
@@ -417,13 +428,14 @@ svg.lucide {
   flex: 1 0 0;
 }
 
-.chat-list ul {
+.project-tree ul {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.chat-row {
+.chat-row,
+.project-row {
   position: relative;
   display: flex;
   align-items: center;
@@ -433,7 +445,8 @@ svg.lucide {
   border-radius: var(--radius);
 }
 
-.chat-row:hover {
+.chat-row:hover,
+.project-row:hover {
   background: var(--row-hover);
 }
 
@@ -463,6 +476,62 @@ svg.lucide {
 .row-more {
   margin-right: 3px;
   color: var(--muted);
+}
+
+/* Projects: a folder row that opens to show its chats */
+
+.project-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 6px;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  text-align: left;
+}
+
+.project-toggle svg {
+  color: var(--muted);
+}
+
+.project-toggle svg + svg {
+  color: var(--primary-ink); /* the folder, after the chevron */
+}
+
+.project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row.active .project-name {
+  font-weight: 600;
+}
+
+.project-count {
+  flex: none;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.project-tree .chat-rows {
+  margin-bottom: 4px;
+}
+
+.chat-rows .chat-title {
+  padding-left: 30px; /* in line with the project's name */
+}
+
+.project-empty {
+  margin: 0 10px 6px 30px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .chat-row.renaming {
@@ -530,10 +599,54 @@ svg.lucide {
   color: var(--muted);
 }
 
-.menu-item:hover,
+.menu-item:hover:not(:disabled),
 .menu-item:focus-visible {
   outline: none;
   background: var(--bg);
+}
+
+.menu-item:disabled {
+  opacity: 0.5;
+}
+
+.menu-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-item .menu-chevron {
+  margin-left: auto;
+}
+
+.menu .menu-heading {
+  padding-top: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The "Move to project" flyout, beside its item */
+
+.submenu-wrap {
+  position: relative;
+}
+
+.menu.submenu {
+  position: absolute;
+  top: -6px;
+  left: calc(100% - 2px);
+  min-width: 190px;
+  max-width: 260px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.menu.submenu.flip {
+  right: calc(100% - 2px);
+  left: auto;
 }
 
 .menu-item.danger,
@@ -1740,6 +1853,39 @@ svg.lucide {
   color: var(--error-text);
   font-size: 12px;
   line-height: 17px;
+}
+
+.dialog .field {
+  margin-top: 16px;
+}
+
+.dialog .field .path-row {
+  margin-top: 0;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.path-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index-panel {
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.index-panel > :first-child {
+  margin-top: 0;
 }
 
 .dialog-actions {

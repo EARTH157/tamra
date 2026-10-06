@@ -18,11 +18,19 @@ export type IndexStatus = {
   problems: ProblemFile[];
 };
 
-export type Collection = { id: number; name: string; folder_path: string; created_at: string };
+/** A project: a name and one folder of documents with its own search index (GET /api/projects). */
+export type Project = { id: number; name: string; folder_path: string; index: IndexStatus };
 
-export type CollectionState = { collection: Collection | null; index: IndexStatus | null };
-
-export type Chat = { id: number; title: string; created_at: string; updated_at: string };
+export type Chat = {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  /** The home project, where the chat is listed; null only for a chat made before any project. */
+  project_id: number | null;
+  /** The ids of the projects the chat searches. */
+  scope: number[];
+};
 
 export type Source = {
   n: number;

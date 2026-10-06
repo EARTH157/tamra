@@ -19,6 +19,29 @@ export function errorText(error: Error, t: Translate): string {
   return error.message;
 }
 
+/** The core's fixed refusals about projects (src/tamra/server.py), by their English text. */
+const PROJECT_ERRORS: Record<string, TranslationKey> = {
+  "Another project already has this name.": "project.err.nameTaken",
+  "This folder is already used by another project.": "project.err.folderUsed",
+  "Folder not found.": "project.err.folderNotFound",
+  "The project name must be 1 to 80 characters.": "project.err.nameLength",
+  "Project not found.": "project.err.notFound",
+  "Unknown project.": "project.err.notFound",
+  "An answer is being written. Wait for it to finish.": "project.err.busy",
+};
+
+/** The text to show when a project call was refused: the user's language for the core's fixed refusals. */
+export function projectErrorText(error: Error, t: Translate): string {
+  if (error instanceof ApiError) {
+    if (error.status === 400 && error.message.startsWith("Choose a full folder path")) {
+      return t("project.err.folderRelative");
+    }
+    const key = PROJECT_ERRORS[error.message];
+    if (key) return t(key);
+  }
+  return errorText(error, t);
+}
+
 /**
  * The text to show when checking a selection failed: the search model is unavailable (503), the
  * answer is no longer saved (404), or the core could not be reached; anything else is worded as

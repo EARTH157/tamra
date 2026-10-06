@@ -225,7 +225,15 @@ export default function ChatView({
     } catch {
       setDetail(
         (current) =>
-          current ?? { id, title: "", created_at: "", updated_at: "", messages: [] },
+          current ?? {
+            id,
+            title: "",
+            created_at: "",
+            updated_at: "",
+            project_id: null,
+            scope: [],
+            messages: [],
+          },
       );
       return null;
     }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import IndexStatus from "./IndexStatus";
 import { buttonByText, click, type Mounted, mount } from "./test-utils";
+import type { IndexStatus as IndexStatusType, Project } from "./types";
 
 let view: Mounted | undefined;
 
@@ -9,16 +10,21 @@ afterEach(async () => {
   view = undefined;
 });
 
-const collection = { id: 1, name: "Contracts", folder_path: "C:/contracts", created_at: "t" };
 const counts = { pending: 1, indexing: 1, indexed: 3, failed: 1, skipped: 0 };
+const idle = { stale: false, counts, current: null, error: null, problems: [] };
+const project = (index: IndexStatusType = idle): Project => ({
+  id: 1,
+  name: "Contracts",
+  folder_path: "C:/contracts",
+  index,
+});
 
 describe("IndexStatus", () => {
   it("shows progress while indexing", async () => {
     const index = { stale: false, counts, current: "b.pdf", error: null, problems: [] };
     view = await mount(
       <IndexStatus
-        collection={collection}
-        index={index}
+        project={project(index)}
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
@@ -39,8 +45,7 @@ describe("IndexStatus", () => {
     const index = { stale: false, counts: done, current: null, error: null, problems: [] };
     view = await mount(
       <IndexStatus
-        collection={collection}
-        index={index}
+        project={project(index)}
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
@@ -60,8 +65,7 @@ describe("IndexStatus", () => {
     };
     view = await mount(
       <IndexStatus
-        collection={collection}
-        index={index}
+        project={project(index)}
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
@@ -87,8 +91,7 @@ describe("IndexStatus", () => {
     const index = { stale: false, counts, current: null, error: null, problems };
     view = await mount(
       <IndexStatus
-        collection={collection}
-        index={index}
+        project={project(index)}
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
@@ -102,8 +105,7 @@ describe("IndexStatus", () => {
     const index = { stale: true, counts, current: null, error: null, problems: [] };
     view = await mount(
       <IndexStatus
-        collection={collection}
-        index={index}
+        project={project(index)}
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={onRebuild}
@@ -117,8 +119,7 @@ describe("IndexStatus", () => {
     const onChangeFolder = vi.fn();
     view = await mount(
       <IndexStatus
-        collection={collection}
-        index={null}
+        project={project()}
         disabled={false}
         onChangeFolder={onChangeFolder}
         onRebuild={vi.fn()}

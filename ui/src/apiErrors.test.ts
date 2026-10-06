@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./api";
-import { attributionErrorText, errorText, viewerErrorText } from "./apiErrors";
+import { attributionErrorText, errorText, projectErrorText, viewerErrorText } from "./apiErrors";
 import { type Params, translate, type TranslationKey } from "./i18n";
 
 const en = (key: TranslationKey, params?: Params) => translate("en", key, params);
@@ -85,5 +85,40 @@ describe("viewerErrorText", () => {
     expect(viewerErrorText(new TypeError("Failed to fetch"), en)).toBe(
       "Tamra could not reach its core.",
     );
+  });
+});
+
+describe("projectErrorText", () => {
+  const refusals: [number, string, string][] = [
+    [409, "Another project already has this name.", "A project with this name already exists."],
+    [409, "This folder is already used by another project.", "Another project already uses this folder."],
+    [400, "Folder not found.", "That folder does not exist."],
+    [
+      400,
+      "Choose a full folder path, for example C:\\Users\\me\\Documents.",
+      "Enter the full folder path, for example C:\\Users\\me\\Documents.",
+    ],
+    [400, "The project name must be 1 to 80 characters.", "The project name must be 1 to 80 characters."],
+    [404, "Project not found.", "This project no longer exists."],
+    [404, "Unknown project.", "This project no longer exists."],
+    [409, "An answer is being written. Wait for it to finish.", "An answer is being written. Wait for it to finish."],
+  ];
+
+  it.each(refusals)("words %i %s in English", (status, detail, text) => {
+    expect(projectErrorText(new ApiError(status, detail), en)).toBe(text);
+  });
+
+  it.each(refusals)("words %i %s in Thai too", (status, detail) => {
+    const text = projectErrorText(new ApiError(status, detail), th);
+    expect(text).not.toBe(detail);
+    expect(text).toMatch(/[฀-๿]/); // Thai script
+  });
+
+  it("falls back to the general wording for anything else", () => {
+    expect(projectErrorText(new ApiError(500, "HTTP 500"), en)).toBe("HTTP 500");
+    expect(projectErrorText(new Error("network down"), en)).toBe("network down");
+    expect(
+      projectErrorText(new ApiError(400, "invalid value for setting api_base_url: 'x'"), en),
+    ).toContain("must start with http://");
   });
 });

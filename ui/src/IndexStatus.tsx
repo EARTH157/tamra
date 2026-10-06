@@ -1,15 +1,7 @@
 import { AlertTriangle, Check, Folder } from "lucide-react";
 import { useState } from "react";
 import { useT } from "./i18n";
-import type { Collection, IndexStatus as IndexState, ProblemFile } from "./types";
-
-type Props = {
-  collection: Collection;
-  index: IndexState | null;
-  disabled: boolean;
-  onChangeFolder: () => void;
-  onRebuild: () => void;
-};
+import type { IndexStatus as IndexState, Project, ProblemFile } from "./types";
 
 type Translate = ReturnType<typeof useT>;
 
@@ -25,14 +17,15 @@ function problemText(problem: ProblemFile, t: Translate): string {
   return error;
 }
 
-/** The sidebar card: the chosen folder, indexing progress, and files that need attention. */
-export default function IndexStatus({
-  collection,
-  index,
-  disabled,
-  onChangeFolder,
-  onRebuild,
-}: Props) {
+type BodyProps = {
+  index: IndexState | null;
+  /** Shows a Rebuild link in the note about a stale index. */
+  onRebuild?: () => void;
+  disabled?: boolean;
+};
+
+/** A project's index: progress or the file count, a stale or error note, and files that need attention. */
+export function IndexBody({ index, onRebuild, disabled }: BodyProps) {
   const t = useT();
   const [showProblems, setShowProblems] = useState(false);
   const counts = index?.counts;
@@ -41,20 +34,15 @@ export default function IndexStatus({
   const problems = index?.problems ?? [];
 
   return (
-    <section className="collection-card" aria-label={t("index.cardLabel")}>
-      <div className="collection-name">
-        <Folder size={16} />
-        <span>{collection.name}</span>
-      </div>
-      <div className="collection-path" title={collection.folder_path}>
-        {collection.folder_path}
-      </div>
+    <>
       {index?.stale ? (
         <p className="stale-note">
           {t("index.stale")}
-          <button type="button" className="link-button" onClick={onRebuild} disabled={disabled}>
-            {t("index.rebuild")}
-          </button>
+          {onRebuild && (
+            <button type="button" className="link-button" onClick={onRebuild} disabled={disabled}>
+              {t("index.rebuild")}
+            </button>
+          )}
         </p>
       ) : !counts ? (
         <div className="collection-count done">{t("index.checking")}</div>
@@ -118,6 +106,30 @@ export default function IndexStatus({
           )}
         </>
       )}
+    </>
+  );
+}
+
+type Props = {
+  project: Project;
+  disabled: boolean;
+  onChangeFolder: () => void;
+  onRebuild: () => void;
+};
+
+/** The sidebar card for the active project: its folder, indexing progress, and files that need attention. */
+export default function IndexStatus({ project, disabled, onChangeFolder, onRebuild }: Props) {
+  const t = useT();
+  return (
+    <section className="collection-card" aria-label={t("index.cardLabel")}>
+      <div className="collection-name">
+        <Folder size={16} />
+        <span>{project.name}</span>
+      </div>
+      <div className="collection-path" title={project.folder_path}>
+        {project.folder_path}
+      </div>
+      <IndexBody index={project.index} onRebuild={onRebuild} disabled={disabled} />
       <button type="button" className="link-button" onClick={onChangeFolder} disabled={disabled}>
         {t("index.changeFolder")}
       </button>
