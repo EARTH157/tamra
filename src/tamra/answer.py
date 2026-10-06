@@ -272,21 +272,23 @@ class AnswerService:
         in_scope = [c for c in collections if c.id in wanted]
         # A project indexed with another embedding model is never searched.
         searched = [c for c in in_scope if c.embedding_model_id == self._model_id]
+        skipped = [c.name for c in in_scope if c not in searched]
         if in_scope and not searched:
             yield {
                 "type": "error",
-                "message": "The index was built with a different embedding model. "
-                "Rebuild the index.",
+                "message": f"The index of {', '.join(skipped)} was built with a different "
+                "embedding model. Rebuild the index.",
             }
             return
         if not any(self._store.status_counts(c.id)["indexed"] for c in searched):
+            if skipped:  # say why those projects were left out, not only that nothing is ready
+                yield {"type": "notice", "code": "stale_projects", "names": skipped}
             yield {
                 "type": "error",
                 "message": "No documents are indexed yet. Wait for indexing to finish, "
                 "then ask again.",
             }
             return
-        skipped = [c.name for c in in_scope if c not in searched]
         route = self._route()
         previous = self._store.last_exchange(chat_id)
         self._store.add_user_message(chat_id, question)

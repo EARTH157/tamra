@@ -160,7 +160,7 @@ def test_problems_before_answering_are_single_error_events(tmp_path):
     ]
     collection = store.create_collection("Docs", "C:/docs", "other-model")
     store.set_chat_scope(chat.id, [collection.id])
-    assert list(service.ask(chat.id, "q"))[0]["message"].startswith("The index was built with")
+    assert list(service.ask(chat.id, "q"))[0]["message"].startswith("The index of ")
     store.reset_index(collection.id, "m")
     assert list(service.ask(999, "q")) == [{"type": "error", "message": "Chat 999 not found."}]
     store.close()
@@ -585,8 +585,19 @@ def test_a_scope_of_only_stale_projects_asks_for_a_rebuild(two):
     chat = store.create_chat(collection_id=projects["A"].id)
     events = list(make(FakeLLM()).ask(chat.id, "lease term"))
     assert [e["type"] for e in events] == ["error"]
-    assert events[0]["message"].startswith("The index was built with")
+    assert events[0]["message"].startswith("The index of A was built with")
     assert store.list_messages(chat.id) == []
+
+
+def test_a_stale_project_is_named_even_when_the_rest_is_not_indexed_yet(two):
+    store, make, projects = two
+    store.reset_index(projects["A"].id, "other-model")
+    store.reset_index(projects["B"].id, projects["B"].embedding_model_id)  # pending again
+    chat = store.create_chat(collection_id=projects["A"].id)
+    store.set_chat_scope(chat.id, [projects["A"].id, projects["B"].id])
+    events = list(make(FakeLLM()).ask(chat.id, "lease term"))
+    assert events[0] == {"type": "notice", "code": "stale_projects", "names": ["A"]}
+    assert events[1]["type"] == "error" and "No documents are indexed yet" in events[1]["message"]
 
 
 def test_an_empty_scope_falls_back_to_the_home_project(two):
