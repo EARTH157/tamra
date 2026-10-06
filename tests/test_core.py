@@ -265,6 +265,8 @@ def test_names_are_validated_and_errors_are_typed(core, tmp_path):
         core.create_project("x", str(core.data_dir))
     with pytest.raises(FolderNotAllowed):
         core.create_project("x", tmp_path.anchor)
+    with pytest.raises(FolderMissing):  # a device-namespace alias of the data dir's parent
+        core.create_project("x", "\\\\?\\" + str(core.data_dir.parent))
 
 
 def test_folders_of_two_projects_may_not_overlap(core, tmp_path):

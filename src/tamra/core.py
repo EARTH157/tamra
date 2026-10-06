@@ -509,6 +509,10 @@ class Core:
         """The resolved folder, if it exists, is not a whole drive or one of Tamra's own folders,
         and does not overlap another project's folder. Each refusal is its own ValueError."""
         path = Path(folder.strip()).expanduser()
+        # A device-namespace alias (\\?\C:\..., \\.\...) would slip past the overlap checks,
+        # which compare plain paths; the folder picker never returns one.
+        if folder.strip().startswith(("\\\\?\\", "\\\\.\\", "//?/", "//./")):
+            raise FolderMissing("Choose a full folder path, for example C:\\Users\\me\\Documents.")
         if not path.is_absolute():
             raise FolderMissing("Choose a full folder path, for example C:\\Users\\me\\Documents.")
         if not path.is_dir():
