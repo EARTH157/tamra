@@ -20,15 +20,17 @@ import type { Chat, Project } from "./types";
 
 const STORAGE_KEY = "tamra.expandedProjects";
 
-/** The ids of the projects that were left open, from the last run. */
-function loadExpanded(): Set<number> {
+/** The ids of the projects that were left open, from the last run; null when none were saved. */
+function loadExpanded(): Set<number> | null {
   try {
-    const saved: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === null) return null;
+    const saved: unknown = JSON.parse(raw);
     if (Array.isArray(saved)) return new Set(saved.filter((id) => typeof id === "number"));
   } catch {
-    // storage unavailable or not JSON: start with every project closed
+    // storage unavailable or not JSON: as if nothing was saved
   }
-  return new Set();
+  return null;
 }
 
 function saveExpanded(expanded: Set<number>) {
@@ -40,13 +42,17 @@ function saveExpanded(expanded: Set<number>) {
 }
 
 /**
- * Which projects are open. A project is opened whenever `revealId` changes to it (a chat was opened
- * in it, or it was clicked); the set is remembered.
+ * Which projects are open; the set is remembered. A project is opened whenever `revealId` changes
+ * to it (a chat was opened in it, or it was clicked). On a first launch, with nothing saved, the
+ * default project (`firstId`) is opened once; saved choices are never overridden.
  */
-function useExpanded(revealId: number | null) {
-  const [expanded, setExpanded] = useState(loadExpanded);
+function useExpanded(revealId: number | null, firstId: number | null) {
+  const [initial] = useState(loadExpanded);
+  const [expanded, setExpanded] = useState(() => initial ?? new Set<number>());
+  const firstLaunch = useRef(initial === null);
 
   function change(id: number, open: boolean) {
+    firstLaunch.current = false; // from now on the user's choices are the state
     setExpanded((before) => {
       if (before.has(id) === open) return before;
       const next = new Set(before);
@@ -60,6 +66,10 @@ function useExpanded(revealId: number | null) {
   useEffect(() => {
     if (revealId !== null) change(revealId, true);
   }, [revealId]);
+
+  useEffect(() => {
+    if (firstLaunch.current && firstId !== null) change(firstId, true);
+  }, [firstId]);
 
   return { expanded, change };
 }
@@ -119,7 +129,7 @@ export default function ProjectTree({
   onDeleteChat,
 }: Props) {
   const t = useT();
-  const { expanded, change } = useExpanded(revealProjectId);
+  const { expanded, change } = useExpanded(revealProjectId, activeProjectId);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const trigger = useRef<HTMLElement | null>(null);

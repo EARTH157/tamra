@@ -1,5 +1,5 @@
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { Chat, Project } from "./types";
 import {
@@ -16,10 +16,6 @@ import {
 } from "./test-utils";
 
 let view: Mounted | undefined;
-
-beforeEach(() => {
-  localStorage.setItem("tamra.expandedProjects", "[1]"); // Contracts is open: no project opens by itself
-});
 
 afterEach(async () => {
   await view?.unmount();
@@ -115,21 +111,52 @@ describe("The project tree", () => {
     expect(JSON.parse(localStorage.getItem("tamra.expandedProjects") ?? "[]")).toEqual([2]);
   });
 
-  it("does not open the first project by itself", async () => {
-    localStorage.clear();
+  it("opens the first project on a first launch, when nothing was saved", async () => {
+    expect(localStorage.getItem("tamra.expandedProjects")).toBeNull();
     boot({ projects: [contracts, hr], chats: [lease, leave] });
     view = await mount(<App />);
-    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("true");
     expect(toggle("HR Documents")?.getAttribute("aria-expanded")).toBe("false");
-    expect(card().querySelector(".collection-name")?.textContent).toBe("Contracts"); // still the default
-    expect(localStorage.getItem("tamra.expandedProjects")).toBeNull();
+    expect(chatTitles("Contracts")).toEqual(["Lease length"]);
+    expect(JSON.parse(localStorage.getItem("tamra.expandedProjects") ?? "[]")).toEqual([1]);
   });
 
-  it("starts with the projects that were left open", async () => {
+  it("opens the first project on a first launch when storage is unavailable", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {});
+    boot({ projects: [contracts, hr], chats: [lease] });
+    view = await mount(<App />);
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("starts with exactly the projects that were left open", async () => {
     localStorage.setItem("tamra.expandedProjects", "[2]");
     boot({ projects: [contracts, hr], chats: [lease, leave] });
     view = await mount(<App />);
     expect(toggle("HR Documents")?.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("false"); // not forced open
+  });
+
+  it("keeps every project closed when that is what was saved", async () => {
+    localStorage.setItem("tamra.expandedProjects", "[]");
+    boot({ projects: [contracts, hr], chats: [lease, leave] });
+    view = await mount(<App />);
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle("HR Documents")?.getAttribute("aria-expanded")).toBe("false");
+    expect(localStorage.getItem("tamra.expandedProjects")).toBe("[]");
+  });
+
+  it("opens the project of an open chat even when it was saved closed", async () => {
+    localStorage.setItem("tamra.expandedProjects", "[]");
+    boot({ projects: [contracts, hr], chats: [lease] }, {
+      "GET /api/chats/3": () => json({ ...lease, messages: [] }),
+    });
+    view = await mount(<App />);
+    await click(toggle("Contracts")); // opens it, and makes it the current project
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("true");
+    expect(chatTitles("Contracts")).toEqual(["Lease length"]);
   });
 
   it("works when the browser's storage is unavailable", async () => {
@@ -143,6 +170,7 @@ describe("The project tree", () => {
     view = await mount(<App />);
     await click(toggle("HR Documents"));
     expect(toggle("HR Documents")?.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle("Contracts")?.getAttribute("aria-expanded")).toBe("true"); // the first, by default
   });
 
   it("opens the project of the chat you pick and shows its card", async () => {

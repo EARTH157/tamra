@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { SettingsProvider } from "./settings";
 import { modelsInfo, saved } from "./test-models";
@@ -15,10 +15,6 @@ import {
 } from "./test-utils";
 
 let view: Mounted | undefined;
-
-beforeEach(() => {
-  localStorage.setItem("tamra.expandedProjects", "[1]"); // Contracts is open: no project opens by itself
-});
 
 afterEach(async () => {
   await view?.unmount();
