@@ -8,6 +8,7 @@ import pytest
 from docgen import LATIN_THAI, make_docx, make_pdf
 from fakes import FakeEmbedder, fake_spans
 
+from tamra.ingest import indexer as indexer_module
 from tamra.ingest.indexer import Indexer, IndexerState, scan_folder
 from tamra.store import Store
 
@@ -444,3 +445,36 @@ def test_scan_skips_directory_junctions_and_symlinks(tmp_path):
     except OSError:
         return  # creating symlinks needs a privilege this account lacks
     assert set(scan_folder(folder)) == {"real/kept.md"}
+
+
+def test_an_unreadable_folder_does_not_delete_its_indexed_files(env, monkeypatch):
+    docs, store, _, indexer = env
+    (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
+    run(indexer)
+    real_walk = os.walk
+
+    def walk(top, topdown=True, onerror=None, followlinks=False):
+        yield from real_walk(top, topdown, onerror, followlinks)
+        if onerror:  # a subfolder that cannot be listed
+            onerror(PermissionError(5, "Access is denied", str(docs / "locked")))
+
+    monkeypatch.setattr(os, "walk", walk)
+    (docs / "a.md").unlink()  # even if it looks gone, the incomplete scan must not be trusted
+    run(indexer)
+    assert "a.md" in files(store)
+    assert "Access is denied" in indexer.state(store.list_collections()[0].id).error
+
+
+def test_a_file_over_the_size_cap_is_skipped(env, monkeypatch):
+    docs, store, embedder, indexer = env
+    monkeypatch.setattr(indexer_module, "MAX_FILE_BYTES", 10)
+    (docs / "big.md").write_text("This file is longer than ten bytes.", encoding="utf-8")
+    (docs / "ok.md").write_text("Tiny", encoding="utf-8")
+    run(indexer)
+    state = files(store)
+    assert (state["big.md"].status, state["big.md"].error) == (
+        "skipped",
+        "file too large (over 200 MB)",
+    )
+    assert state["ok.md"].status == "indexed"
+    assert embedder.calls == 1

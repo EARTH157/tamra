@@ -19,6 +19,7 @@ from tamra.store import Store
 log = logging.getLogger(__name__)
 
 EMBED_BATCH = 16  # texts per embedder call; stop() is honored between calls
+MAX_FILE_BYTES = 200 * 1024 * 1024  # larger files are skipped, not parsed into memory
 
 
 class EmbedderLike(Protocol):
@@ -40,9 +41,16 @@ def scan_folder(folder: Path) -> dict[str, tuple[int, float]]:
 
     Skips dot-files and dot-folders, Office lock files (~$*), hidden or system items, and
     symlinks and directory junctions (a link may point outside the folder or back into it).
+
+    Raises OSError when a folder cannot be listed: it must not pass for empty, or reconcile
+    would delete its files.
     """
     found: dict[str, tuple[int, float]] = {}
-    for root, dirs, names in os.walk(folder, followlinks=False):
+
+    def fail(error: OSError) -> None:
+        raise error  # an unreadable folder must not look empty: reconcile would delete its files
+
+    for root, dirs, names in os.walk(folder, followlinks=False, onerror=fail):
         dirs[:] = [d for d in dirs if not _ignored(Path(root, d)) and not _is_link(Path(root, d))]
         for name in names:
             path = Path(root, name)
@@ -263,6 +271,9 @@ class Indexer:
             except Exception as e:
                 self._store.set_file_status(file_id, "pending")
                 raise _Pause(f"Embedding model unavailable: {e}") from e
+            if path.stat().st_size > MAX_FILE_BYTES:
+                self._store.set_file_status(file_id, "skipped", "file too large (over 200 MB)")
+                return
             content_hash = sha256_file(path)
             doc = parse_file(path)
             chunks = chunk_document(doc, spans)

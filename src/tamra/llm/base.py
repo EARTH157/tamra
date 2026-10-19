@@ -18,6 +18,11 @@ class Chunk:
     text: str
 
 
+# Thinking tokens count against max_tokens. Reserve room for them on top of the answer so a short
+# max_tokens cannot be eaten before the answer starts (Claude 5 thinks adaptively even when not
+# asked; local Qwen3 thinks when "Think longer" is on).
+THINKING_HEADROOM = 2048
+
 ErrorReason = Literal["offline", "auth", "quota", "model_missing", "other"]
 
 

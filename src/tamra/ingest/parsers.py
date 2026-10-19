@@ -9,6 +9,9 @@ from pathlib import Path
 import docx
 import pypdfium2 as pdfium
 from charset_normalizer import from_bytes
+from docx.oxml.ns import qn
+from docx.table import Table as DocxTable
+from docx.text.paragraph import Paragraph as DocxParagraph
 
 SUPPORTED = frozenset({".pdf", ".docx", ".txt", ".md"})
 
@@ -16,6 +19,7 @@ SUPPORTED = frozenset({".pdf", ".docx", ".txt", ".md"})
 # on others, so every open-to-close use of a PdfDocument holds this lock.
 PDFIUM_LOCK = threading.RLock()
 
+_P, _TBL = qn("w:p"), qn("w:tbl")
 _HEADING = re.compile(r"Heading (\d)")
 _THAI_CONSONANTS = range(0x0E01, 0x0E2F)
 _THAI_MARKS = frozenset([0x0E31, *range(0x0E34, 0x0E3B), *range(0x0E47, 0x0E4F)])
@@ -30,7 +34,8 @@ class Unit:
     """A run of document text and the coordinates of its first character.
 
     pdf: page (1-based) and char (offset of text[0] in the page's extracted text).
-    docx: paragraph (0-based index into document.paragraphs), heading_path, and heading_level.
+    docx: paragraph (0-based index of the body paragraph or table row), heading_path,
+    and heading_level.
     text: line (1-based number of the line holding text[0]).
     """
 
@@ -122,25 +127,44 @@ def _parse_pdf(path: Path) -> ParsedDoc:
 
 
 def parse_docx(path: Path) -> ParsedDoc:
-    """One unit per non-empty paragraph, with the headings above it. Tables are not read."""
+    """One unit per non-empty paragraph and per table row, in document order.
+
+    A row is its cell texts joined by " | " (empty and merged cells skipped). `paragraph` counts
+    every body paragraph and table row, so it is a stable position in the document.
+    """
     try:
         document = docx.Document(str(path))
     except Exception as e:  # python-docx raises several types for a broken package
         raise ParseError(f"cannot open DOCX: {e}") from e
     units: list[Unit] = []
     headings: list[str] = []
-    for index, paragraph in enumerate(document.paragraphs):
-        text = paragraph.text
-        if not text.strip():
-            continue
-        style = paragraph.style.name if paragraph.style is not None else ""
-        match = _HEADING.fullmatch(style)
-        level = int(match.group(1)) if match else (1 if style == "Title" else 0)
-        if level:
-            headings = headings[: level - 1] + [text.strip()]
-        units.append(
-            Unit(text=text, paragraph=index, heading_path=tuple(headings), heading_level=level)
-        )
+    index = 0
+    for child in document.element.body.iterchildren():
+        if child.tag == _TBL:
+            for row in DocxTable(child, document).rows:
+                cells = {cell._tc: cell.text.strip() for cell in row.cells}.values()
+                text = " | ".join(t for t in cells if t)
+                if text:
+                    units.append(Unit(text=text, paragraph=index, heading_path=tuple(headings)))
+                index += 1
+        elif child.tag == _P:
+            paragraph = DocxParagraph(child, document)
+            text = paragraph.text
+            if text.strip():
+                style = paragraph.style.name if paragraph.style is not None else ""
+                match = _HEADING.fullmatch(style)
+                level = int(match.group(1)) if match else (1 if style == "Title" else 0)
+                if level:
+                    headings = headings[: level - 1] + [text.strip()]
+                units.append(
+                    Unit(
+                        text=text,
+                        paragraph=index,
+                        heading_path=tuple(headings),
+                        heading_level=level,
+                    )
+                )
+            index += 1
     return ParsedDoc("docx", units)
 
 

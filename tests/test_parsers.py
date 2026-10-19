@@ -143,3 +143,23 @@ def test_location_shapes():
     }
     text = Unit("one\ntwo\nthree", line=10)
     assert location("text", text, 4, text, 13) == {"kind": "text", "line_start": 11, "line_end": 12}
+
+
+def test_docx_table_rows_become_units_in_document_order(tmp_path):
+    path = make_docx(
+        tmp_path / "t.docx",
+        [
+            (1, "Fees"),
+            (0, "Before the table."),
+            (0, [["Item", "Price", "Note"], ["Rent", "", "monthly"]]),
+            (0, "After the table."),
+        ],
+    )
+    doc = parse_file(path)
+    assert [(u.text, u.paragraph, u.heading_path, u.heading_level) for u in doc.units] == [
+        ("Fees", 0, ("Fees",), 1),
+        ("Before the table.", 1, ("Fees",), 0),
+        ("Item | Price | Note", 2, ("Fees",), 0),
+        ("Rent | monthly", 3, ("Fees",), 0),
+        ("After the table.", 4, ("Fees",), 0),
+    ]

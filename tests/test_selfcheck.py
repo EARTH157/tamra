@@ -186,3 +186,11 @@ def test_a_startup_failure_returns_exit_code_1_without_raising(monkeypatch):
     assert main([]) == 1
     with pytest.raises(RuntimeError, match="boom"):
         main(["--dev"])
+
+
+def test_the_exe_refuses_dev_mode(monkeypatch):
+    import tamra.app
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(tamra.app, "run", lambda dev: pytest.fail("must not start"))
+    assert main(["--dev"]) == 2

@@ -6,7 +6,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from tamra.llm.base import Chunk, ErrorReason, LLMError, Message, ProviderError
+from tamra.llm.base import THINKING_HEADROOM, Chunk, ErrorReason, LLMError, Message, ProviderError
 
 __all__ = ["LLMError", "Message", "OpenAICompatibleLLM", "normalise_base_url"]
 
@@ -87,10 +87,11 @@ class OpenAICompatibleLLM:
     def generate(
         self, messages: list[Message], max_tokens: int = 1024, *, think: bool = False
     ) -> Iterator[Chunk]:
+        local_thinking = think and self.kind == "local"  # Qwen3 thinks inside the same budget
         body: dict = {
             "model": self._model,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_tokens": max_tokens + THINKING_HEADROOM if local_thinking else max_tokens,
             "stream": True,
         }
         if self.kind == "local":  # llama-server and Qwen3 honour this; strict clouds may reject it

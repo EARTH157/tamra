@@ -5,7 +5,7 @@ import time
 import httpx
 import pytest
 
-from tamra.llm.base import Chunk, ProviderError
+from tamra.llm.base import THINKING_HEADROOM, Chunk, ProviderError
 from tamra.llm.openai_compat import LLMError, OpenAICompatibleLLM, normalise_base_url
 
 
@@ -590,3 +590,18 @@ def test_a_connection_dropped_mid_stream_is_offline():
     with pytest.raises(ProviderError) as info:
         list(stream)
     assert info.value.reason == "offline"
+
+
+@pytest.mark.parametrize(
+    ("kind", "think", "expected"),
+    [("local", True, 1024 + THINKING_HEADROOM), ("local", False, 1024), ("api", True, 1024)],
+)
+def test_local_thinking_gets_room_beyond_the_answer_budget(kind, think, expected):
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=sse())
+
+    list(make(handler, kind=kind).generate(USER, max_tokens=1024, think=think))
+    assert seen["body"]["max_tokens"] == expected

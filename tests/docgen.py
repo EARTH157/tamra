@@ -44,11 +44,19 @@ def make_pdf(path: Path, pages: list[list[str]], font: Path = LATIN_THAI) -> Pat
     return path
 
 
-def make_docx(path: Path, blocks: list[tuple[int, str]]) -> Path:
-    """Write a DOCX from (heading level, text) pairs; level 0 is a body paragraph."""
+def make_docx(path: Path, blocks: list[tuple[int, str] | tuple[int, list[list[str]]]]) -> Path:
+    """Write a DOCX from (heading level, text) pairs; level 0 is a body paragraph.
+
+    A block whose second item is a list of rows (lists of cell texts) becomes a table.
+    """
     document = docx.Document()
     for level, text in blocks:
-        if level:
+        if isinstance(text, list):
+            table = document.add_table(rows=len(text), cols=len(text[0]))
+            for row, texts in zip(table.rows, text, strict=True):
+                for cell, value in zip(row.cells, texts, strict=True):
+                    cell.text = value
+        elif level:
             document.add_heading(text, level=level)
         else:
             document.add_paragraph(text)

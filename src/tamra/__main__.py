@@ -14,6 +14,9 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--report", type=Path, help="also write the JSON report here")
     args = parser.parse_args(argv)
 
+    if args.dev and getattr(sys, "frozen", False):
+        return 2  # the packaged exe has no dev mode: its fixed port and token would be a back door
+
     if args.command == "selfcheck":
         from tamra.paths import resource_dir
         from tamra.selfcheck import run_selfcheck
