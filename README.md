@@ -7,7 +7,7 @@ app for Windows. Point it at a folder of documents and ask questions in Thai, En
 Chinese. Answers cite the passages they came from, and you can select any part of an
 answer to see the exact source text that supports it.
 
-> **Status: pre-alpha.** Milestone M3 works: index a folder, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, check any sentence against its source and open the PDF at the highlighted passage, with a Settings page and an English or Thai interface. There is no installer yet (M6). See the [roadmap](#roadmap).
+> **Status: pre-alpha.** Milestone M4 works: keep several projects, each a folder of documents with its own index and chats, choose which of them a question searches, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, check any sentence against its source and open the PDF at the highlighted passage, with a Settings page and an English or Thai interface. There is no installer yet (M6). See the [roadmap](#roadmap).
 
 ## Planned features
 
@@ -21,8 +21,8 @@ answer to see the exact source text that supports it.
   questions.
 - **Verifiable answers.** Inline `[n]` citations. Select any text in an answer to see the
   supporting passage, highlighted in the original PDF.
-- **Folder-based collections.** Tamra watches your folders and keeps the index up to date.
-  It never modifies your files.
+- **Projects.** Each project is a folder of documents with its own search index and chats.
+  Tamra watches the folders and keeps the indexes up to date. It never modifies your files.
 - PDF, Word (.docx), TXT, and Markdown, with OCR for scanned PDFs planned.
 
 ## Try it from source
@@ -35,11 +35,38 @@ You need Windows 10 or 11, [uv](https://docs.astral.sh/uv/), and Node.js 24.
     npm --prefix ui run build
     uv run tamra
 
-Choose a folder of PDF, Word, text, or Markdown files, wait for indexing, and ask a question.
+Create a project from a folder of PDF, Word, text, or Markdown files, wait for indexing, and ask a question.
 `./scripts/build.ps1` packages the same app as `dist\Tamra\Tamra.exe`. The packaged
 `Tamra.exe` looks for models in `%LOCALAPPDATA%\Tamra\models` or in the folder named by
 `TAMRA_MODELS_DIR`; see [Models](#models). The Qwen2.5-0.5B test model that `fetch_assets.py`
 downloads is very small, so expect rough answers from it, especially in Thai and Chinese.
+
+## Projects
+
+A project is a name plus a folder of documents (PDF, Word, text, or Markdown). Each project has
+its own search index, and its chats are listed under it in the sidebar. Your files are never
+changed.
+
+- **Create.** Press **New project**, choose a folder, and optionally name it (the folder name
+  is the default). Tamra refuses a whole drive, Tamra's own data or models folder, and a folder
+  that is the same as, inside, or around another project's folder. Names are unique, ignoring
+  case.
+- **Search in.** A chat's **Search in** chip, next to the message box, shows which projects a
+  question searches. A new chat searches the project it was started in. Tick more projects to
+  search them together; the answer's sources show the project each file belongs to. At least one
+  project must stay ticked.
+- **Move to project.** In a chat's menu, **Move to project** changes where the chat is listed.
+  If the old project was the only one it searched, the search follows the move.
+- **Project settings.** Rename the project, change its folder (the index is rebuilt), see the
+  index status and any files that failed, or press **Rebuild index**.
+- **Delete.** **Delete project** removes its index and its chats, after a confirmation that
+  says how many chats go. The folder and the files in it are left untouched. Other chats that
+  also searched the project simply stop searching it.
+- **Stale indexes.** A project whose index was built with a different embedding model is
+  never searched. Tamra tells you which one it left out; rebuild its index to include it again.
+
+Indexing of all projects runs on one background worker, so a large new project makes the
+others wait. Symbolic links and junctions inside a folder are skipped.
 
 ## Checking a source
 
@@ -119,7 +146,7 @@ language is.
 | M1 | Core loop: index a folder, hybrid search, cited answers with a local model |
 | M2 | Cloud API mode, settings, model download/import, hardware-based model tiers |
 | M3 | Source checking and document viewer with highlights |
-| M4 | Multiple collections and chat history |
+| M4 | Projects (several folders, each with its own index and chats) and a search scope per chat |
 | M5 | OCR for scanned documents |
 | M6 | Windows installer and release workflow |
 
@@ -135,7 +162,7 @@ pywebview · [llama.cpp](https://github.com/ggml-org/llama.cpp) ·
 
 Tamra คือแอปบน Windows สำหรับถามคำถามจากเอกสารของคุณเอง รองรับภาษาไทย อังกฤษ และจีน
 ใช้งานแบบ offline ได้ และทุกคำตอบอ้างอิงแหล่งที่มา คลุมข้อความในคำตอบเพื่อดูต้นฉบับที่ใช้ตอบได้ทันที
-ตอนนี้ (M2) ใช้งานจากซอร์สโค้ดได้แล้ว: เลือกโฟลเดอร์เอกสาร ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n]
+ตอนนี้ (M4) ใช้งานจากซอร์สโค้ดได้แล้ว: สร้างโปรเจกต์จากโฟลเดอร์เอกสารได้หลายโปรเจกต์ เลือกว่าจะค้นในโปรเจกต์ไหน ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n]
 จากโมเดลในเครื่องหรือ API บนคลาวด์ มีหน้าตั้งค่าและเปลี่ยนภาษาของแอปเป็นไทยได้ ยังไม่มีตัวติดตั้ง
 
 - **โมเดล:** ที่ ตั้งค่า > โมเดล AI ดาวน์โหลดโมเดลที่แนะนำตามเครื่องของคุณ หรือกด "นำเข้าไฟล์โมเดล"
