@@ -179,7 +179,7 @@ def test_providers_probe_fails_without_a_credential_store(monkeypatch, tmp_path)
 def test_a_startup_failure_returns_exit_code_1_without_raising(monkeypatch):
     import tamra.app
 
-    def boom(dev):
+    def boom(dev, token=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(tamra.app, "run", boom)
@@ -188,9 +188,37 @@ def test_a_startup_failure_returns_exit_code_1_without_raising(monkeypatch):
         main(["--dev"])
 
 
-def test_the_exe_refuses_dev_mode(monkeypatch):
+@pytest.mark.parametrize("env", [None, "", "short-token"])
+def test_the_exe_refuses_dev_mode_without_a_long_enough_token(monkeypatch, env):
     import tamra.app
 
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(tamra.app, "run", lambda dev: pytest.fail("must not start"))
+    monkeypatch.delenv("TAMRA_DEV_TOKEN", raising=False)
+    if env is not None:
+        monkeypatch.setenv("TAMRA_DEV_TOKEN", env)
+    monkeypatch.setattr(tamra.app, "run", lambda *a, **k: pytest.fail("must not start"))
     assert main(["--dev"]) == 2
+
+
+def test_the_exe_accepts_dev_mode_with_its_own_token(monkeypatch):
+    import tamra.app
+
+    token = "t" * 24
+    calls = []
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("TAMRA_DEV_TOKEN", token)
+    monkeypatch.setattr(tamra.app, "run", lambda dev, token: calls.append((dev, token)))
+    assert main(["--dev"]) == 0
+    assert calls == [(True, token)]
+
+
+def test_a_source_dev_run_defaults_the_token_and_honors_the_env(monkeypatch):
+    import tamra.app
+
+    calls = []
+    monkeypatch.setattr(tamra.app, "run", lambda dev, token: calls.append(token))
+    monkeypatch.delenv("TAMRA_DEV_TOKEN", raising=False)
+    main(["--dev"])
+    monkeypatch.setenv("TAMRA_DEV_TOKEN", "abc")
+    main(["--dev"])
+    assert calls == [None, "abc"]  # None means the default token, "dev"

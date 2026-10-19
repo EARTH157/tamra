@@ -3,6 +3,7 @@ import ctypes
 import os
 import shutil
 import time
+from pathlib import Path
 
 import pytest
 from docgen import LATIN_THAI, make_docx, make_pdf
@@ -100,7 +101,7 @@ def test_scan_skips_lock_hidden_dot_and_unsupported_files(tmp_path):
     hidden = tmp_path / "hidden.md"
     hidden.write_text("x", encoding="utf-8")
     ctypes.windll.kernel32.SetFileAttributesW(str(hidden), 0x2)  # FILE_ATTRIBUTE_HIDDEN
-    assert set(scan_folder(tmp_path)) == {"keep.md"}
+    assert set(scan_folder(tmp_path)[0]) == {"keep.md"}
 
 
 def test_a_broken_file_fails_alone(env):
@@ -437,32 +438,57 @@ def test_scan_skips_directory_junctions_and_symlinks(tmp_path):
     (folder / "real" / "kept.md").write_text("x", encoding="utf-8")
     _winapi.CreateJunction(str(outside), str(folder / "junction"))
     assert (folder / "junction" / "secret.md").exists()  # the junction really leads outside
-    assert set(scan_folder(folder)) == {"real/kept.md"}
+    assert set(scan_folder(folder)[0]) == {"real/kept.md"}
 
     try:
         (folder / "dirlink").symlink_to(outside, target_is_directory=True)
         (folder / "filelink.md").symlink_to(outside / "secret.md")
     except OSError:
         return  # creating symlinks needs a privilege this account lacks
-    assert set(scan_folder(folder)) == {"real/kept.md"}
+    assert set(scan_folder(folder)[0]) == {"real/kept.md"}
 
 
-def test_an_unreadable_folder_does_not_delete_its_indexed_files(env, monkeypatch):
+def test_an_unreadable_subfolder_keeps_only_its_own_files(env, monkeypatch):
     docs, store, _, indexer = env
-    (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
+    (docs / "locked").mkdir()
+    (docs / "locked" / "inside.md").write_text("Secret terms.", encoding="utf-8")
+    (docs / "elsewhere.md").write_text("Lease terms.", encoding="utf-8")
+    (docs / "gone.md").write_text("Old terms.", encoding="utf-8")
     run(indexer)
     real_walk = os.walk
 
     def walk(top, topdown=True, onerror=None, followlinks=False):
-        yield from real_walk(top, topdown, onerror, followlinks)
-        if onerror:  # a subfolder that cannot be listed
-            onerror(PermissionError(5, "Access is denied", str(docs / "locked")))
+        for root, dirs, names in real_walk(top, topdown, onerror, followlinks):
+            if Path(root).name == "locked":  # this folder cannot be listed
+                onerror(PermissionError(5, "Access is denied", root))
+                continue
+            yield root, dirs, names
 
     monkeypatch.setattr(os, "walk", walk)
-    (docs / "a.md").unlink()  # even if it looks gone, the incomplete scan must not be trusted
+    (docs / "gone.md").unlink()
+    (docs / "new.md").write_text("Fresh terms.", encoding="utf-8")
+    run(indexer)
+    assert set(files(store)) == {"locked/inside.md", "elsewhere.md", "new.md"}
+    assert files(store)["new.md"].status == "indexed"  # the project is not blocked
+    assert indexer.state(store.list_collections()[0].id).error == "Could not read: locked"
+
+
+def test_a_file_that_cannot_be_read_is_not_deleted(env, monkeypatch):
+    docs, store, _, indexer = env
+    (docs / "a.md").write_text("Lease terms.", encoding="utf-8")
+    run(indexer)
+    real_stat = Path.stat
+
+    def stat(self, *args, **kwargs):
+        if self.name == "a.md" and kwargs.get("follow_symlinks", True):  # not the lstat
+            raise PermissionError(5, "Access is denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    found, failed = scan_folder(docs)
+    assert (found, failed) == ({}, ["a.md"])
     run(indexer)
     assert "a.md" in files(store)
-    assert "Access is denied" in indexer.state(store.list_collections()[0].id).error
 
 
 def test_a_file_over_the_size_cap_is_skipped(env, monkeypatch):

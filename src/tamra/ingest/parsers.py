@@ -3,6 +3,7 @@
 import codecs
 import re
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -126,11 +127,24 @@ def _parse_pdf(path: Path) -> ParsedDoc:
     return ParsedDoc("pdf", units, note)
 
 
+def _table_rows(table: DocxTable) -> Iterator[str]:
+    """The text of each row ("" when empty), then the rows of tables nested in its cells."""
+    seen: set = set()  # a merged cell is reported once, in its first row
+    for row in table.rows:
+        cells = [cell for cell in row.cells if cell._tc not in seen]
+        seen.update(cell._tc for cell in cells)
+        yield " | ".join(t for t in (cell.text.strip() for cell in cells) if t)
+        for cell in cells:
+            for nested in cell.tables:
+                yield from _table_rows(nested)
+
+
 def parse_docx(path: Path) -> ParsedDoc:
     """One unit per non-empty paragraph and per table row, in document order.
 
-    A row is its cell texts joined by " | " (empty and merged cells skipped). `paragraph` counts
-    every body paragraph and table row, so it is a stable position in the document.
+    A row is its cell texts joined by " | " (empty cells skipped, a merged cell once); rows of
+    nested tables follow their row. `paragraph` counts every body paragraph and table row, so it
+    is a stable position in the document.
     """
     try:
         document = docx.Document(str(path))
@@ -141,9 +155,7 @@ def parse_docx(path: Path) -> ParsedDoc:
     index = 0
     for child in document.element.body.iterchildren():
         if child.tag == _TBL:
-            for row in DocxTable(child, document).rows:
-                cells = {cell._tc: cell.text.strip() for cell in row.cells}.values()
-                text = " | ".join(t for t in cells if t)
+            for text in _table_rows(DocxTable(child, document)):
                 if text:
                     units.append(Unit(text=text, paragraph=index, heading_path=tuple(headings)))
                 index += 1

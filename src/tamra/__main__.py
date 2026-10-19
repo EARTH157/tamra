@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,8 +15,10 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--report", type=Path, help="also write the JSON report here")
     args = parser.parse_args(argv)
 
-    if args.dev and getattr(sys, "frozen", False):
-        return 2  # the packaged exe has no dev mode: its fixed port and token would be a back door
+    dev_token = os.environ.get("TAMRA_DEV_TOKEN", "").strip() or None
+    if args.dev and getattr(sys, "frozen", False) and (dev_token is None or len(dev_token) < 24):
+        # the packaged exe has no dev mode unless the caller brings its own secret token
+        return 2
 
     if args.command == "selfcheck":
         from tamra.paths import resource_dir
@@ -38,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     from tamra.app import run
 
     try:
-        run(dev=args.dev)
+        run(dev=args.dev, token=dev_token if args.dev else None)
     except Exception:
         if args.dev:
             raise  # the developer wants the traceback

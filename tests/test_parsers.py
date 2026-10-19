@@ -163,3 +163,25 @@ def test_docx_table_rows_become_units_in_document_order(tmp_path):
         ("Rent | monthly", 3, ("Fees",), 0),
         ("After the table.", 4, ("Fees",), 0),
     ]
+
+
+def test_docx_merged_cells_are_read_once_and_nested_tables_follow_their_row(tmp_path):
+    import docx
+
+    document = docx.Document()
+    table = document.add_table(rows=3, cols=2)
+    table.cell(0, 0).merge(table.cell(1, 0)).text = "Group"  # vertical merge
+    table.cell(0, 1).text = "one"
+    table.cell(1, 1).text = "two"
+    table.cell(2, 0).text = "Outer"
+    inner = table.cell(2, 1).add_table(rows=1, cols=2)
+    inner.cell(0, 0).text = "nested"
+    inner.cell(0, 1).text = "row"
+    path = tmp_path / "m.docx"
+    document.save(str(path))
+    assert [(u.text, u.paragraph) for u in parse_file(path).units] == [
+        ("Group | one", 0),
+        ("two", 1),
+        ("Outer", 2),
+        ("nested | row", 3),
+    ]

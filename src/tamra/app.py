@@ -105,8 +105,17 @@ def _wait_until_up(
     raise RuntimeError("Tamra core did not start")
 
 
+def _kernel32():
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    return kernel32
+
+
 def _close_handle(handle) -> None:
-    ctypes.WinDLL("kernel32").CloseHandle(ctypes.c_void_p(handle))
+    _kernel32().CloseHandle(handle)
 
 
 def _single_instance(data_dir_: Path):
@@ -115,16 +124,19 @@ def _single_instance(data_dir_: Path):
     The name carries a hash of the folder, so a run with its own TAMRA_DATA_DIR never collides.
     """
     digest = hashlib.sha1(str(data_dir_.resolve()).lower().encode("utf-8")).hexdigest()[:12]
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateMutexW.restype = ctypes.c_void_p
-    handle = kernel32.CreateMutexW(None, False, f"Local\\Tamra-{digest}")
-    if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+    ctypes.set_last_error(0)
+    handle = _kernel32().CreateMutexW(None, 0, f"Local\\Tamra-{digest}")
+    error = ctypes.get_last_error()
+    if not handle:
+        raise ctypes.WinError(error)
+    if error == ERROR_ALREADY_EXISTS:
         _close_handle(handle)
         return None
     return handle
 
 
-def run(dev: bool = False) -> None:
+def run(dev: bool = False, token: str | None = None) -> None:
+    """Start Tamra. In dev mode the API listens on DEV_PORT with `token` (default "dev")."""
     global _instance_mutex
     _instance_mutex = _single_instance(data_dir())
     if _instance_mutex is None:
@@ -133,16 +145,16 @@ def run(dev: bool = False) -> None:
         _alert("Tamra is already running.")
         return
     try:
-        _serve(dev)
+        _serve(dev, token or DEV_TOKEN)
     finally:
         _close_handle(_instance_mutex)
         _instance_mutex = None
 
 
-def _serve(dev: bool) -> None:
+def _serve(dev: bool, dev_token: str) -> None:
     truststore.inject_into_ssl()  # downloads and cloud calls trust the Windows certificate store
     setup_logging(data_dir() / "logs", console=dev)
-    port, token = (DEV_PORT, DEV_TOKEN) if dev else (free_port(), secrets.token_urlsafe(32))
+    port, token = (DEV_PORT, dev_token) if dev else (free_port(), secrets.token_urlsafe(32))
     ui_dir = None if dev else resource_dir() / "ui" / "dist"
     picker = None if dev else FolderPicker()
     file_picker = None if dev else FilePicker()

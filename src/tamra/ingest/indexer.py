@@ -36,21 +36,29 @@ class _Pause(Exception):
     """Indexing cannot continue until something outside the documents changes."""
 
 
-def scan_folder(folder: Path) -> dict[str, tuple[int, float]]:
-    """Supported documents under folder: forward-slash relative path -> (size, mtime).
+def scan_folder(folder: Path) -> tuple[dict[str, tuple[int, float]], list[str]]:
+    """Supported documents under folder, and the places that could not be read.
+
+    The documents map a forward-slash relative path to (size, mtime). The second item lists the
+    relative paths of folders that could not be listed and files that could not be stat'ed ("."
+    when the location is unknown): what is under them is unknown, not gone, so reconcile must
+    not delete it.
 
     Skips dot-files and dot-folders, Office lock files (~$*), hidden or system items, and
     symlinks and directory junctions (a link may point outside the folder or back into it).
-
-    Raises OSError when a folder cannot be listed: it must not pass for empty, or reconcile
-    would delete its files.
     """
     found: dict[str, tuple[int, float]] = {}
+    failed: list[str] = []
 
-    def fail(error: OSError) -> None:
-        raise error  # an unreadable folder must not look empty: reconcile would delete its files
+    def unreadable(location: object) -> None:
+        try:
+            failed.append(Path(str(location)).relative_to(folder).as_posix())
+        except ValueError:
+            failed.append(".")
 
-    for root, dirs, names in os.walk(folder, followlinks=False, onerror=fail):
+    for root, dirs, names in os.walk(
+        folder, followlinks=False, onerror=lambda e: unreadable(e.filename)
+    ):
         dirs[:] = [d for d in dirs if not _ignored(Path(root, d)) and not _is_link(Path(root, d))]
         for name in names:
             path = Path(root, name)
@@ -59,9 +67,14 @@ def scan_folder(folder: Path) -> dict[str, tuple[int, float]]:
             try:
                 info = path.stat()
             except OSError:
+                unreadable(path)
                 continue
             found[path.relative_to(folder).as_posix()] = (info.st_size, info.st_mtime)
-    return found
+    return found, failed
+
+
+def _under(rel_path: str, places: list[str]) -> bool:
+    return any(p == "." or rel_path == p or rel_path.startswith(p + "/") for p in places)
 
 
 def _is_link(path: Path) -> bool:
@@ -223,10 +236,10 @@ class Indexer:
         return self._spans
 
     def _reconcile_project(self, collection_id: int, folder: Path) -> None:
-        on_disk = scan_folder(folder)
+        on_disk, failed = scan_folder(folder)
         known = {record.rel_path: record for record in self._store.list_files(collection_id)}
         for rel_path, record in known.items():
-            if rel_path not in on_disk:
+            if rel_path not in on_disk and not _under(rel_path, failed):
                 self._store.delete_file(record.id)
         for rel_path, (size, mtime) in on_disk.items():
             record = known.get(rel_path)
@@ -240,6 +253,9 @@ class Indexer:
                     or _hash_or_none(folder / rel_path) != record.content_hash
                 )
                 self._store.update_file_stat(record.id, size, mtime, pending=changed)
+        if failed:  # the rest of the project is still reconciled and indexed
+            where = "the project folder" if failed[0] == "." else failed[0]
+            self._set_error(collection_id, f"Could not read: {where}")
 
     def _index_pending(self, blocked: list[int]) -> None:
         while not self._stopping.is_set():
@@ -265,15 +281,15 @@ class Indexer:
         with self._lock:
             self._current = (collection_id, rel_path)
         try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                self._store.set_file_status(file_id, "skipped", "file too large (over 200 MB)")
+                return
             try:
                 embedder = self._embedder()
                 spans = self._token_spans()
             except Exception as e:
                 self._store.set_file_status(file_id, "pending")
                 raise _Pause(f"Embedding model unavailable: {e}") from e
-            if path.stat().st_size > MAX_FILE_BYTES:
-                self._store.set_file_status(file_id, "skipped", "file too large (over 200 MB)")
-                return
             content_hash = sha256_file(path)
             doc = parse_file(path)
             chunks = chunk_document(doc, spans)
