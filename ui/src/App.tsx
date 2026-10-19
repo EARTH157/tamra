@@ -87,6 +87,7 @@ export default function App() {
       "/api/chats",
       activeProject ? { project_id: activeProject.id } : undefined,
     );
+    chatsVersion.current++; // a list asked for before this does not have the new chat
     setChats((list) => [chat, ...list]);
     setActiveId(chat.id);
     if (chat.project_id !== null) setProjectId(chat.project_id);
@@ -133,6 +134,7 @@ export default function App() {
   async function deleteChat(id: number) {
     try {
       await api("DELETE", `/api/chats/${id}`);
+      chatsVersion.current++;
       setChats((list) => list.filter((chat) => chat.id !== id));
       setActiveId((active) => (active === id ? null : active));
     } catch (e) {

@@ -296,7 +296,7 @@ describe("Search in chip on a chat that does not exist yet", () => {
     await click(item("Manuals"));
     await ask();
     expect(calls.some((c) => c.key === "POST /api/chats/9/messages")).toBe(false);
-    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe("Unknown project.");
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe("This project no longer exists.");
   });
 
   it("goes back to the default project for the next new chat", async () => {

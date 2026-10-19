@@ -250,7 +250,9 @@ export default function ChatView({
         { mode, think: think && thinkAvailable },
       );
     } catch (e) {
-      state = { ...state, error: { message: (e as Error).message } };
+      // Before the stream (creating the chat or saving its scope) the core's refusals are known.
+      const message = streaming ? (e as Error).message : projectErrorText(e as Error, t);
+      state = { ...state, error: { message } };
       if (!streaming) setQuestion((current) => current || text); // nothing was asked: keep the text
     } finally {
       const saved = usedId !== null ? await reload(usedId) : null;
