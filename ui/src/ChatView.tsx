@@ -132,6 +132,7 @@ export default function ChatView({
   // kept until the chat is created; for an open chat it shows until the core answers.
   const [chosenScope, setChosenScope] = useState<number[] | null>(null);
   const scopeSeq = useRef(0); // only the newest scope change is applied when it answers
+  const scopeSaves = useRef<Promise<unknown>>(Promise.resolve()); // saves still in flight
   const asking = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const thinkAvailable = canThink(models, settings);
@@ -169,6 +170,12 @@ export default function ChatView({
     };
   }, [chatId]);
 
+  // The default project changed while a new chat is being composed: a choice made for the old
+  // default no longer applies.
+  useEffect(() => {
+    if (chatId === null) setChosenScope(null);
+  }, [defaultProjectId, chatId]);
+
   // Keep the newest message in view.
   useEffect(() => {
     const el = scroller.current;
@@ -198,10 +205,19 @@ export default function ChatView({
     setPending(state);
     onBusyChange(true);
     let usedId: number | null = chatId;
+    let streaming = false;
     try {
+      await scopeSaves.current; // the question is asked over the scope the chip shows
       usedId = chatId ?? (await createChat());
       // A new chat searches its home project; a different choice is saved before the question.
-      if (chatId === null && chosenScope) await saveScope(usedId, chosenScope);
+      if (chatId === null && chosenScope) {
+        try {
+          await saveScope(usedId, chosenScope);
+        } finally {
+          setChosenScope(null); // the chip shows what the core has, saved or not
+        }
+      }
+      streaming = true;
       await streamAnswer(
         usedId,
         text,
@@ -235,6 +251,7 @@ export default function ChatView({
       );
     } catch (e) {
       state = { ...state, error: { message: (e as Error).message } };
+      if (!streaming) setQuestion((current) => current || text); // nothing was asked: keep the text
     } finally {
       const saved = usedId !== null ? await reload(usedId) : null;
       asking.current = false;
@@ -275,8 +292,9 @@ export default function ChatView({
   }
 
   /** Save the projects a chat searches; the open chat and the app take what the core answers. */
-  async function saveScope(id: number, ids: number[]): Promise<void> {
+  async function saveScope(id: number, ids: number[], mine?: number): Promise<void> {
     const updated = await api<Chat>("PUT", `/api/chats/${id}/scope`, { project_ids: ids });
+    if (mine !== undefined && mine !== scopeSeq.current) return; // a newer choice is on its way
     setDetail((current) => (current && current.id === updated.id ? { ...current, ...updated } : current));
     onChatChanged?.(updated);
   }
@@ -286,13 +304,14 @@ export default function ChatView({
     setChosenScope(ids);
     if (chatId === null) return;
     const mine = ++scopeSeq.current;
-    saveScope(chatId, ids)
+    const saving = saveScope(chatId, ids, mine)
       .then(() => mine === scopeSeq.current && setChosenScope(null))
       .catch((e: Error) => {
         if (mine !== scopeSeq.current) return;
         setChosenScope(null);
         setNotice({ message: projectErrorText(e, t) });
       });
+    scopeSaves.current = Promise.all([scopeSaves.current, saving]);
   }
 
   function closePanel() {

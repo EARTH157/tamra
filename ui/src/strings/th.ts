@@ -162,7 +162,7 @@ export const th: Record<TranslationKey, string> = {
   "chat.think": "คิดให้ลึกขึ้น",
   "chat.thinkUnavailable": "โมเดลนี้คิดให้ลึกขึ้นไม่ได้",
   "chat.scope.menu": "ค้นหาใน",
-  "chat.scope.home": "หลัก",
+  "chat.scope.home": "โปรเจกต์หลัก",
   "chat.scope.last": "ต้องเลือกไว้อย่างน้อยหนึ่งโปรเจกต์",
   "chat.scope.more": "{name} + {count}",
   "chat.staleSkipped": "ข้าม {names} เพราะต้องสร้างดัชนีใหม่",

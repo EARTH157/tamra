@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ChatView from "./ChatView";
-import { click, json, type Mounted, mockFetch, mount, press, settle, sse, typeInto } from "./test-utils";
+import ScopeMenu from "./ScopeMenu";
+import { type Call, click, json, type Mounted, mockFetch, mount, press, settle, sse, typeInto } from "./test-utils";
 import type { Chat, Project } from "./types";
 
 let view: Mounted | undefined;
@@ -478,5 +479,168 @@ describe("stale project notice", () => {
     expect(view.container.querySelector(".chat-notice")).not.toBeNull();
     await ask("again");
     expect(view.container.querySelector(".chat-notice")).toBeNull();
+  });
+});
+
+/** Like mockFetch, but a route may answer later: it returns a promise of the response. */
+function lateFetch(routes: Record<string, () => Response | Promise<Response>>): Call[] {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${String(input)}`;
+      calls.push({ key, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      const route = routes[key];
+      if (!route) throw new Error(`unexpected request: ${key}`);
+      return route();
+    }),
+  );
+  return calls;
+}
+
+function later<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Like App: creating a chat makes it the open one, and the app keeps the chat it is told about. */
+function AppLike({ initial = chatOf(9, 1, [1]) }: { initial?: Chat }) {
+  const [chatId, setChatId] = useState<number | null>(null);
+  const [chat, setChat] = useState<Chat | null>(null);
+  return (
+    <>
+      <button type="button" id="move" onClick={() => setChat(chatOf(9, 3, [3]))} />
+      <ChatView
+        {...base}
+        chatId={chatId}
+        chat={chat}
+        defaultProjectId={1}
+        createChat={async () => {
+          setChat(initial);
+          setChatId(initial.id);
+          return initial.id;
+        }}
+        onChatChanged={setChat}
+      />
+    </>
+  );
+}
+
+describe("keeping the chip in step with the core", () => {
+  it("shows the core's scope after a new chat is created with a chosen scope, even after a move", async () => {
+    mockFetch({
+      "PUT /api/chats/9/scope": () => json(chatOf(9, 1, [1, 3])),
+      "POST /api/chats/9/messages": () => sse([{ type: "done", message_id: 1 }]),
+      "GET /api/chats/9": () => json({ ...chatOf(9, 1, [1, 3]), messages: [] }),
+    });
+    view = await mount(<AppLike />);
+    await click(chip());
+    await click(item("Manuals"));
+    await ask();
+    expect(chip().textContent).toBe("HR Documents + 1");
+    await click(view.container.querySelector("#move")); // the chat is moved to Manuals
+    expect(chip().textContent).toBe("Manuals");
+  });
+
+  it("shows the home scope when the new chat's scope could not be saved, and asks over that next time", async () => {
+    const calls = mockFetch({
+      "PUT /api/chats/9/scope": () => json({ detail: "Chat not found." }, 404),
+      "POST /api/chats/9/messages": () => sse([{ type: "done", message_id: 1 }]),
+      "GET /api/chats/9": () => json({ ...chatOf(9, 1, [1]), messages: [] }),
+    });
+    view = await mount(<AppLike />);
+    await click(chip());
+    await click(item("Manuals"));
+    await ask("Where is it?");
+    expect(chip().textContent).toBe("HR Documents");
+    expect(calls.some((c) => c.key === "POST /api/chats/9/messages")).toBe(false);
+    // The question was not asked, so it is back in the box.
+    expect(view.container.querySelector("textarea")?.value).toBe("Where is it?");
+    await click(view.container.querySelector('button[type="submit"]'));
+    expect(calls.filter((c) => c.key === "PUT /api/chats/9/scope")).toHaveLength(1); // not again
+    expect(calls.some((c) => c.key === "POST /api/chats/9/messages")).toBe(true);
+  });
+
+  it("applies only the newest of two saves that answer out of order", async () => {
+    const first = later<Response>();
+    const second = later<Response>();
+    const answers = [first.promise, second.promise];
+    const onChatChanged = vi.fn();
+    lateFetch({
+      "GET /api/chats/5": () => json({ ...chatOf(5, 1, [1]), messages: [] }),
+      "PUT /api/chats/5/scope": () => answers.shift() as Promise<Response>,
+    });
+    view = await mount(<ChatView {...base} chatId={5} onChatChanged={onChatChanged} />);
+    await click(chip());
+    await click(item("Contracts")); // saving [1, 2]
+    await click(item("Manuals")); // saving [1, 2, 3]
+    second.resolve(json(chatOf(5, 1, [1, 2, 3])));
+    await settle();
+    first.resolve(json(chatOf(5, 1, [1, 2])));
+    await settle();
+    expect(onChatChanged).toHaveBeenCalledTimes(1);
+    expect(onChatChanged).toHaveBeenCalledWith(chatOf(5, 1, [1, 2, 3]));
+    expect(chip().textContent).toBe("HR Documents + 2");
+  });
+
+  it("waits for a save in flight before asking", async () => {
+    const saving = later<Response>();
+    const calls = lateFetch({
+      "GET /api/chats/5": () => json({ ...chatOf(5, 1, [1]), messages: [] }),
+      "PUT /api/chats/5/scope": () => saving.promise,
+      "POST /api/chats/5/messages": () => sse([{ type: "done", message_id: 1 }]),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    await click(chip());
+    await click(item("Contracts"));
+    await ask();
+    expect(calls.some((c) => c.key === "POST /api/chats/5/messages")).toBe(false);
+    saving.resolve(json(chatOf(5, 1, [1, 2])));
+    await settle();
+    expect(calls.some((c) => c.key === "POST /api/chats/5/messages")).toBe(true);
+  });
+
+  it("forgets a choice made for a new chat when the default project changes", async () => {
+    mockFetch({});
+    function Host() {
+      const [home, setHome] = useState(1);
+      return (
+        <>
+          <button type="button" id="switch" onClick={() => setHome(2)} />
+          <ChatView {...base} chatId={null} defaultProjectId={home} />
+        </>
+      );
+    }
+    view = await mount(<Host />);
+    await click(chip());
+    await click(item("Manuals"));
+    expect(chip().textContent).toBe("HR Documents + 1");
+    await click(view.container.querySelector("#switch"));
+    expect(chip().textContent).toBe("Contracts");
+  });
+});
+
+describe("Search in menu and a disabled chip", () => {
+  it("does not reopen by itself once the chip is enabled again", async () => {
+    mockFetch({});
+    function Host() {
+      const [off, setOff] = useState(false);
+      return (
+        <>
+          <button type="button" id="off" onClick={() => setOff((v) => !v)} />
+          <ScopeMenu projects={projects} scope={[1]} homeId={1} disabled={off} onChange={vi.fn()} />
+        </>
+      );
+    }
+    view = await mount(<Host />);
+    await click(chip());
+    expect(menu()).not.toBeNull();
+    await click(view.container.querySelector("#off")); // disabled: the menu goes
+    expect(menu()).toBeNull();
+    await click(view.container.querySelector("#off")); // enabled again
+    expect(menu()).toBeNull();
   });
 });

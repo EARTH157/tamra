@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Folder } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { type TranslationKey, useT } from "./i18n";
 import PopMenu from "./PopMenu";
 import type { Project } from "./types";
@@ -42,6 +42,10 @@ export function scopeLabel(
 export default function ScopeMenu({ projects, scope, homeId, disabled, onChange }: Props) {
   const t = useT();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  // A menu left open when the chip is disabled must not reopen by itself when it is enabled again.
+  useEffect(() => {
+    if (disabled) setAnchor(null);
+  }, [disabled]);
   const label = scopeLabel(projects, scope, homeId, t);
   const home = projects.find((project) => project.id === homeId);
   const ordered = home ? [home, ...projects.filter((project) => project !== home)] : projects;

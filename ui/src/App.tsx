@@ -1,5 +1,5 @@
 import { AlertTriangle, BookOpen, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { projectErrorText } from "./apiErrors";
 import ChatView from "./ChatView";
@@ -40,9 +40,20 @@ export default function App() {
   const [view, setView] = useState<"chat" | "settings">("chat");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
 
+  // Bumped when a chat is changed here (renamed, moved, new scope). A reload of the list that was
+  // asked for before that change would bring the old chat back, so its answer is not used.
+  const chatsVersion = useRef(0);
+
   const refreshChats = useCallback(async () => {
     try {
-      setChats((await api<{ chats: Chat[] }>("GET", "/api/chats")).chats);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const version = chatsVersion.current;
+        const loaded = (await api<{ chats: Chat[] }>("GET", "/api/chats")).chats;
+        if (version === chatsVersion.current) {
+          setChats(loaded);
+          return;
+        }
+      }
     } catch (e) {
       setProblem((e as Error).message);
     }
@@ -101,6 +112,7 @@ export default function App() {
   async function renameChat(id: number, title: string) {
     try {
       const chat = await api<Chat>("PATCH", `/api/chats/${id}`, { title });
+      chatsVersion.current++;
       setChats((list) => list.map((item) => (item.id === id ? chat : item)));
     } catch (e) {
       setProblem(projectErrorText(e as Error, t));
@@ -110,6 +122,7 @@ export default function App() {
   async function moveChat(chat: Chat, toProject: number) {
     try {
       const moved = await api<Chat>("PATCH", `/api/chats/${chat.id}`, { project_id: toProject });
+      chatsVersion.current++;
       setChats((list) => list.map((item) => (item.id === chat.id ? moved : item)));
       if (chat.id === activeId) setProjectId(toProject);
     } catch (e) {
@@ -288,9 +301,10 @@ export default function App() {
               projects={projects}
               chat={activeChat}
               defaultProjectId={activeProject?.id ?? null}
-              onChatChanged={(updated) =>
-                setChats((list) => list.map((item) => (item.id === updated.id ? updated : item)))
-              }
+              onChatChanged={(updated) => {
+                chatsVersion.current++;
+                setChats((list) => list.map((item) => (item.id === updated.id ? updated : item)));
+              }}
             />
           )}
         </div>
