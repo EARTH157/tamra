@@ -131,8 +131,11 @@ def _table_rows(table: DocxTable) -> Iterator[str]:
     """The text of each row ("" when empty), then the rows of tables nested in its cells."""
     seen: set = set()  # a merged cell is reported once, in its first row
     for row in table.rows:
-        cells = [cell for cell in row.cells if cell._tc not in seen]
-        seen.update(cell._tc for cell in cells)
+        cells = []
+        for cell in row.cells:  # a horizontal merge returns the same cell once per grid column
+            if cell._tc not in seen:
+                seen.add(cell._tc)
+                cells.append(cell)
         yield " | ".join(t for t in (cell.text.strip() for cell in cells) if t)
         for cell in cells:
             for nested in cell.tables:

@@ -74,7 +74,10 @@ def scan_folder(folder: Path) -> tuple[dict[str, tuple[int, float]], list[str]]:
 
 
 def _under(rel_path: str, places: list[str]) -> bool:
-    return any(p == "." or rel_path == p or rel_path.startswith(p + "/") for p in places)
+    rel = rel_path.casefold()  # Windows paths compare without case
+    return any(
+        p == "." or rel == p.casefold() or rel.startswith(p.casefold() + "/") for p in places
+    )
 
 
 def _is_link(path: Path) -> bool:

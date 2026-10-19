@@ -169,6 +169,8 @@ def test_docx_merged_cells_are_read_once_and_nested_tables_follow_their_row(tmp_
     import docx
 
     document = docx.Document()
+    title = document.add_table(rows=1, cols=3)
+    title.cell(0, 0).merge(title.cell(0, 2)).text = "Title"  # horizontal merge
     table = document.add_table(rows=3, cols=2)
     table.cell(0, 0).merge(table.cell(1, 0)).text = "Group"  # vertical merge
     table.cell(0, 1).text = "one"
@@ -180,8 +182,9 @@ def test_docx_merged_cells_are_read_once_and_nested_tables_follow_their_row(tmp_
     path = tmp_path / "m.docx"
     document.save(str(path))
     assert [(u.text, u.paragraph) for u in parse_file(path).units] == [
-        ("Group | one", 0),
-        ("two", 1),
-        ("Outer", 2),
-        ("nested | row", 3),
+        ("Title", 0),
+        ("Group | one", 1),
+        ("two", 2),
+        ("Outer", 3),
+        ("nested | row", 4),
     ]
