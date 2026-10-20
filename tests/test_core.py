@@ -8,6 +8,7 @@ from tamra.core import (
     AnswerBusy,
     BadName,
     Core,
+    EmbedderUnavailable,
     FolderMissing,
     FolderNotAllowed,
     FolderUsed,
@@ -724,5 +725,47 @@ def test_a_keyring_failure_is_an_auth_error_event_without_the_key(tmp_path, monk
         assert events[-1]["type"] == "error"
         assert events[-1]["reason"] == "auth"
         assert "exploded" not in events[-1]["message"]
+    finally:
+        c.shutdown()
+
+
+def test_the_embedder_is_retried_after_a_failed_load(tmp_path):
+    loads = []
+
+    def flaky():
+        loads.append(1)
+        if len(loads) == 1:
+            raise FileNotFoundError("model.onnx not found")
+        return FakeEmbedder()
+
+    c = make_core(tmp_path, embedder_factory=flaky)
+    try:
+        with pytest.raises(EmbedderUnavailable):
+            c.embedder()
+        assert c.embedder() is c.embedder()  # the failure was not cached
+        assert loads == [1, 1]
+    finally:
+        c.shutdown()
+
+
+def test_indexing_resumes_when_the_search_model_download_finishes(tmp_path):
+    installed = []
+
+    def factory():
+        if not installed:
+            raise FileNotFoundError("model.onnx not found")
+        return FakeEmbedder()
+
+    c = make_core(tmp_path, embedder_factory=factory)
+    c.start()
+    try:
+        c.create_project("Docs", str(make_docs(tmp_path, "docs", a="Lease terms.")))
+        wait_until(
+            lambda: (c.projects()[0]["error"] or "").startswith("Embedding model unavailable")
+        )
+        installed.append(1)
+        c.models._on_installed(c.models.catalog.embedding().id)  # what a finished download calls
+        wait_until(lambda: indexed(c) == 1)
+        assert c.projects()[0]["error"] is None
     finally:
         c.shutdown()

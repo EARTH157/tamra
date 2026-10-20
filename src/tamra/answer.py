@@ -291,14 +291,19 @@ class AnswerService:
             return
         route = self._route()
         previous = self._store.last_exchange(chat_id)
-        self._store.add_user_message(chat_id, question)
         language = detect_language(question)
         query = query_text(question, previous[0])
         try:
             vector = self._embed_query(query)
         except Exception as e:  # the model files are missing or cannot be loaded
-            yield {"type": "error", "message": f"Embedding model unavailable: {e}"}
+            # Nothing is saved yet: a question that cannot be answered stays out of the chat.
+            yield {
+                "type": "error",
+                "message": f"Embedding model unavailable: {e}",
+                "reason": "embedding_missing",
+            }
             return
+        self._store.add_user_message(chat_id, question)
         hits = hybrid_search(self._store, [c.id for c in searched], vector, fts_query(query))
         if skipped:
             yield {"type": "notice", "code": "stale_projects", "names": skipped}

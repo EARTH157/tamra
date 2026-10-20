@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -48,10 +49,13 @@ class ModelManager:
         catalog: Catalog,
         *,
         transport: httpx.BaseTransport | None = None,
+        on_installed: Callable[[str], None] | None = None,
     ):
+        """on_installed(model_id) runs on the download thread after a download completes."""
         self.models_dir = models_dir
         self.catalog = catalog
         self._transport = transport  # tests inject httpx.MockTransport
+        self._on_installed = on_installed
         self._lock = threading.Lock()
         self._state: dict[str, dict[str, Any]] = {m.id: _idle() for m in catalog.models}
         self._active: str | None = None
@@ -126,6 +130,11 @@ class ModelManager:
                 )
                 finished += f.size
             self._finish(model_id, state="idle", done=finished, error=None)
+            if self._on_installed is not None:
+                try:
+                    self._on_installed(model_id)
+                except Exception:  # the download itself succeeded
+                    log.exception("after-install hook for %s failed", model_id)
         except DownloadCancelled:
             self._finish(model_id, state="idle", error=None)
         except Exception as exc:  # the worker must never die silently

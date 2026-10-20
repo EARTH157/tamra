@@ -246,6 +246,7 @@ export default function App() {
             disabled={busy}
             onChangeFolder={() => setDialog({ kind: "folder", id: activeProject.id, from: "menu" })}
             onRebuild={() => void rebuildProject(activeProject.id)}
+            onOpenModelSettings={() => openSettings("model")}
           />
         )}
         <button

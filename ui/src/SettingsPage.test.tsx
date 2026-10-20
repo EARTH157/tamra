@@ -14,7 +14,7 @@ import {
   settle,
   typeInto,
 } from "./test-utils";
-import { localModel, modelsInfo, saved } from "./test-models";
+import { embeddingModel, localModel, modelsInfo, saved } from "./test-models";
 import type { ModelsInfo, Settings, SettingsTab } from "./types";
 
 let view: Mounted | undefined;
@@ -310,6 +310,58 @@ describe("AI model tab: local", () => {
     expect(row.textContent).toContain("Recommended");
     expect(row.textContent).toContain("Large · 2.5 GB · needs a GPU with 10 GB VRAM or more");
     expect(row.textContent).toContain("Download");
+  });
+
+  it("shows the search model above the local models, installed", async () => {
+    await mountPage({ tab: "model" });
+    const row = find(".search-model");
+    expect(row.textContent).toContain("bge-m3 (int8)");
+    expect(row.textContent).toContain("585 MB");
+    expect(row.textContent).toContain("Installed");
+    expect(text()).toContain("Needed to search your documents. It always runs on this computer.");
+    const heading = [...view!.container.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(heading.indexOf("Search model")).toBeLessThan(heading.indexOf("Local model"));
+  });
+
+  it("asks before downloading the search model, then starts the download", async () => {
+    const { calls } = await mountPage({
+      tab: "model",
+      models: modelsInfo({ embedding: embeddingModel({ installed: false }) }),
+      routes: {
+        "POST /api/models/bge-m3-int8/download": () => json({ status: "downloading" }, 202),
+      },
+    });
+    await click(find('button[aria-label="Download bge-m3 (int8)"]'));
+    expect(dialog()?.querySelector("h2")?.textContent).toBe("Download bge-m3 (585 MB)?");
+    expect(keys(calls)).not.toContain("POST /api/models/bge-m3-int8/download");
+    await click(buttonByText(dialog()!, "Download"));
+    expect(keys(calls)).toContain("POST /api/models/bge-m3-int8/download");
+    expect(dialog()).toBeNull();
+  });
+
+  it("shows the search model downloading with a Cancel", async () => {
+    const { calls } = await mountPage({
+      tab: "model",
+      models: modelsInfo({
+        embedding: embeddingModel({ installed: false, state: "downloading", done: 30, total: 100 }),
+      }),
+      routes: { "DELETE /api/models/bge-m3-int8/download": noContent },
+    });
+    const row = find(".search-model");
+    expect(row.textContent).toContain("Downloading 30%");
+    await click(find('button[aria-label="Cancel download: bge-m3 (int8)"]'));
+    expect(keys(calls)).toContain("DELETE /api/models/bge-m3-int8/download");
+  });
+
+  it("shows a failed search model download and lets it be tried again", async () => {
+    await mountPage({
+      tab: "model",
+      models: modelsInfo({
+        embedding: embeddingModel({ installed: false, state: "error", error: "Disk is full." }),
+      }),
+    });
+    expect(find(".search-model").textContent).toContain("Download failed: Disk is full.");
+    expect(find('button[aria-label="Download bge-m3 (int8)"]')).toBeDefined();
   });
 
   it("says so when there is no dedicated GPU", async () => {

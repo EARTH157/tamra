@@ -817,7 +817,8 @@ svg.lucide {
   color: var(--warning-text);
 }
 
-.stale-note .link-button {
+.stale-note .link-button,
+.index-error .link-button {
   display: block;
   margin-top: 4px;
 }
@@ -2280,7 +2281,8 @@ svg.lucide {
   gap: 8px;
 }
 
-.model-row {
+.model-row,
+.search-model {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -2293,6 +2295,19 @@ svg.lucide {
 
 .model-row.selected {
   border-color: var(--primary-ink);
+}
+
+.search-model {
+  padding-left: 16px;
+}
+
+.search-model .model-text {
+  flex: 1;
+  padding: 12px 0;
+}
+
+.search-model-hint {
+  margin: 8px 0 0;
 }
 
 .model-pick {

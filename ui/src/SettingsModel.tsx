@@ -1,16 +1,19 @@
 import { Cloud, Lock } from "lucide-react";
 import { useState } from "react";
 import { useT } from "./i18n";
+import { useModels } from "./models";
 import { useSettings } from "./settings";
 import SettingsCloud from "./SettingsCloud";
 import { RadioMark, Section } from "./SettingsControls";
 import SettingsLocal from "./SettingsLocal";
+import SettingsSearchModel from "./SettingsSearchModel";
 import type { Mode } from "./types";
 
 /** The AI model tab: the mode cards, then the local model list or the Cloud API form. */
 export default function SettingsModel() {
   const t = useT();
   const { settings, update } = useSettings();
+  const modelsApi = useModels(settings);
   const [error, setError] = useState<string | null>(null);
 
   function choose(mode: Mode) {
@@ -52,7 +55,8 @@ export default function SettingsModel() {
           ))}
         </div>
       </Section>
-      {settings.mode === "api" ? <SettingsCloud /> : <SettingsLocal />}
+      <SettingsSearchModel {...modelsApi} />
+      {settings.mode === "api" ? <SettingsCloud /> : <SettingsLocal {...modelsApi} />}
     </>
   );
 }

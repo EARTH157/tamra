@@ -115,7 +115,7 @@ export type ChatDetail = Chat & { messages: Message[] };
 export type AnswerMode = "answer" | "search";
 
 /** Why a model call failed (ProviderError.reason); errors that are not the model's carry none. */
-export type ErrorReason = "offline" | "auth" | "quota" | "model_missing" | "other";
+export type ErrorReason = "offline" | "auth" | "quota" | "model_missing" | "embedding_missing" | "other";
 
 export type AnswerEvent =
   | { type: "sources"; sources: Source[] }
@@ -128,7 +128,8 @@ export type AnswerEvent =
 // GET /api/models.
 export type ModelState = "idle" | "downloading" | "verifying" | "error";
 
-export type LocalModel = {
+/** What every catalog entry reports: its files and where a download of them stands. */
+export type ModelStatus = {
   id: string;
   name: string;
   size: number;
@@ -137,6 +138,12 @@ export type LocalModel = {
   done: number;
   total: number;
   error: string | null;
+};
+
+/** The search (embedding) model; the core runs it on this computer for every project. */
+export type EmbeddingModel = ModelStatus;
+
+export type LocalModel = ModelStatus & {
   tier: "small" | "medium" | "large";
   recommended: boolean;
   license: string;
@@ -161,6 +168,7 @@ export type ModelsInfo = {
   gpu_offload: boolean | null;
   local: LocalModel[];
   uncatalogued: UncataloguedModel[];
+  embedding: EmbeddingModel;
 };
 
 /** The tabs of the Settings page. */

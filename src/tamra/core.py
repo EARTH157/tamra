@@ -147,7 +147,7 @@ class Core:
         self._models_dir = models_dir
         self._llama_exe = llama_exe
         self._catalog = catalog or load_catalog()
-        self.models = ModelManager(models_dir, self._catalog)
+        self.models = ModelManager(models_dir, self._catalog, on_installed=self._model_installed)
         self._hardware: Hardware | None = None
         self._hardware_lock = threading.Lock()
         self._settings = load_settings(self.store)
@@ -306,6 +306,11 @@ class Core:
                 except Exception as e:  # missing or unreadable model files
                     raise EmbedderUnavailable(str(e)) from e
             return self._embedder
+
+    def _model_installed(self, model_id: str) -> None:
+        """The search model arrived: files that paused for lack of it are indexed now."""
+        if model_id == self._catalog.embedding().id:
+            self.indexer.request_reconcile()
 
     def _embed_query(self, text: str) -> np.ndarray:
         return self.embedder().embed([text])[0]

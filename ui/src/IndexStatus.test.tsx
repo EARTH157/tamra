@@ -128,4 +128,44 @@ describe("IndexStatus", () => {
     await click(buttonByText(view.container, "Change folder"));
     expect(onChangeFolder).toHaveBeenCalled();
   });
+
+  it("explains a pause for the missing search model, with a button to the model settings", async () => {
+    const onOpenModelSettings = vi.fn();
+    const index = {
+      stale: false,
+      counts,
+      current: null,
+      error: "Embedding model unavailable: model.onnx not found",
+      problems: [],
+    };
+    view = await mount(
+      <IndexStatus
+        project={project(index)}
+        disabled={false}
+        onChangeFolder={vi.fn()}
+        onRebuild={vi.fn()}
+        onOpenModelSettings={onOpenModelSettings}
+      />,
+    );
+    const text = view.container.textContent ?? "";
+    expect(text).toContain("The search model is not installed. Download it in Settings > AI model.");
+    expect(text).not.toContain("model.onnx");
+    await click(buttonByText(view.container, "Open model settings"));
+    expect(onOpenModelSettings).toHaveBeenCalled();
+  });
+
+  it("shows any other index error as the core worded it", async () => {
+    const index = { stale: false, counts, current: null, error: "Folder not found: C:/x", problems: [] };
+    view = await mount(
+      <IndexStatus
+        project={project(index)}
+        disabled={false}
+        onChangeFolder={vi.fn()}
+        onRebuild={vi.fn()}
+        onOpenModelSettings={vi.fn()}
+      />,
+    );
+    expect(view.container.textContent).toContain("Folder not found: C:/x");
+    expect(buttonByText(view.container, "Open model settings")).toBeUndefined();
+  });
 });
