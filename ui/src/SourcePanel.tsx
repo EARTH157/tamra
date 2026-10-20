@@ -72,7 +72,7 @@ type Props = {
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
 /** The second line of the header: "page 14 of 32" for a located PDF page, else the saved label. */
-function whereLine(match: Match, located: Locate | null, t: Translate): string {
+function whereLine(match: Match, located: Locate | null | undefined, t: Translate): string {
   if (located?.found) {
     if (located.kind === "pdf" && located.page !== undefined && located.page_count !== undefined) {
       return t("source.pageOf", { page: located.page, count: located.page_count });
@@ -113,7 +113,7 @@ export default function SourcePanel({
     : !check && source
       ? { n: source.n, start: null, end: null }
       : null;
-  const located = useLocated(messageId, target);
+  const located = useLocated(messageId, target); // undefined while loading, null when it failed
   // Without the answer's sources there is no snapshot to offset into: show none.
   const snapshot = match ? (sources.find((s) => s.n === match.n)?.text ?? null) : null;
 
@@ -122,11 +122,14 @@ export default function SourcePanel({
   const shownTitle = title ? (titled ? shownFile(titled, multiProject) : fileName(title)) : null;
   const subtitle = match ? whereLine(match, located, t) : source ? sourceLabel(source) : "";
   const fileId = match ? match.file_id : (source?.file_id ?? null);
-  // The real page, once located: a text file's snapshot is already its real text.
+  // The real page, once located: a text file's snapshot is already its real text. While the next
+  // passage of the same file is located, the page stays as it is, with its own marks.
+  const fresh = pdfLocated(located);
+  const [held, setHeld] = useState<{ fileId: number; located: Locate } | null>(null);
+  if (fresh && fileId != null && held?.located !== fresh) setHeld({ fileId, located: fresh });
   const preview =
-    located?.found && !located.changed && located.kind === "pdf" && located.page !== undefined
-      ? located
-      : null;
+    fresh ??
+    (located === undefined && target && fileId != null && held?.fileId === fileId ? held.located : null);
   const previewPage =
     preview?.page !== undefined && fileId !== null && fileId !== undefined && title ? (
       <PdfPage
@@ -322,16 +325,23 @@ function Snapshot({ text, start, end }: { text: string; start: number; end: numb
   );
 }
 
+/** The located page of a PDF that can be previewed, else null. */
+function pdfLocated(located: Locate | null | undefined): Locate | null {
+  return located?.found && !located.changed && located.kind === "pdf" && located.page !== undefined
+    ? located
+    : null;
+}
+
 /**
- * Where the shown passage (null offsets: the whole snapshot) is in the current file; null until known, and when it cannot be told. A
- * result is only used for the passage it was asked for, so a step to the next match never shows
- * the page of the previous one for a frame.
+ * Where the shown passage (null offsets: the whole snapshot) is in the current file: undefined
+ * until known, null when it cannot be told. A result is only used for the passage it was asked
+ * for, so a step to the next match never shows the page of the previous one for a frame.
  */
 function useLocated(
   messageId: number | null,
   target: { n: number; start: number | null; end: number | null } | null,
-): Locate | null {
-  const [result, setResult] = useState<{ key: string; located: Locate } | null>(null);
+): Locate | null | undefined {
+  const [result, setResult] = useState<{ key: string; located: Locate | null } | null>(null);
   const n = target?.n;
   const start = target?.start;
   const end = target?.end;
@@ -344,11 +354,12 @@ function useLocated(
         if (current) setResult({ key, located });
       })
       .catch(() => {
-        // The header keeps the saved label.
+        // The header keeps the saved label, and the snapshot is shown.
+        if (current) setResult({ key, located: null });
       });
     return () => {
       current = false;
     };
   }, [messageId, n, start, end, key]);
-  return result?.key === key ? result.located : null;
+  return result?.key === key ? result.located : undefined;
 }

@@ -116,7 +116,7 @@ export default function PdfPage({ fileId, file, page, zoom, highlight, fit = fal
   const scale = fit
     ? fitScale(boxWidth ?? 0, fullWidth ?? ASSUMED_PAGE_WIDTH, window.devicePixelRatio)
     : pageScale(zoom, window.devicePixelRatio);
-  const waiting = fit && boxWidth === null;
+  const unmeasured = fit && boxWidth === null;
   const key = `${fileId}:${page}:${scale}`;
   const [shown, setShown] = useState<Shown | null>(null);
   const [failed, setFailed] = useState<{ key: string; error: Error } | null>(null);
@@ -132,7 +132,7 @@ export default function PdfPage({ fileId, file, page, zoom, highlight, fit = fal
   const firstBox = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (waiting) return;
+    if (unmeasured) return;
     const controller = new AbortController();
     fetchPage(`/api/files/${fileId}/pages/${page}?scale=${scale}`, controller.signal)
       .then((blob) => {
@@ -147,7 +147,7 @@ export default function PdfPage({ fileId, file, page, zoom, highlight, fit = fal
         if (!controller.signal.aborted) setFailed({ key, error });
       });
     return () => controller.abort();
-  }, [fileId, page, scale, key, waiting]);
+  }, [fileId, page, scale, key, unmeasured]);
 
   // A zoom that renders at the same scale (the cap) needs no new image, only a new size.
   useEffect(() => {

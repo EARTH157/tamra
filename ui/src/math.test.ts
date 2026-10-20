@@ -17,6 +17,23 @@ describe("splitMath", () => {
     }
   });
 
+  it("leaves prices as text even when TeX-like characters sit between them", () => {
+    for (const text of [
+      "ราคา $5 ต่อ user_month และ $10",
+      "Plans: $5 per user_month and $10 per {seat}",
+      "$5 and $10",
+      "ราคา $5 และ $10",
+      "From $5^2 to $10_x",
+    ]) {
+      expect(splitMath(text)).toEqual(plain(text));
+    }
+  });
+
+  it("closes only at a dollar that is not followed by a digit", () => {
+    expect(formulas("Pay $x_1 + 5$ then $10")).toEqual([["$x_1 + 5$", "x_1 + 5", false]]);
+    expect(formulas("Is $a$5 or $b^2$?")).toEqual([["$b^2$", "b^2", false]]);
+  });
+
   it("reads $ ... $ with spaces inside", () => {
     const text = "Speed is $ \\frac{\\pi}{4} $ rad/s";
     expect(formulas(text)).toEqual([["$ \\frac{\\pi}{4} $", " \\frac{\\pi}{4} ", false]]);

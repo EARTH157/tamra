@@ -30,12 +30,19 @@ function carriersIn(node: Node): HTMLElement[] {
  * minus the paragraph breaks and with each [n] marker shown as a chip, so offsets are read from
  * the data-start/data-end of the elements that were rendered from the content.
  */
-function contentOffset(node: Node, offset: number, root: HTMLElement): number | null {
+function contentOffset(
+  node: Node,
+  offset: number,
+  root: HTMLElement,
+  edge: "start" | "end",
+): number | null {
   const own = carrier(node, root);
   if (own) {
     const [start, end] = offsetsOf(own);
-    // A chip or a formula is all or nothing.
-    if (own.dataset.cite !== undefined || own.dataset.math !== undefined) return offset > 0 ? end : start;
+    // A formula is all or nothing, and a boundary inside it snaps outward: the selection includes it.
+    if (own.dataset.math !== undefined) return edge === "start" ? start : end;
+    // A chip is all or nothing too: a boundary after its first position is past it.
+    if (own.dataset.cite !== undefined) return offset > 0 ? end : start;
     if (node instanceof Text) return start + Math.min(offset, end - start);
     return offset > 0 ? end : start;
   }
@@ -89,10 +96,10 @@ export function selectionInside(root: HTMLElement, content: string): Selected | 
   const range = selection.getRangeAt(0);
   if (!root.contains(range.startContainer)) return null;
   const scope = root.closest(".message") ?? root; // the cards share it with the text
-  const startAt = contentOffset(range.startContainer, range.startOffset, root);
+  const startAt = contentOffset(range.startContainer, range.startOffset, root, "start");
   const endAt = ((): number | null => {
     const { endContainer: container, endOffset: offset } = range;
-    if (root.contains(container)) return contentOffset(container, offset, root);
+    if (root.contains(container)) return contentOffset(container, offset, root, "end");
     if (scope.contains(container)) {
       // Past the text, inside the same message (or on a boundary of an ancestor of the text).
       if (!container.contains(root)) return content.length;

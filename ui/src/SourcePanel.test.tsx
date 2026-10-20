@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { act, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fitScale } from "./PdfPage";
 import SourcePanel, { type Check } from "./SourcePanel";
@@ -172,6 +172,112 @@ describe("SourcePanel", () => {
     img.dispatchEvent(new Event("load"));
     await settle();
     expect(calls).toHaveLength(2);
+  });
+
+  it("asks for a new image only when the panel width crosses a 50 px step", async () => {
+    let width = 400;
+    let observed: (() => void) | undefined;
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { get: () => width, configurable: true });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          observed = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    // 400 px over a 612 pt page is zoom 65 -> 0.75; 600 px is zoom 98 -> 1
+    const calls = mockFetch({
+      [locateUrl(1, match)]: () => json(locatePdf),
+      [pageRoute(14, 0.75)]: png,
+      [pageRoute(14, 1)]: png,
+    });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    expect(calls.map((c) => c.key)).toEqual([locateUrl(1, match), pageRoute(14, 0.75)]);
+    width = 380; // still the 400 step
+    await act(async () => observed?.());
+    await settle();
+    expect(calls).toHaveLength(2);
+    width = 600;
+    await act(async () => observed?.());
+    await settle();
+    expect(calls.map((c) => c.key)).toEqual([locateUrl(1, match), pageRoute(14, 0.75), pageRoute(14, 1)]);
+  });
+
+  it("keeps the page, and fetches nothing, while the next passage of the same file is located", async () => {
+    const third: Match = { ...match, start: 0, end: 10, text: "Staff get " };
+    const release: Array<() => void> = [];
+    const pages: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/pages/")) {
+          pages.push(url);
+          return png();
+        }
+        if (url.includes("/locate?start=0&end=10")) {
+          await new Promise<void>((resolve) => release.push(resolve)); // answers when released
+          return json({ ...locatePdf, rects: [[0.3, 0.4, 0.5, 0.45]] });
+        }
+        return json(locatePdf);
+      }),
+    );
+    function Host() {
+      const [index, setIndex] = useState(0);
+      return (
+        <SourcePanel
+          {...base}
+          check={check({ matches: [match, third], index })}
+          onIndexChange={setIndex}
+        />
+      );
+    }
+    view = await mount(<Host />);
+    const hit = () => view!.container.querySelector<HTMLElement>(".pdf-hit")?.style.left;
+    expect(hit()).toBe("10%");
+    expect(pages).toHaveLength(1);
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    // Still the page with the old marks; no snapshot flashes in, and no new image is asked for.
+    expect(view.container.querySelector(".pdf-page img")).not.toBeNull();
+    expect(view.container.querySelector(".paper")).toBeNull();
+    expect(view.container.querySelector(".snapshot-hit")).toBeNull();
+    expect(hit()).toBe("10%");
+    for (const resolve of release) resolve();
+    await settle();
+    expect(hit()).toBe("30%"); // the marks move once the new result arrives
+    expect(view.container.querySelector(".paper")).toBeNull();
+    expect(pages).toHaveLength(1);
+    expect(revoked).toEqual([]);
+  });
+
+  it("shows the snapshot when locating the next passage fails", async () => {
+    const third: Match = { ...match, start: 0, end: 10, text: "Staff get " };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/pages/")) return png();
+        if (url.includes("/locate?start=0&end=10")) return json({ detail: "File not found." }, 404);
+        return json(locatePdf);
+      }),
+    );
+    function Host() {
+      const [index, setIndex] = useState(0);
+      return (
+        <SourcePanel
+          {...base}
+          check={check({ matches: [match, third], index })}
+          onIndexChange={setIndex}
+        />
+      );
+    }
+    view = await mount(<Host />);
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    expect(view.container.querySelector(".pdf-page")).toBeNull();
+    expect(view.container.querySelector(".snapshot-hit")).not.toBeNull();
   });
 
   it("rounds the fitted scale up to a quarter, within the limits", () => {
