@@ -34,6 +34,13 @@ describe("splitMath", () => {
     expect(formulas("Is $a$5 or $b^2$?")).toEqual([["$b^2$", "b^2", false]]);
   });
 
+  it("reads a formula that starts with a digit", () => {
+    expect(formulas("Area is $2\\pi r$ and $10^3$")).toEqual([
+      ["$2\\pi r$", "2\\pi r", false],
+      ["$10^3$", "10^3", false],
+    ]);
+  });
+
   it("reads $ ... $ with spaces inside", () => {
     const text = "Speed is $ \\frac{\\pi}{4} $ rad/s";
     expect(formulas(text)).toEqual([["$ \\frac{\\pi}{4} $", " \\frac{\\pi}{4} ", false]]);

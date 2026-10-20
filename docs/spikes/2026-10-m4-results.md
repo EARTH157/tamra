@@ -156,6 +156,27 @@ A DOCX file indexed before these fixes keeps its old table text and paragraph in
 project's index is rebuilt (**Project settings > Rebuild index**), because its content hash did not
 change.
 
+## Owner requests during M4
+
+These came from the owner's own use of the M4 exe and are on the same branch.
+
+1. **Search model in Settings** (`47eb32d`, `279d911`). With a chat model downloaded but no bge-m3,
+   every question failed. Settings > AI model now has a "Search model" row that downloads it. A
+   question that cannot be embedded is not saved to the chat; when the cause is the missing model
+   files (`EmbedderUnavailable`) the error carries `reason: "embedding_missing"` and the UI links to
+   Settings. After the download, every project is reconciled, so files skipped earlier get indexed.
+2. **Real PDF page in the source panel** (`f4a43f4`, `93e31d1`). For a PDF source the panel shows the
+   rendered page with the passage marked, instead of the text snapshot. Prev/next keeps the page
+   mounted and moves only the marks. If the file cannot be located, the panel falls back to the
+   snapshot.
+3. **LaTeX in answers** (`6c1e5fc`, `93e31d1`). `$...$`, `$$...$$`, `\(...\)` and `\[...\]` render
+   with KaTeX 0.19.0 (MIT) as MathML: no fonts or CSS, `trust: false`, and errors shown as text. A
+   `$` follows pandoc's rule, so prices such as "$5 and $10" stay text. A selection that starts or
+   ends inside a formula takes the whole formula.
+
+The PDF page and the formulas are checked by unit tests only; their look in the WebView2 window is
+the owner's check.
+
 ## Deviations from the spec
 
 The spec (`docs/superpowers/specs/2026-10-02-tamra-design.md`) §4 to §6 now describe what was

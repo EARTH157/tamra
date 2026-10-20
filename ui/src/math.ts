@@ -21,12 +21,11 @@ function mathAt(text: string, i: number): Found | null {
   if (text.startsWith("\\[", i)) return closed(2, "\\]", true);
   if (text.startsWith("\\(", i)) return closed(2, "\\)", false);
   if (text[i] !== "$") return null;
-  // Pandoc's rule for prices: a `$` before a digit opens nothing, and a `$` before a digit closes nothing.
-  if (/\d/.test(text[i + 1] ?? "")) return null;
   // `$...$` has to close on the same line.
   const lineEnd = text.indexOf("\n", i);
   const limit = lineEnd < 0 ? text.length : lineEnd;
   let at = text.indexOf("$", i + 1);
+  // Pandoc's rule for prices: a `$` followed by a digit closes nothing, so "$5 and $10" stays text.
   // shortcut: only a single backslash escapes a `$` (the `\\$` of an escaped backslash is not told apart);
   // upgrade if answers really carry that.
   while (at > 0 && at < limit && (text[at - 1] === "\\" || /\d/.test(text[at + 1] ?? ""))) {
