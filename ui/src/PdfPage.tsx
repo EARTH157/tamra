@@ -1,5 +1,5 @@
 import { TriangleAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchBlob } from "./api";
 import { viewerErrorText } from "./apiErrors";
 import { useT } from "./i18n";
@@ -60,6 +60,18 @@ export function pageScale(zoom: number, pixelRatio: number): number {
   return Math.round(Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale)) * 100) / 100;
 }
 
+/** The CSS width of a US Letter page at 100%, assumed for the first request of a fitted page. */
+const ASSUMED_PAGE_WIDTH = 612;
+
+/**
+ * The render scale that is sharp when a page is fitted to `boxWidth` CSS pixels. It is rounded up to
+ * a quarter, so the small difference between page sizes (A4 or Letter) does not ask for a second image.
+ */
+export function fitScale(boxWidth: number, pageWidth: number, pixelRatio: number): number {
+  if (boxWidth <= 0) return pageScale(100, pixelRatio);
+  return Math.ceil(pageScale((100 * boxWidth) / pageWidth, pixelRatio) * 4) / 4;
+}
+
 const percent = (fraction: number) => Number((fraction * 100).toFixed(3));
 
 /** A loaded image: the render scale and the zoom it was asked for, which together give its CSS size. */
@@ -75,6 +87,8 @@ type Props = {
   zoom: number;
   /** The passage to mark: boxes as fractions of the page, drawn only while that page is shown. */
   highlight: { page: number; rects: number[][] } | null;
+  /** Fit the page to the width of its container (the source panel) instead of sizing it by `zoom`. */
+  fit?: boolean;
 };
 
 /**
@@ -82,16 +96,33 @@ type Props = {
  * it. The boxes are fractions of the page, so they follow the zoom. While a new image loads the
  * previous one stays; every object URL is revoked once replaced and when the page goes away.
  */
-export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) {
+export default function PdfPage({ fileId, file, page, zoom, highlight, fit = false }: Props) {
   const t = useT();
-  const scale = pageScale(zoom, window.devicePixelRatio);
+  const [fullWidth, setFullWidth] = useState<number | null>(null);
+  // A fitted page is as wide as its container; the width is rounded up to 50 px, so dragging a panel
+  // edge does not ask for a new image at every pixel. null until measured; 0 when it has no layout.
+  const box = useRef<HTMLDivElement>(null);
+  const [boxWidth, setBoxWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const element = box.current;
+    if (!fit || !element) return;
+    const measure = () => setBoxWidth(Math.ceil(element.clientWidth / 50) * 50);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [fit]);
+  const scale = fit
+    ? fitScale(boxWidth ?? 0, fullWidth ?? ASSUMED_PAGE_WIDTH, window.devicePixelRatio)
+    : pageScale(zoom, window.devicePixelRatio);
+  const waiting = fit && boxWidth === null;
   const key = `${fileId}:${page}:${scale}`;
   const [shown, setShown] = useState<Shown | null>(null);
   const [failed, setFailed] = useState<{ key: string; error: Error } | null>(null);
   // The page's CSS width at 100%, known once an image has loaded: its pixels over its scale. The page
   // is shown at that times the zoom of the image on screen, so zooming changes the size, and until the
   // next image arrives the size stays the one of the image shown.
-  const [fullWidth, setFullWidth] = useState<number | null>(null);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   // The image that has loaded and been sized; the passage is scrolled to only then, as before that the
@@ -101,6 +132,7 @@ export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) 
   const firstBox = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (waiting) return;
     const controller = new AbortController();
     fetchPage(`/api/files/${fileId}/pages/${page}?scale=${scale}`, controller.signal)
       .then((blob) => {
@@ -115,7 +147,7 @@ export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) 
         if (!controller.signal.aborted) setFailed({ key, error });
       });
     return () => controller.abort();
-  }, [fileId, page, scale, key]);
+  }, [fileId, page, scale, key, waiting]);
 
   // A zoom that renders at the same scale (the cap) needs no new image, only a new size.
   useEffect(() => {
@@ -132,7 +164,11 @@ export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) 
 
   const marks = shown && highlight && highlight.page === shown.page ? highlight.rects : [];
   const markKey = shown ? `${shown.url}:${JSON.stringify(marks)}` : "";
-  const width = fullWidth !== null && shown ? Math.round(fullWidth * shown.zoom) / 100 : null;
+  const width = fit
+    ? "100%"
+    : fullWidth !== null && shown
+      ? `${Math.round(fullWidth * shown.zoom) / 100}px`
+      : null;
   const sized = !!shown && loadedUrl === shown.url;
   // Scroll to the first box when the marks appear on a loaded image (a new image or a new passage).
   useEffect(() => {
@@ -161,36 +197,38 @@ export default function PdfPage({ fileId, file, page, zoom, highlight }: Props) 
           {t("viewer.pageLoading")}
         </p>
       )}
-      {shown && (
-        <div
-          className="pdf-page"
-          style={{ width: width ?? undefined, visibility: width === null ? "hidden" : "visible" }}
-        >
-          <img
-            src={shown.url}
-            alt={t("viewer.pageAlt", { page: shown.page, file })}
-            onLoad={(event) => {
-              const natural = event.currentTarget.naturalWidth;
-              if (natural > 0) setFullWidth(natural / shown.scale);
-              setLoadedUrl(shown.url);
-            }}
-          />
-          {marks.map(([x0, y0, x1, y1], i) => (
-            <div
-              key={i}
-              ref={i === 0 ? firstBox : undefined}
-              className="pdf-hit"
-              aria-hidden="true"
-              style={{
-                left: `${percent(x0)}%`,
-                top: `${percent(y0)}%`,
-                width: `${percent(x1 - x0)}%`,
-                height: `${percent(y1 - y0)}%`,
+      <div ref={box} style={fit ? undefined : { display: "contents" }}>
+        {shown && (
+          <div
+            className="pdf-page"
+            style={{ width: width ?? undefined, visibility: width === null ? "hidden" : "visible" }}
+          >
+            <img
+              src={shown.url}
+              alt={t("viewer.pageAlt", { page: shown.page, file })}
+              onLoad={(event) => {
+                const natural = event.currentTarget.naturalWidth;
+                if (natural > 0) setFullWidth(natural / shown.scale);
+                setLoadedUrl(shown.url);
               }}
             />
-          ))}
-        </div>
-      )}
+            {marks.map(([x0, y0, x1, y1], i) => (
+              <div
+                key={i}
+                ref={i === 0 ? firstBox : undefined}
+                className="pdf-hit"
+                aria-hidden="true"
+                style={{
+                  left: `${percent(x0)}%`,
+                  top: `${percent(y0)}%`,
+                  width: `${percent(x1 - x0)}%`,
+                  height: `${percent(y1 - y0)}%`,
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </>
   );
 }

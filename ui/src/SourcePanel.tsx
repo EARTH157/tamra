@@ -4,6 +4,7 @@ import { TextWithParagraphs } from "./AnswerText";
 import { locateSource } from "./api";
 import { type TranslationKey, useT } from "./i18n";
 import { cpToUtf16 } from "./offsets";
+import PdfPage from "./PdfPage";
 import type { Locate, Match, Source, ViewerRequest } from "./types";
 
 /** The file name of a collection-relative path ("a/b/c.pdf" -> "c.pdf"). */
@@ -88,8 +89,9 @@ function whereLine(match: Match, located: Locate | null, t: Translate): string {
 
 /**
  * The right-hand panel. For a checked selection it compares the selected answer text with the
- * passage of the source it matches (frame 2b), with the passage highlighted in the snapshot text
- * the answer saw. Opened from a source card it shows that snapshot as it is.
+ * passage of the source it matches (frame 2b). Below, a PDF shows its real page with the passage
+ * marked; any other file, or a PDF that cannot be located, shows the snapshot text the answer saw
+ * with the passage highlighted. Opened from a source card it shows the same for the whole snapshot.
  */
 export default function SourcePanel({
   sources,
@@ -105,7 +107,13 @@ export default function SourcePanel({
   const t = useT();
   const matches = check?.status === "ready" ? check.matches : [];
   const match = matches[check?.index ?? 0] ?? null;
-  const located = useLocated(messageId, match);
+  // A selection locates its matched window; a source opened as it is locates the whole snapshot.
+  const target = match
+    ? { n: match.n, start: match.start, end: match.end }
+    : !check && source
+      ? { n: source.n, start: null, end: null }
+      : null;
+  const located = useLocated(messageId, target);
   // Without the answer's sources there is no snapshot to offset into: show none.
   const snapshot = match ? (sources.find((s) => s.n === match.n)?.text ?? null) : null;
 
@@ -114,6 +122,23 @@ export default function SourcePanel({
   const shownTitle = title ? (titled ? shownFile(titled, multiProject) : fileName(title)) : null;
   const subtitle = match ? whereLine(match, located, t) : source ? sourceLabel(source) : "";
   const fileId = match ? match.file_id : (source?.file_id ?? null);
+  // The real page, once located: a text file's snapshot is already its real text.
+  const preview =
+    located?.found && !located.changed && located.kind === "pdf" && located.page !== undefined
+      ? located
+      : null;
+  const previewPage =
+    preview?.page !== undefined && fileId !== null && fileId !== undefined && title ? (
+      <PdfPage
+        key={fileId}
+        fit
+        fileId={fileId}
+        file={fileName(title)}
+        page={preview.page}
+        zoom={100}
+        highlight={{ page: preview.page, rects: preview.rects ?? [] }}
+      />
+    ) : null;
   const canOpen = messageId !== null && fileId !== null && fileId !== undefined && !!title;
 
   function openViewer() {
@@ -246,7 +271,7 @@ export default function SourcePanel({
             )}
           </div>
         )}
-        {match && snapshot !== null && (
+        {match && (previewPage || snapshot !== null) && (
           <>
             {match.changed && (
               <div className="source-warning" role="status">
@@ -254,16 +279,20 @@ export default function SourcePanel({
                 <span>{t("source.changed")}</span>
               </div>
             )}
-            <div className="paper">
-              <Snapshot text={snapshot} start={match.start} end={match.end} />
-            </div>
+            {previewPage ?? (
+              <div className="paper">
+                <Snapshot text={snapshot ?? ""} start={match.start} end={match.end} />
+              </div>
+            )}
           </>
         )}
-        {!check && source && (
-          <div className="paper">
-            <TextWithParagraphs text={source.text} />
-          </div>
-        )}
+        {!check &&
+          source &&
+          (previewPage ?? (
+            <div className="paper">
+              <TextWithParagraphs text={source.text} />
+            </div>
+          ))}
       </div>
     </aside>
   );
@@ -292,20 +321,23 @@ function Snapshot({ text, start, end }: { text: string; start: number; end: numb
 }
 
 /**
- * Where the shown passage is in the current file; null until known, and when it cannot be told. A
+ * Where the shown passage (null offsets: the whole snapshot) is in the current file; null until known, and when it cannot be told. A
  * result is only used for the passage it was asked for, so a step to the next match never shows
  * the page of the previous one for a frame.
  */
-function useLocated(messageId: number | null, match: Match | null): Locate | null {
+function useLocated(
+  messageId: number | null,
+  target: { n: number; start: number | null; end: number | null } | null,
+): Locate | null {
   const [result, setResult] = useState<{ key: string; located: Locate } | null>(null);
-  const n = match?.n;
-  const start = match?.start;
-  const end = match?.end;
+  const n = target?.n;
+  const start = target?.start;
+  const end = target?.end;
   const key = `${messageId}:${n}:${start}:${end}`;
   useEffect(() => {
-    if (messageId === null || n === undefined || start === undefined || end === undefined) return;
+    if (messageId === null || n === undefined) return;
     let current = true;
-    locateSource(messageId, n, { start, end })
+    locateSource(messageId, n, start == null || end == null ? undefined : { start, end })
       .then((located) => {
         if (current) setResult({ key, located });
       })
