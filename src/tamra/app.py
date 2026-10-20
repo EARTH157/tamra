@@ -207,8 +207,9 @@ def _serve(dev: bool, dev_token: str) -> None:
 
 
 def _wait_in_dev_mode(port: int, token: str, thread: threading.Thread) -> None:
-    print(f"Tamra core on http://127.0.0.1:{port} (token: {token})")
-    print("Run `npm --prefix ui run dev` and open http://localhost:5173/#token=dev")
+    shown = token if token == DEV_TOKEN else "from TAMRA_DEV_TOKEN"  # never echo a chosen secret
+    print(f"Tamra core on http://127.0.0.1:{port} (token: {shown})")
+    print(f"Run `npm --prefix ui run dev` and open http://localhost:5173/#token={shown}")
     try:
         while thread.is_alive():
             thread.join(0.5)

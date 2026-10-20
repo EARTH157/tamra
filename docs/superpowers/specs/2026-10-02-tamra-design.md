@@ -106,8 +106,9 @@ demand from the current file.
 - **On startup:** reconcile each folder against `files`, one project after another. Compare
   size and mtime, hash the content only when they differ, and handle added, changed, and
   removed files. Any file left in `indexing` (crash) is re-queued. Symlinks and directory
-  junctions are skipped, and a folder that cannot be listed stops that project's
-  reconcile with an error rather than passing for empty (which would delete its files).
+  junctions are skipped. Folders or files that cannot be read are reported ("Could not read:
+  …"), the indexed files under them are kept, and the rest of the project is reconciled
+  normally; an unreadable folder never passes for empty (which would delete its files).
 - **Pipeline per file:** parse → chunk → embed → write. It runs on a single background
   worker for all projects: reconcile runs project by project, then the pending files are
   indexed oldest first across projects. Status is reported per project, and the UI shows
@@ -134,7 +135,8 @@ demand from the current file.
   home project; a chat with neither searches nothing. A project whose index was built with
   another embedding model (stale) is left out of the search and named in a notice; if every
   project in scope is stale, the question gets an error asking for a rebuild instead.
-  Each source shows the name of the project its file belongs to.
+  When an answer's sources come from more than one project, each source shows its project's
+  name.
 - **Query text:** the latest user question plus the previous user question, so follow-ups
   like "what about item 2?" stay on topic without an extra LLM call.
 - **Hybrid search:** dense KNN (`sqlite-vec`) and keyword (FTS5 trigram, BM25), each top

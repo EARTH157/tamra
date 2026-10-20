@@ -136,9 +136,10 @@ def test_each_project_reports_its_own_changes(tmp_path):
         (two / "y.md").write_text("y", encoding="utf-8")
         assert wait_for(lambda: calls)
         time.sleep(0.6)
-        assert calls == [2]
+        assert set(calls) == {2}  # a late "modified" event may report project two again
         (one / "x.md").write_text("x", encoding="utf-8")
-        assert wait_for(lambda: calls == [2, 1])
+        assert wait_for(lambda: 1 in calls)
+        assert set(calls) == {1, 2}
     finally:
         watcher.stop()
 

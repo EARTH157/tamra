@@ -53,7 +53,7 @@ changed.
   case.
 - **Search in.** A chat's **Search in** chip, next to the message box, shows which projects a
   question searches. A new chat searches the project it was started in. Tick more projects to
-  search them together; the answer's sources show the project each file belongs to. At least one
+  search them together; when the sources come from more than one project, each one shows its project. At least one
   project must stay ticked.
 - **Move to project.** In a chat's menu, **Move to project** changes where the chat is listed.
   If the old project was the only one it searched, the search follows the move.

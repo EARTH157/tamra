@@ -187,8 +187,15 @@ built. The places where the first version differed:
 - **Quality of the 0.5B dev model.** It often writes a plausible sentence that the documents do
   not support (the "10,000 baht" rent above, a "60 days" in the browser check). The retrieval and
   the source checks are what M4 tests; answer quality needs the real catalog models.
-- **Scope PUT dropped when switching chats mid-flight** (Task 6, nit 1). A scope change that is
-  still being saved when the user opens another chat can be lost.
+- **Scope change saved while switching chats** (Task 6, nit 1). If the user opens another chat
+  while a scope change is still being saved, the core applies it, but the chat list (and so the
+  chip of the chat that was left) keeps the old scope until the list is next reloaded.
+- **"Could not read" can vanish for a while.** The error is cleared at the start of every indexer
+  pass, so a pass that does not reconcile that project hides it until the next reconcile.
+- **A failure of the single-instance check exits silently.** If Windows refuses to create the
+  mutex (not "already running"), the windowed app exits before logging is set up.
+- **A chat created while the first project is being created** can stay without a project; moving
+  it to a project repairs it.
 - **Batching in `source_payloads`** (Task 3, minor 3): one store call per source file for the
   project label; fine for a handful of sources, to batch if the number grows. A second, minor
   nit from the Task 6 re-review is also deferred.
