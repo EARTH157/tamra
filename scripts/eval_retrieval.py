@@ -87,7 +87,7 @@ def run_eval(corpus_dir: Path, questions: list[dict], model_dir: Path = MODEL_DI
     with tempfile.TemporaryDirectory() as tmp:
         store = Store.open(Path(tmp) / "eval.db")
         try:
-            collection = store.replace_collection("eval", str(corpus_dir), MODEL_ID)
+            collection = store.create_collection("eval", str(corpus_dir), MODEL_ID)
             indexer = Indexer(store, lambda: embedder, lambda: spans, MODEL_ID)
             indexer.request_reconcile()
             indexer.process()
@@ -95,7 +95,7 @@ def run_eval(corpus_dir: Path, questions: list[dict], model_dir: Path = MODEL_DI
             results = []
             for q in questions:
                 vector = embedder.embed([q["question"]])[0]
-                hits = hybrid_search(store, collection.id, vector, fts_query(q["question"]))
+                hits = hybrid_search(store, [collection.id], vector, fts_query(q["question"]))
                 chunks = store.get_chunks([h.chunk_id for h in hits])
                 results.append(
                     {

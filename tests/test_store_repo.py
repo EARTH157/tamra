@@ -24,7 +24,7 @@ def store(tmp_path):
 
 @pytest.fixture
 def coll(store):
-    return store.replace_collection("Docs", "C:/docs", MODEL)
+    return store.create_collection("Docs", "C:/docs", MODEL)
 
 
 def index(store, file_id, texts, vectors, content_hash="h1", note=None):
@@ -41,10 +41,10 @@ def test_schema_is_created_once_and_versioned(tmp_path):
     path = tmp_path / "tamra.db"
     Store.open(path).close()
     again = Store.open(path)  # second open: migrate() has nothing to do
-    assert again.get_collection() is None
+    assert again.list_collections() == []
     again.close()
     conn = sqlite3.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     conn.close()
 
 
@@ -57,24 +57,15 @@ def test_a_newer_schema_is_refused(tmp_path):
         Store.open(path)
 
 
-def test_replace_collection_drops_the_old_index(store, coll):
-    file_id = store.add_file(coll.id, "a.md", 10, 1.0)
-    index(store, file_id, ["alpha beta"], [unit(1)])
-    new = store.replace_collection("Other", "D:/other", MODEL)
-    assert store.get_collection() == new
-    assert store.list_files(new.id) == []
-    assert store.search_keyword(new.id, '"alp"', 10) == []
-    assert store.search_dense(coll.id, unit(1), 10) == []
-
-
-def test_ids_are_not_reused_after_the_collection_is_replaced(store, coll):
+def test_ids_are_not_reused_after_the_collection_is_deleted(store, coll):
     old_file = store.add_file(coll.id, "a.md", 10, 1.0)
     index(store, old_file, ["alpha beta"], [unit(1)])
-    old_chunk = store.search_keyword(coll.id, '"alp"', 10)[0]
-    new = store.replace_collection("Other", "D:/other", MODEL)
+    old_chunk = store.search_keyword([coll.id], '"alp"', 10)[0]
+    store.delete_collection(coll.id)
+    new = store.create_collection("Other", "D:/other", MODEL)
     new_file = store.add_file(new.id, "b.md", 10, 1.0)
     index(store, new_file, ["gamma delta"], [unit(2)])
-    new_chunk = store.search_keyword(new.id, '"gam"', 10)[0]
+    new_chunk = store.search_keyword([new.id], '"gam"', 10)[0]
     assert new.id > coll.id
     assert new_file > old_file
     assert new_chunk > old_chunk
@@ -112,10 +103,10 @@ def test_replace_file_chunks_indexes_text_and_vectors(store, coll):
     record = store.list_files(coll.id)[0]
     assert (record.status, record.content_hash, record.error) == ("indexed", "h1", "n")
     assert record.indexed_at
-    dense = store.search_dense(coll.id, unit(1), 5)
+    dense = store.search_dense([coll.id], unit(1), 5)
     assert len(dense) == 2
     assert dense[0][1] == pytest.approx(1.0)
-    hits = store.get_chunks(store.search_keyword(coll.id, '"lea" OR "ase"', 5))
+    hits = store.get_chunks(store.search_keyword([coll.id], '"lea" OR "ase"', 5))
     assert hits[0].text == "The lease term is three years"
     assert hits[0].rel_path == "a.md"
     assert hits[0].location == {"kind": "text", "line_start": 1, "line_end": 1}
@@ -126,17 +117,17 @@ def test_reindexing_a_file_replaces_its_chunks(store, coll):
     file_id = store.add_file(coll.id, "a.md", 10, 1.0)
     index(store, file_id, ["old words here"], [unit(1)])
     index(store, file_id, ["new words now"], [unit(2)], content_hash="h2")
-    assert store.search_keyword(coll.id, '"old"', 5) == []
-    assert len(store.search_keyword(coll.id, '"new"', 5)) == 1
-    assert len(store.search_dense(coll.id, unit(1), 5)) == 1
+    assert store.search_keyword([coll.id], '"old"', 5) == []
+    assert len(store.search_keyword([coll.id], '"new"', 5)) == 1
+    assert len(store.search_dense([coll.id], unit(1), 5)) == 1
 
 
 def test_deleting_a_file_removes_chunks_keyword_entries_and_vectors(store, coll):
     file_id = store.add_file(coll.id, "a.md", 10, 1.0)
     index(store, file_id, ["lease"], [unit(1)])
     store.delete_file(file_id)
-    assert store.search_keyword(coll.id, '"lea"', 5) == []
-    assert store.search_dense(coll.id, unit(1), 5) == []
+    assert store.search_keyword([coll.id], '"lea"', 5) == []
+    assert store.search_dense([coll.id], unit(1), 5) == []
 
 
 def test_replace_file_chunks_for_a_removed_file_raises_lookup_error(store, coll):
@@ -149,7 +140,7 @@ def test_replace_file_chunks_for_a_removed_file_raises_lookup_error(store, coll)
 def test_get_chunks_keeps_the_requested_order(store, coll):
     file_id = store.add_file(coll.id, "a.md", 10, 1.0)
     index(store, file_id, ["one", "two", "three"], [unit(1), unit(2), unit(3)])
-    ids = [chunk_id for chunk_id, _ in store.search_dense(coll.id, unit(1), 3)]
+    ids = [chunk_id for chunk_id, _ in store.search_dense([coll.id], unit(1), 3)]
     forward = [c.text for c in store.get_chunks(ids)]
     backward = [c.text for c in store.get_chunks(ids[::-1])]
     assert backward == forward[::-1]
@@ -162,8 +153,8 @@ def test_reset_index_marks_everything_pending_for_the_new_model(store, coll):
     store.reset_index(coll.id, "model-2")
     record = store.list_files(coll.id)[0]
     assert (record.status, record.content_hash, record.indexed_at) == ("pending", None, None)
-    assert store.get_collection().embedding_model_id == "model-2"
-    assert store.search_dense(coll.id, unit(1), 5) == []
+    assert store.list_collections()[0].embedding_model_id == "model-2"
+    assert store.search_dense([coll.id], unit(1), 5) == []
 
 
 def test_problem_files_lists_errors_and_notes(store, coll):
@@ -198,12 +189,12 @@ def test_failed_or_skipped_files_leave_the_index(store, coll):
     file_id = store.add_file(coll.id, "a.md", 10, 1.0)
     index(store, file_id, ["lease terms"], [unit(1)])
     store.set_file_status(file_id, "pending")
-    assert store.search_dense(coll.id, unit(1), 5)  # pending keeps the old chunks searchable
+    assert store.search_dense([coll.id], unit(1), 5)  # pending keeps the old chunks searchable
     store.set_file_status(file_id, "skipped", "no text found")
     record = store.list_files(coll.id)[0]
     assert (record.status, record.content_hash, record.indexed_at) == ("skipped", None, None)
-    assert store.search_dense(coll.id, unit(1), 5) == []
-    assert store.search_keyword(coll.id, '"lea"', 5) == []
+    assert store.search_dense([coll.id], unit(1), 5) == []
+    assert store.search_keyword([coll.id], '"lea"', 5) == []
 
 
 def test_get_file_returns_one_record_or_none(store, coll):

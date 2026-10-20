@@ -3,7 +3,7 @@
 import logging
 import re
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -122,16 +122,34 @@ def location_label(location: dict) -> str:
     return ""
 
 
-def source_payload(source: SourceRecord) -> dict:
-    """What the UI shows for a source."""
+def source_payload(source: SourceRecord, project: str | None = None) -> dict:
+    """What the UI shows for a source. `project` is the name of the project its file belongs to
+    (None once the file left the index)."""
     return {
         "n": source.n,
+        "project": project,
         "file_id": source.file_id,  # None once the file left the index
         "file": source.rel_path,
         "label": location_label(source.location),
         "text": source.text,
         "location": source.location,
     }
+
+
+def source_payloads(store: Store, sources: Sequence[SourceRecord]) -> list[dict]:
+    """Payloads for sources, each labelled with its file's current project name."""
+    names: dict[int, str | None] = {}
+    payloads = []
+    for source in sources:
+        project = None
+        if source.file_id is not None:
+            if source.file_id not in names:
+                file = store.get_file(source.file_id)
+                collection = store.get_collection(file.collection_id) if file else None
+                names[source.file_id] = collection.name if collection else None
+            project = names[source.file_id]
+        payloads.append(source_payload(source, project))
+    return payloads
 
 
 def build_messages(
@@ -240,21 +258,31 @@ class AnswerService:
                     _run(action)
 
     def _ask(self, chat_id: int, question: str, mode: str, think: bool) -> Iterator[dict]:
-        collection = self._store.get_collection()
-        if collection is None:
+        collections = self._store.list_collections()
+        if not collections:
             yield {"type": "error", "message": "Choose a folder of documents first."}
             return
-        if collection.embedding_model_id != self._model_id:
-            yield {
-                "type": "error",
-                "message": "The index was built with a different embedding model. "
-                "Rebuild the index.",
-            }
-            return
-        if self._store.get_chat(chat_id) is None:
+        chat = self._store.get_chat(chat_id)
+        if chat is None:
             yield {"type": "error", "message": f"Chat {chat_id} not found."}
             return
-        if self._store.status_counts(collection.id)["indexed"] == 0:
+        # The chat's scope; an empty one falls back to its home project. A chat with neither
+        # searches nothing: it never reaches every project implicitly.
+        wanted = chat.scope or ([chat.collection_id] if chat.collection_id is not None else [])
+        in_scope = [c for c in collections if c.id in wanted]
+        # A project indexed with another embedding model is never searched.
+        searched = [c for c in in_scope if c.embedding_model_id == self._model_id]
+        skipped = [c.name for c in in_scope if c not in searched]
+        if in_scope and not searched:
+            yield {
+                "type": "error",
+                "message": f"The index of {', '.join(skipped)} was built with a different "
+                "embedding model. Rebuild the index.",
+            }
+            return
+        if not any(self._store.status_counts(c.id)["indexed"] for c in searched):
+            if skipped:  # say why those projects were left out, not only that nothing is ready
+                yield {"type": "notice", "code": "stale_projects", "names": skipped}
             yield {
                 "type": "error",
                 "message": "No documents are indexed yet. Wait for indexing to finish, "
@@ -271,7 +299,9 @@ class AnswerService:
         except Exception as e:  # the model files are missing or cannot be loaded
             yield {"type": "error", "message": f"Embedding model unavailable: {e}"}
             return
-        hits = hybrid_search(self._store, collection.id, vector, fts_query(query))
+        hits = hybrid_search(self._store, [c.id for c in searched], vector, fts_query(query))
+        if skipped:
+            yield {"type": "notice", "code": "stale_projects", "names": skipped}
         if best_similarity(hits) < self._settings.min_similarity:
             text = NOT_FOUND[language]
             message_id = self._store.add_assistant_message(
@@ -287,7 +317,7 @@ class AnswerService:
             SourceRecord(n, c.id, c.file_id, c.rel_path, c.text, c.location, c.file_hash)
             for n, c in enumerate(chunks, start=1)
         ]
-        yield {"type": "sources", "sources": [source_payload(s) for s in sources]}
+        yield {"type": "sources", "sources": source_payloads(self._store, sources)}
         if mode == "search":  # passages only: no model is involved, so none is recorded
             message_id = self._store.add_assistant_message(
                 chat_id, "", provider=None, model=None, sources=sources

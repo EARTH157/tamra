@@ -22,7 +22,7 @@ def _check_sqlite() -> dict:
     store = Store.open(":memory:")
     try:
         caps = store.capabilities()
-        collection = store.replace_collection("selfcheck", ".", "selfcheck")
+        collection = store.create_collection("selfcheck", ".", "selfcheck")
         file_id = store.add_file(collection.id, "probe.txt", 0, 0.0)
         vector = np.zeros(1024, dtype=np.float32)
         vector[0] = 1.0
@@ -34,8 +34,8 @@ def _check_sqlite() -> dict:
             content_hash="-",
             note=None,
         )
-        dense = store.search_dense(collection.id, vector, 1)
-        keyword = store.search_keyword(collection.id, '"pro"', 1)
+        dense = store.search_dense([collection.id], vector, 1)
+        keyword = store.search_keyword([collection.id], '"pro"', 1)
     finally:
         store.close()
     ok = bool(caps["fts5_trigram"]) and len(dense) == 1 and keyword == [dense[0][0]]
@@ -108,7 +108,7 @@ def _check_embedding(model_dir: Path) -> dict:
     docs = ["แมวกำลังนอนหลับอยู่บนโซฟา", "汽车停在路边"]
     store = Store.open(":memory:")
     try:
-        collection = store.replace_collection("selfcheck", ".", "selfcheck")
+        collection = store.create_collection("selfcheck", ".", "selfcheck")
         file_id = store.add_file(collection.id, "probe.txt", 0, 0.0)
         chunks = [
             ChunkInput(text, {"kind": "text", "line_start": i + 1, "line_end": i + 1})
@@ -118,7 +118,7 @@ def _check_embedding(model_dir: Path) -> dict:
             file_id, chunks, embedder.embed(docs), content_hash="-", note=None
         )
         query = embedder.embed(["A cat sleeping on a couch"])[0]
-        best = store.get_chunks([store.search_dense(collection.id, query, 1)[0][0]])[0]
+        best = store.get_chunks([store.search_dense([collection.id], query, 1)[0][0]])[0]
     finally:
         store.close()
 

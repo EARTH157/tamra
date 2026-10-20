@@ -651,3 +651,28 @@ def test_a_docx_text_view_is_capped_too(tmp_path, monkeypatch):
     view = text_view(parse_file(path))
     assert [p["index"] for p in view["paragraphs"]] == [0, 1, 2, 3, 4]
     assert view["truncated"] is True
+
+
+def test_a_docx_table_row_is_located_and_shown_at_its_index(tmp_path):
+    path = make_docx(
+        tmp_path / "t.docx",
+        [
+            (0, "The fee schedule follows below."),
+            (0, [["Parking", "500 baht", "monthly"], ["Storage", "200 baht", "yearly"]]),
+            (0, "Payment is due on the first day."),
+        ],
+    )
+    doc = parse_file(path)
+    passage = "Storage | 200 baht | yearly\n\nPayment is due on the first day."
+    found = locate(doc, passage)
+    assert (found.kind, found.start, found.end) == ("docx", 2, 4)
+    shown = text_view(doc)["paragraphs"]
+    assert [(p["index"], p["text"]) for p in shown] == [
+        (0, "The fee schedule follows below."),
+        (1, "Parking | 500 baht | monthly"),
+        (2, "Storage | 200 baht | yearly"),
+        (3, "Payment is due on the first day."),
+    ]
+    for c in chunk_document(doc, fake_spans, max_tokens=12, overlap=2):
+        found = locate(doc, c.text, c.location)
+        assert found.start == c.location["paragraph_start"], c.text

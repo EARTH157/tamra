@@ -9,6 +9,7 @@ from tamra.answer import (
     cited_numbers,
     detect_language,
     location_label,
+    source_payloads,
 )
 from tamra.llm.base import Chunk, LLMError, ProviderError
 from tamra.llm.llama_server import LlamaServerError
@@ -18,7 +19,7 @@ from tamra.store import ChunkInput, SourceRecord, Store
 @pytest.fixture
 def env(tmp_path):
     store = Store.open(tmp_path / "t.db")
-    collection = store.replace_collection("Docs", "C:/docs", "m")
+    collection = store.create_collection("Docs", "C:/docs", "m")
     embedder = FakeEmbedder()
     texts = ["The lease term is three years", "Parking costs fifty baht"]
     file_id = store.add_file(collection.id, "lease.md", 1, 1.0)
@@ -40,7 +41,7 @@ def env(tmp_path):
             settings=settings or AnswerSettings(min_similarity=0.3),
         )
 
-    yield store, make, store.create_chat()
+    yield store, make, store.create_chat(collection_id=collection.id)
     store.close()
 
 
@@ -157,9 +158,10 @@ def test_problems_before_answering_are_single_error_events(tmp_path):
     assert list(service.ask(chat.id, "q")) == [
         {"type": "error", "message": "Choose a folder of documents first."}
     ]
-    store.replace_collection("Docs", "C:/docs", "other-model")
-    assert list(service.ask(chat.id, "q"))[0]["message"].startswith("The index was built with")
-    store.replace_collection("Docs", "C:/docs", "m")
+    collection = store.create_collection("Docs", "C:/docs", "other-model")
+    store.set_chat_scope(chat.id, [collection.id])
+    assert list(service.ask(chat.id, "q"))[0]["message"].startswith("The index of ")
+    store.reset_index(collection.id, "m")
     assert list(service.ask(999, "q")) == [{"type": "error", "message": "Chat 999 not found."}]
     store.close()
 
@@ -167,9 +169,9 @@ def test_problems_before_answering_are_single_error_events(tmp_path):
 def test_asking_before_anything_is_indexed_saves_nothing(tmp_path):
     store = Store.open(tmp_path / "t.db")
     service = AnswerService(store, lambda t: None, lambda: Route("local", FakeLLM), model_id="m")
-    store.replace_collection("Docs", "C:/docs", "m")
-    store.add_file(store.get_collection().id, "a.md", 1, 1.0)  # pending, not indexed
-    chat = store.create_chat()
+    collection = store.create_collection("Docs", "C:/docs", "m")
+    store.add_file(collection.id, "a.md", 1, 1.0)  # pending, not indexed
+    chat = store.create_chat(collection_id=collection.id)
     assert list(service.ask(chat.id, "q")) == [
         {
             "type": "error",
@@ -374,7 +376,7 @@ def test_an_api_answer_is_saved_with_its_provider_and_model(env):
 def many(tmp_path):
     """Ten passages that all match "lease term", to show how many the answer takes."""
     store = Store.open(tmp_path / "t.db")
-    collection = store.replace_collection("Docs", "C:/docs", "m")
+    collection = store.create_collection("Docs", "C:/docs", "m")
     embedder = FakeEmbedder()
     texts = [f"lease term clause {word}" for word in "abcdefghij"]
     file_id = store.add_file(collection.id, "lease.md", 1, 1.0)
@@ -393,7 +395,7 @@ def many(tmp_path):
             settings=AnswerSettings(min_similarity=0.3),
         )
 
-    yield store, make, store.create_chat()
+    yield store, make, store.create_chat(collection_id=collection.id)
     store.close()
 
 
@@ -493,3 +495,145 @@ def test_an_answer_with_only_thinking_is_reported_not_silent(env):
         "reason": "other",
     }
     assert [m.role for m in store.list_messages(chat.id)] == ["user"]
+
+
+# Answers over a chat's scope (spec section 6, M4)
+
+
+@pytest.fixture
+def two(tmp_path):
+    """Two projects, A about the lease and B about parking, and a service over them."""
+    store = Store.open(tmp_path / "t.db")
+    embedder = FakeEmbedder()
+    projects = {}
+    for name, text in (("A", "The lease term is three years"), ("B", "Parking costs fifty baht")):
+        collection = store.create_collection(name, f"C:/{name}", "m")
+        file_id = store.add_file(collection.id, f"{name.lower()}.md", 1, 1.0)
+        chunk = ChunkInput(text, {"kind": "text", "line_start": 1, "line_end": 1})
+        store.replace_file_chunks(
+            file_id, [chunk], embedder.embed([text]), content_hash="h", note=None
+        )
+        projects[name] = collection
+
+    def make(llm):
+        return AnswerService(
+            store,
+            lambda text: embedder.embed([text])[0],
+            lambda: Route("local", lambda: llm),
+            model_id="m",
+            settings=AnswerSettings(min_similarity=0.3),
+        )
+
+    yield store, make, projects
+    store.close()
+
+
+def _sources(events):
+    return next(e["sources"] for e in events if e["type"] == "sources")
+
+
+def test_a_chat_scoped_to_one_project_finds_only_its_passages(two):
+    store, make, projects = two
+    chat = store.create_chat(collection_id=projects["A"].id)
+    events = list(make(FakeLLM()).ask(chat.id, "lease term parking baht"))
+    assert [(s["file"], s["project"]) for s in _sources(events)] == [("a.md", "A")]
+    assert not [e for e in events if e["type"] == "notice"]
+
+
+def test_a_chat_scoped_to_two_projects_cites_both(two):
+    store, make, projects = two
+    chat = store.create_chat(collection_id=projects["A"].id)
+    store.set_chat_scope(chat.id, [projects["A"].id, projects["B"].id])
+    llm = FakeLLM(("The lease is three years [1]. Parking is fifty baht [2].",))
+    events = list(make(llm).ask(chat.id, "lease term and parking baht"))
+    assert {(s["file"], s["project"]) for s in _sources(events)} == {("a.md", "A"), ("b.md", "B")}
+    saved = store.list_messages(chat.id)[1]
+    assert cited_numbers(saved.content, len(saved.sources)) == [1, 2]
+    assert {s.rel_path for s in saved.sources} == {"a.md", "b.md"}
+
+
+def test_the_not_found_gate_uses_the_best_similarity_across_the_scope(two):
+    store, make, projects = two
+    chat = store.create_chat(collection_id=projects["A"].id)
+    store.set_chat_scope(chat.id, [projects["A"].id, projects["B"].id])
+    llm = FakeLLM()
+    events = list(make(llm).ask(chat.id, "parking baht"))  # only B matches
+    assert _sources(events)[0]["file"] == "b.md"
+    assert len(llm.calls) == 1
+    other = store.create_chat(collection_id=projects["A"].id)
+    store.set_chat_scope(other.id, [projects["A"].id, projects["B"].id])
+    events = list(make(llm).ask(other.id, "ใครเป็นผู้จัดการฝ่ายขาย"))
+    assert _sources(events) == []
+    assert len(llm.calls) == 1
+
+
+def test_a_stale_project_is_skipped_with_a_notice_before_the_sources(two):
+    store, make, projects = two
+    store.reset_index(projects["B"].id, "other-model")
+    chat = store.create_chat(collection_id=projects["A"].id)
+    store.set_chat_scope(chat.id, [projects["A"].id, projects["B"].id])
+    events = list(make(FakeLLM()).ask(chat.id, "lease term parking baht"))
+    assert events[0] == {"type": "notice", "code": "stale_projects", "names": ["B"]}
+    assert events[1]["type"] == "sources"
+    assert [s["project"] for s in events[1]["sources"]] == ["A"]
+    assert events[-1]["type"] == "done"
+
+
+def test_a_scope_of_only_stale_projects_asks_for_a_rebuild(two):
+    store, make, projects = two
+    store.reset_index(projects["A"].id, "other-model")
+    chat = store.create_chat(collection_id=projects["A"].id)
+    events = list(make(FakeLLM()).ask(chat.id, "lease term"))
+    assert [e["type"] for e in events] == ["error"]
+    assert events[0]["message"].startswith("The index of A was built with")
+    assert store.list_messages(chat.id) == []
+
+
+def test_a_stale_project_is_named_even_when_the_rest_is_not_indexed_yet(two):
+    store, make, projects = two
+    store.reset_index(projects["A"].id, "other-model")
+    store.reset_index(projects["B"].id, projects["B"].embedding_model_id)  # pending again
+    chat = store.create_chat(collection_id=projects["A"].id)
+    store.set_chat_scope(chat.id, [projects["A"].id, projects["B"].id])
+    events = list(make(FakeLLM()).ask(chat.id, "lease term"))
+    assert events[0] == {"type": "notice", "code": "stale_projects", "names": ["A"]}
+    assert events[1]["type"] == "error" and "No documents are indexed yet" in events[1]["message"]
+
+
+def test_an_empty_scope_falls_back_to_the_home_project(two):
+    store, make, projects = two
+    chat = store.create_chat(collection_id=projects["B"].id)
+    with store._lock:
+        store._conn.execute("DELETE FROM chat_collections WHERE chat_id = ?", (chat.id,))
+    assert store.get_chat(chat.id).scope == []
+    events = list(make(FakeLLM()).ask(chat.id, "lease term parking baht"))
+    assert [(s["file"], s["project"]) for s in _sources(events)] == [("b.md", "B")]
+
+
+def test_a_homeless_chat_with_an_empty_scope_searches_nothing(two):
+    store, make, projects = two
+    chat = store.create_chat()
+    events = list(make(FakeLLM()).ask(chat.id, "lease term"))
+    assert [e["type"] for e in events] == ["error"]
+    assert events[0]["message"].startswith("No documents are indexed yet")
+    assert store.list_messages(chat.id) == []
+
+
+def test_a_scope_with_nothing_indexed_gives_the_not_indexed_error(two):
+    store, make, projects = two
+    empty = store.create_collection("C", "C:/C", "m")
+    store.add_file(empty.id, "c.md", 1, 1.0)  # pending
+    chat = store.create_chat(collection_id=empty.id)
+    events = list(make(FakeLLM()).ask(chat.id, "lease term"))
+    assert events[0]["message"].startswith("No documents are indexed yet")
+
+
+def test_saved_sources_carry_the_project_name_or_none_once_the_file_is_gone(two):
+    store, make, projects = two
+    chat = store.create_chat(collection_id=projects["A"].id)
+    list(make(FakeLLM()).ask(chat.id, "lease term"))
+    saved = store.list_messages(chat.id)[1]
+    assert [p["project"] for p in source_payloads(store, saved.sources)] == ["A"]
+    store.delete_file(saved.sources[0].file_id)
+    saved = store.list_messages(chat.id)[1]
+    assert [p["project"] for p in source_payloads(store, saved.sources)] == [None]

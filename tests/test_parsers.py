@@ -143,3 +143,48 @@ def test_location_shapes():
     }
     text = Unit("one\ntwo\nthree", line=10)
     assert location("text", text, 4, text, 13) == {"kind": "text", "line_start": 11, "line_end": 12}
+
+
+def test_docx_table_rows_become_units_in_document_order(tmp_path):
+    path = make_docx(
+        tmp_path / "t.docx",
+        [
+            (1, "Fees"),
+            (0, "Before the table."),
+            (0, [["Item", "Price", "Note"], ["Rent", "", "monthly"]]),
+            (0, "After the table."),
+        ],
+    )
+    doc = parse_file(path)
+    assert [(u.text, u.paragraph, u.heading_path, u.heading_level) for u in doc.units] == [
+        ("Fees", 0, ("Fees",), 1),
+        ("Before the table.", 1, ("Fees",), 0),
+        ("Item | Price | Note", 2, ("Fees",), 0),
+        ("Rent | monthly", 3, ("Fees",), 0),
+        ("After the table.", 4, ("Fees",), 0),
+    ]
+
+
+def test_docx_merged_cells_are_read_once_and_nested_tables_follow_their_row(tmp_path):
+    import docx
+
+    document = docx.Document()
+    title = document.add_table(rows=1, cols=3)
+    title.cell(0, 0).merge(title.cell(0, 2)).text = "Title"  # horizontal merge
+    table = document.add_table(rows=3, cols=2)
+    table.cell(0, 0).merge(table.cell(1, 0)).text = "Group"  # vertical merge
+    table.cell(0, 1).text = "one"
+    table.cell(1, 1).text = "two"
+    table.cell(2, 0).text = "Outer"
+    inner = table.cell(2, 1).add_table(rows=1, cols=2)
+    inner.cell(0, 0).text = "nested"
+    inner.cell(0, 1).text = "row"
+    path = tmp_path / "m.docx"
+    document.save(str(path))
+    assert [(u.text, u.paragraph) for u in parse_file(path).units] == [
+        ("Title", 0),
+        ("Group | one", 1),
+        ("two", 2),
+        ("Outer", 3),
+        ("nested | row", 4),
+    ]

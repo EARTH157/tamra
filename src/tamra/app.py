@@ -1,6 +1,7 @@
 """Desktop entry: start Core and the API on 127.0.0.1, then show the window (or dev mode)."""
 
 import ctypes
+import hashlib
 import logging
 import os
 import secrets
@@ -22,6 +23,9 @@ log = logging.getLogger(__name__)
 
 DEV_PORT = 8765
 DEV_TOKEN = "dev"
+ERROR_ALREADY_EXISTS = 183
+
+_instance_mutex = None  # held for the process lifetime: Windows frees it when the process exits
 
 
 def build_core() -> Core:
@@ -101,10 +105,56 @@ def _wait_until_up(
     raise RuntimeError("Tamra core did not start")
 
 
-def run(dev: bool = False) -> None:
+def _kernel32():
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    return kernel32
+
+
+def _close_handle(handle) -> None:
+    _kernel32().CloseHandle(handle)
+
+
+def _single_instance(data_dir_: Path):
+    """Take the named mutex for this data folder; None when another Tamra already holds it.
+
+    The name carries a hash of the folder, so a run with its own TAMRA_DATA_DIR never collides.
+    """
+    digest = hashlib.sha1(str(data_dir_.resolve()).lower().encode("utf-8")).hexdigest()[:12]
+    ctypes.set_last_error(0)
+    handle = _kernel32().CreateMutexW(None, 0, f"Local\\Tamra-{digest}")
+    error = ctypes.get_last_error()
+    if not handle:
+        raise ctypes.WinError(error)
+    if error == ERROR_ALREADY_EXISTS:
+        _close_handle(handle)
+        return None
+    return handle
+
+
+def run(dev: bool = False, token: str | None = None) -> None:
+    """Start Tamra. In dev mode the API listens on DEV_PORT with `token` (default "dev")."""
+    global _instance_mutex
+    _instance_mutex = _single_instance(data_dir())
+    if _instance_mutex is None:
+        if dev:
+            raise RuntimeError("Tamra is already running")
+        _alert("Tamra is already running.")
+        return
+    try:
+        _serve(dev, token or DEV_TOKEN)
+    finally:
+        _close_handle(_instance_mutex)
+        _instance_mutex = None
+
+
+def _serve(dev: bool, dev_token: str) -> None:
     truststore.inject_into_ssl()  # downloads and cloud calls trust the Windows certificate store
     setup_logging(data_dir() / "logs", console=dev)
-    port, token = (DEV_PORT, DEV_TOKEN) if dev else (free_port(), secrets.token_urlsafe(32))
+    port, token = (DEV_PORT, dev_token) if dev else (free_port(), secrets.token_urlsafe(32))
     ui_dir = None if dev else resource_dir() / "ui" / "dist"
     picker = None if dev else FolderPicker()
     file_picker = None if dev else FilePicker()
@@ -157,8 +207,9 @@ def run(dev: bool = False) -> None:
 
 
 def _wait_in_dev_mode(port: int, token: str, thread: threading.Thread) -> None:
-    print(f"Tamra core on http://127.0.0.1:{port} (token: {token})")
-    print("Run `npm --prefix ui run dev` and open http://localhost:5173/#token=dev")
+    shown = token if token == DEV_TOKEN else "from TAMRA_DEV_TOKEN"  # never echo a chosen secret
+    print(f"Tamra core on http://127.0.0.1:{port} (token: {shown})")
+    print(f"Run `npm --prefix ui run dev` and open http://localhost:5173/#token={shown}")
     try:
         while thread.is_alive():
             thread.join(0.5)

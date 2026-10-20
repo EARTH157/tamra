@@ -42,9 +42,9 @@ def events_of(response):
 def wait_for_indexed(client, count, timeout=10.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        index = client.get("/api/collection", headers=AUTH).json()["index"]
-        if index and index["counts"]["indexed"] == count:
-            return index
+        projects = client.get("/api/projects", headers=AUTH).json()["projects"]
+        if projects and projects[0]["index"]["counts"]["indexed"] == count:
+            return projects[0]["index"]
         time.sleep(0.05)
     raise AssertionError("indexing did not finish")
 
@@ -54,19 +54,19 @@ def test_choose_a_folder_ask_and_review_the_chat(api):
     docs = tmp_path / "docs"
     docs.mkdir()
     (docs / "lease.md").write_text("The lease term is three years.", encoding="utf-8")
-    empty = client.get("/api/collection", headers=AUTH).json()
-    assert empty == {"collection": None, "index": None}
-    put = client.put(
-        "/api/collection", headers=AUTH, json={"name": "Docs", "folder_path": str(docs)}
+    assert client.get("/api/projects", headers=AUTH).json() == {"projects": []}
+    created = client.post(
+        "/api/projects", headers=AUTH, json={"name": "Docs", "folder_path": str(docs)}
     )
-    assert put.status_code == 200
-    assert put.json()["collection"]["name"] == "Docs"
+    assert created.status_code == 201
+    assert created.json()["name"] == "Docs"
     index = wait_for_indexed(client, 1)
     assert index["stale"] is False
 
     chat = client.post("/api/chats", headers=AUTH)
     assert chat.status_code == 201
     chat_id = chat.json()["id"]
+    assert chat.json()["project_id"] == created.json()["id"]
     with client.stream(
         "POST",
         f"/api/chats/{chat_id}/messages",
@@ -90,22 +90,18 @@ def test_choose_a_folder_ask_and_review_the_chat(api):
     assert client.delete(f"/api/chats/{chat_id}", headers=AUTH).status_code == 404
 
 
-def test_a_bad_folder_is_a_400(api):
-    client, tmp_path = api
-    response = client.put(
-        "/api/collection", headers=AUTH, json={"name": "x", "folder_path": str(tmp_path / "nope")}
-    )
-    assert response.status_code == 400
-    assert "Folder not found" in response.json()["detail"]
-
-
 def test_rebuild_and_cancel(api):
     client, tmp_path = api
-    assert client.post("/api/collection/rebuild", headers=AUTH).status_code == 404
+    assert client.post("/api/projects/1/rebuild", headers=AUTH).status_code == 404
     docs = tmp_path / "docs"
     docs.mkdir()
-    client.put("/api/collection", headers=AUTH, json={"name": "d", "folder_path": str(docs)})
-    assert client.post("/api/collection/rebuild", headers=AUTH).status_code == 202
+    project = client.post(
+        "/api/projects", headers=AUTH, json={"name": "d", "folder_path": str(docs)}
+    )
+    assert (
+        client.post(f"/api/projects/{project.json()['id']}/rebuild", headers=AUTH).status_code
+        == 202
+    )
     assert client.post("/api/answer/cancel", headers=AUTH).status_code == 204
 
 

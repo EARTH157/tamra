@@ -22,6 +22,17 @@ export function sourceLabel(source: Source): string {
   return [source.label, folderOf(source.file)].filter(Boolean).join(" · ");
 }
 
+/** True when an answer's sources come from more than one project: then each names its project. */
+export function spansProjects(sources: Source[]): boolean {
+  return new Set(sources.map((source) => source.project).filter(Boolean)).size > 1;
+}
+
+/** The name shown for a source's file: "HR Documents · lease.pdf" when the project is named. */
+export function shownFile(source: Source, withProject: boolean): string {
+  const name = fileName(source.file);
+  return withProject && source.project ? `${source.project} · ${name}` : name;
+}
+
 /** A selection of an answer being checked against that answer's sources. */
 export type Check = {
   /** A new number for every request: a panel state that belongs to one request is keyed by it. */
@@ -45,6 +56,8 @@ type Props = {
   sources: Source[];
   /** The answer's message id; null while the answer is still being streamed. */
   messageId: number | null;
+  /** The sources span several projects, so each file is shown with its project. */
+  multiProject?: boolean;
   /** The selection being checked, or the source opened as it is (a source card, a passage). */
   check: Check | null;
   source: Source | null;
@@ -81,6 +94,7 @@ function whereLine(match: Match, located: Locate | null, t: Translate): string {
 export default function SourcePanel({
   sources,
   messageId,
+  multiProject = false,
   check,
   source,
   onIndexChange,
@@ -96,6 +110,8 @@ export default function SourcePanel({
   const snapshot = match ? (sources.find((s) => s.n === match.n)?.text ?? null) : null;
 
   const title = match ? match.file : (source?.file ?? null);
+  const titled = match ? sources.find((s) => s.n === match.n) : source;
+  const shownTitle = title ? (titled ? shownFile(titled, multiProject) : fileName(title)) : null;
   const subtitle = match ? whereLine(match, located, t) : source ? sourceLabel(source) : "";
   const fileId = match ? match.file_id : (source?.file_id ?? null);
   const canOpen = messageId !== null && fileId !== null && fileId !== undefined && !!title;
@@ -130,7 +146,7 @@ export default function SourcePanel({
       <header>
         <FileText size={20} />
         <div className="source-title">
-          <strong title={title ?? undefined}>{title ? fileName(title) : t("chat.sourcePanel")}</strong>
+          <strong title={title ?? undefined}>{shownTitle ?? t("chat.sourcePanel")}</strong>
           {subtitle && <span>{subtitle}</span>}
         </div>
         {canOpen && (
@@ -218,7 +234,7 @@ export default function SourcePanel({
                         <span className="source-num">{s.n}</span>
                         <span className="source-meta">
                           <span className="source-file" title={s.file}>
-                            {fileName(s.file)}
+                            {shownFile(s, multiProject)}
                           </span>
                           {s.label && <span className="source-label">{s.label}</span>}
                         </span>

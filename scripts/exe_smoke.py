@@ -2,17 +2,20 @@
 
     uv run python scripts/exe_smoke.py [--exe dist/Tamra/Tamra.exe] [--out report.json]
 
-Starts Tamra.exe in dev mode (API only on 127.0.0.1:8765, token "dev") with a scratch data
+Starts Tamra.exe in dev mode (API only on 127.0.0.1:8765; the packaged exe takes the token
+from TAMRA_DEV_TOKEN, and the smoke makes a fresh one that it never prints) with a scratch data
 folder and a scratch models folder that holds only the embedding model (hard-linked from
 .models), then:
 
 1. Imports the dev GGUF that fetch_assets.py downloads (qwen2.5-0.5b-instruct) through
    POST /api/models/import, as an uncatalogued model, and selects it as the local model.
-2. Indexes the eval corpus, asks one question in each language and one off-topic question, and
-   checks the streamed answers and the saved chats (provider "local").
+2. Creates two projects, "Company" and "Contracts", from two sibling folders that hold six
+   documents of the eval corpus, and waits for both to be indexed. Asks one question in each
+   language and one off-topic question in chats that search both projects, and checks the
+   streamed answers and the saved chats (provider "local").
 3. Asks one question with "think" on; the 0.5B model cannot think, so this only checks that the
    request is accepted.
-4. Adds a file to check the folder watcher.
+4. Adds a file to the Company folder to check the folder watcher.
 5. Checks a source: attribution of a sentence of the lease answer (at least one match), locating
    the first match in its PDF (found, with highlight boxes), the page route (PNG bytes), and the
    text route for a cited text file. Timings are recorded: the first attribution call, a repeat
@@ -22,7 +25,12 @@ folder and a scratch models folder that holds only the embedding model (hard-lin
    Credential Manager, service "Tamra"), asks one question (provider must be "openai"), switches
    back to local and asks again. The key is deleted at the end and the deletion is verified. The
    step is skipped when a key for "openai" is already stored: that one is never touched.
-7. Ends the exe by PID and checks that its llama-server ended with it.
+7. Projects and search scope (M4), through the API: a Company chat asks the lease question and
+   gets no source from Contracts; after PUT scope to both projects the same question cites
+   apartment-lease.pdf from Contracts; moving the chat to Contracts lists it there in
+   GET /api/chats; a rename (and a clashing rename, 409) and a rebuild of one project work; and
+   deleting Contracts reports the chats it deleted and leaves its folder alone.
+8. Ends the exe by PID and checks that its llama-server ended with it.
 """
 
 import argparse
@@ -52,6 +60,10 @@ PNG_SIGNATURE = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 PAGE_SCALE = 1.5  # the viewer's default render scale
 SMOKE_IDS = ("th-leave-annual", "en-lease-rent", "zh-warranty-sofa", "none-world-cup")
 CITATION = re.compile(r"\[(\d+)\]")
+PROJECT_FILES = {  # project name -> eval corpus documents (rendered names)
+    "Company": ("company-history.txt", "hr-leave-policy.docx", "it-security-policy.md"),
+    "Contracts": ("apartment-lease.pdf", "shipping-policy.pdf", "furniture-warranty.txt"),
+}
 
 
 def port_in_use(port: int) -> bool:
@@ -92,18 +104,30 @@ def healthy(client: httpx.Client) -> bool:
         return False
 
 
-def settled(client: httpx.Client, total: int) -> dict | None:
-    """The index status once every file has been handled, else None."""
-    index = client.get("/api/collection").json()["index"]
-    if index is None:
+def settled(client: httpx.Client, totals: dict[int, int]) -> dict[int, dict] | None:
+    """The index status of each project (id -> status) once all its files have been handled."""
+    indexes = {p["id"]: p["index"] for p in client.get("/api/projects").json()["projects"]}
+    if not set(totals) <= set(indexes):
         return None
-    if index["error"]:
-        raise SystemExit(f"indexing stopped: {index['error']}")
-    counts = index["counts"]
-    handled = counts["indexed"] + counts["failed"] + counts["skipped"]
-    if counts["pending"] == 0 and counts["indexing"] == 0 and handled == total:
-        return index
-    return None
+    for project_id in totals:
+        if indexes[project_id]["error"]:
+            raise SystemExit(f"indexing stopped: {indexes[project_id]['error']}")
+    for project_id, total in totals.items():
+        counts = indexes[project_id]["counts"]
+        handled = counts["indexed"] + counts["failed"] + counts["skipped"]
+        if counts["pending"] or counts["indexing"] or handled != total:
+            return None
+    return {project_id: indexes[project_id] for project_id in totals}
+
+
+def new_chat(client: httpx.Client, scope: list[int]) -> int:
+    """A chat whose home is the first project and which searches exactly the projects in scope."""
+    chat = client.post("/api/chats", json={"project_id": scope[0]})
+    chat.raise_for_status()
+    chat_id = chat.json()["id"]
+    if sorted(scope) != chat.json()["scope"]:
+        client.put(f"/api/chats/{chat_id}/scope", json={"project_ids": scope}).raise_for_status()
+    return chat_id
 
 
 def ask(client: httpx.Client, chat_id: int, question: str, think: bool = False) -> list[dict]:
@@ -314,10 +338,10 @@ def import_dev_model(client: httpx.Client, gguf: Path, report: dict, problems: l
 
 
 def check_thinking_accepted(
-    client: httpx.Client, question: dict, report: dict, problems: list[str]
+    client: httpx.Client, scope: list[int], question: dict, report: dict, problems: list[str]
 ) -> None:
     """The 0.5B model cannot think: the request must still be accepted and finish cleanly."""
-    chat_id = client.post("/api/chats").json()["id"]
+    chat_id = new_chat(client, scope)
     events = ask(client, chat_id, question["question"], think=True)
     errors = [e["message"] for e in events if e["type"] == "error"]
     ok = not errors and bool(events) and events[-1]["type"] == "done"
@@ -331,6 +355,7 @@ def api_mode_step(
     llama_exe: Path,
     gguf: Path,
     log_dir: Path,
+    scope: list[int],
     question: dict,
     report: dict,
     problems: list[str],
@@ -375,7 +400,7 @@ def api_mode_step(
             if not test["ok"]:
                 problems.append(f"test-connection failed: {test['reason']}")
             put_settings(client, mode="api")
-            chat_id = client.post("/api/chats").json()["id"]
+            chat_id = new_chat(client, scope)
             started = time.monotonic()
             result = check_answer(question, ask(client, chat_id, question["question"]))
             result["seconds"] = round(time.monotonic() - started, 1)
@@ -385,7 +410,7 @@ def api_mode_step(
                 result["problems"].append(f"expected provider 'openai', got {api['provider']!r}")
             api["answer"] = result
             put_settings(client, mode="local")
-            chat_id = client.post("/api/chats").json()["id"]
+            chat_id = new_chat(client, scope)
             started = time.monotonic()
             back = check_answer(question, ask(client, chat_id, question["question"]))
             back["seconds"] = round(time.monotonic() - started, 1)
@@ -423,6 +448,134 @@ def api_mode_step(
             problems.append("the changed settings could not be restored")
 
 
+def question_sources(client: httpx.Client, chat_id: int, question: dict) -> tuple[list[dict], str]:
+    """Ask in a chat; the streamed sources and the answer text. Problems end the run loudly."""
+    events = ask(client, chat_id, question["question"])
+    errors = [e["message"] for e in events if e["type"] == "error"]
+    if errors or not events or events[-1]["type"] != "done":
+        raise SystemExit(f"project step: the answer failed: {errors or 'no done event'}")
+    sources = next((e["sources"] for e in events if e["type"] == "sources"), [])
+    return sources, "".join(e["text"] for e in events if e["type"] == "token")
+
+
+def check_projects(
+    client: httpx.Client,
+    ids: dict[str, int],
+    folders: dict[str, Path],
+    question: dict,
+    report: dict,
+    problems: list[str],
+) -> None:
+    """Search scope, moving a chat, renaming, rebuilding and deleting a project (M4)."""
+    steps: dict = {}
+    report["projects"] = steps
+    company, contracts = ids["Company"], ids["Contracts"]
+    both = sorted(ids.values())
+
+    # A chat that searches Company only must not see the lease in Contracts.
+    chat_id = new_chat(client, [company])
+    sources, text = question_sources(client, chat_id, question)
+    steps["company_only"] = {
+        "sources": [f"{s['project']}: {s['file']}" for s in sources],
+        "not_found": text == NOT_FOUND[question["lang"]],
+        "answer": text[:200],
+    }
+    if any(s["project"] == "Contracts" or s["file"] == question["file"] for s in sources):
+        problems.append("projects: a Company-only chat got a source from Contracts")
+
+    # Widening the scope to both projects finds it.
+    scope = client.put(f"/api/chats/{chat_id}/scope", json={"project_ids": both})
+    steps["scope_put"] = {"status": scope.status_code, "scope": scope.json().get("scope")}
+    if scope.status_code != 200 or scope.json()["scope"] != both:
+        problems.append(f"projects: PUT scope gave {scope.status_code} {scope.text[:200]}")
+    sources, text = question_sources(client, chat_id, question)
+    steps["both"] = {"sources": [f"{s['project']}: {s['file']}" for s in sources]}
+    if not any(s["project"] == "Contracts" and s["file"] == question["file"] for s in sources):
+        problems.append("projects: the widened scope did not cite apartment-lease.pdf (Contracts)")
+
+    # Moving the chat to Contracts lists it there; its scope is unchanged.
+    moved = client.patch(f"/api/chats/{chat_id}", json={"project_id": contracts})
+    listed = {c["id"]: c for c in client.get("/api/chats").json()["chats"]}
+    steps["move"] = {
+        "status": moved.status_code,
+        "project_id": listed.get(chat_id, {}).get("project_id"),
+        "scope": listed.get(chat_id, {}).get("scope"),
+    }
+    if moved.status_code != 200 or listed.get(chat_id, {}).get("project_id") != contracts:
+        problems.append(f"projects: the chat is not listed under Contracts: {steps['move']}")
+    if listed.get(chat_id, {}).get("scope") != both:
+        problems.append("projects: moving the chat changed its search scope")
+    homes = [c["project_id"] for c in listed.values()]
+
+    # Rename; a name that clashes (any case) is refused.
+    renamed = client.patch(f"/api/projects/{company}", json={"name": "Company records"})
+    clash = client.patch(f"/api/projects/{contracts}", json={"name": "company RECORDS"})
+    names = {p["id"]: p["name"] for p in client.get("/api/projects").json()["projects"]}
+    steps["rename"] = {
+        "status": renamed.status_code,
+        "clash_status": clash.status_code,
+        "names": names,
+    }
+    if renamed.status_code != 200 or names.get(company) != "Company records":
+        problems.append(f"projects: rename failed: {steps['rename']}")
+    if clash.status_code != 409 or names.get(contracts) != "Contracts":
+        problems.append(f"projects: a clashing name was not refused with 409: {steps['rename']}")
+
+    # Rebuild Contracts only: the other project is left alone, the lease is found again.
+    before = {p["id"]: p["index"]["counts"] for p in client.get("/api/projects").json()["projects"]}
+    rebuild = client.post(f"/api/projects/{contracts}/rebuild")
+    seen_unindexed = False
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and not seen_unindexed:  # the reset is quick: poll fast
+        counts = next(
+            p["index"]["counts"]
+            for p in client.get("/api/projects").json()["projects"]
+            if p["id"] == contracts
+        )
+        seen_unindexed = counts["indexed"] < before[contracts]["indexed"]
+        time.sleep(0.05)
+    wait_for(lambda: settled(client, {company: 4, contracts: 3}), 300, "the rebuild")
+    after = {p["id"]: p["index"]["counts"] for p in client.get("/api/projects").json()["projects"]}
+    sources, _ = question_sources(client, chat_id, question)
+    steps["rebuild"] = {
+        "status": rebuild.status_code,
+        "saw_files_requeued": seen_unindexed,
+        "counts_after": after[contracts],
+        "company_counts_unchanged": after[company] == before[company],
+        "sources": [f"{s['project']}: {s['file']}" for s in sources],
+    }
+    if rebuild.status_code != 202:
+        problems.append(f"projects: rebuild gave {rebuild.status_code}")
+    if after[company] != before[company] or after[contracts] != before[contracts]:
+        problems.append(f"projects: the counts changed across a rebuild: {before} -> {after}")
+    if not any(s["project"] == "Contracts" and s["file"] == question["file"] for s in sources):
+        problems.append("projects: the lease was not found after rebuilding Contracts")
+
+    # Delete Contracts: its chats go with it, its folder stays.
+    expected = homes.count(contracts)
+    deleted = client.delete(f"/api/projects/{contracts}")
+    remaining = client.get("/api/projects").json()["projects"]
+    chats_left = client.get("/api/chats").json()["chats"]
+    steps["delete"] = {
+        "status": deleted.status_code,
+        "chats_deleted": deleted.json().get("chats_deleted"),
+        "expected_chats_deleted": expected,
+        "projects_left": [p["name"] for p in remaining],
+        "scopes_left": [c["scope"] for c in chats_left],
+        "folder_files_left": len(list(folders["Contracts"].iterdir())),
+    }
+    if deleted.status_code != 200 or deleted.json().get("chats_deleted") != expected:
+        problems.append(f"projects: deleting Contracts gave {steps['delete']}")
+    if [p["id"] for p in remaining] != [company]:
+        problems.append("projects: Contracts is still listed after deleting it")
+    if any(contracts in c["scope"] or not c["scope"] for c in chats_left) or any(
+        c["id"] == chat_id for c in chats_left
+    ):
+        problems.append("projects: a chat still searches Contracts, or the moved chat survived")
+    if steps["delete"]["folder_files_left"] != len(PROJECT_FILES["Contracts"]):
+        problems.append("projects: deleting the project changed the user's folder")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="End-to-end check of the packaged Tamra.exe")
     parser.add_argument("--exe", type=Path, default=ROOT / "dist" / "Tamra" / "Tamra.exe")
@@ -441,21 +594,28 @@ def main() -> int:
     problems: list[str] = []
     before = llama_server_pids()
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-        docs = Path(tmp) / "docs"
-        build(docs)
-        total = len(list(docs.iterdir()))
+        corpus = Path(tmp) / "corpus"
+        build(corpus)
+        folders = {name: Path(tmp) / name for name in PROJECT_FILES}  # siblings of the data dir
+        for name, files in PROJECT_FILES.items():
+            folders[name].mkdir()
+            for file in files:
+                shutil.copy2(corpus / file, folders[name] / file)
+        shutil.rmtree(corpus)
         models = Path(tmp) / "models"  # only the embedding model: the LLM comes from the import
         link_embedding_model(ROOT / ".models", models)
+        token = secrets.token_urlsafe(32)  # never printed or reported
         env = {
             **os.environ,
             "TAMRA_DATA_DIR": str(Path(tmp) / "data"),
             "TAMRA_MODELS_DIR": str(models),
+            "TAMRA_DEV_TOKEN": token,
         }
         proc = subprocess.Popen([str(args.exe), "--dev"], env=env)
         try:
             with httpx.Client(
                 base_url=f"http://127.0.0.1:{PORT}",
-                headers={"X-Tamra-Token": "dev"},
+                headers={"X-Tamra-Token": token},
                 trust_env=False,
                 timeout=30,
             ) as client:
@@ -463,19 +623,28 @@ def main() -> int:
                 wait_for(lambda: healthy(client), 60, "the API")
                 report["startup_s"] = round(time.monotonic() - started, 1)
                 import_dev_model(client, dev_gguf, report, problems)
-                client.put(
-                    "/api/collection", json={"name": "Smoke", "folder_path": str(docs)}
-                ).raise_for_status()
+                ids: dict[str, int] = {}
+                for name, folder in folders.items():
+                    created = client.post(
+                        "/api/projects", json={"name": name, "folder_path": str(folder)}
+                    )
+                    created.raise_for_status()
+                    ids[name] = created.json()["id"]
+                totals = {ids[name]: len(files) for name, files in PROJECT_FILES.items()}
+                scope = sorted(ids.values())  # the M1-M3 questions search both projects
                 started = time.monotonic()
-                index = wait_for(lambda: settled(client, total), 900, "indexing")
+                indexes = wait_for(lambda: settled(client, totals), 900, "indexing")
                 report["index_s"] = round(time.monotonic() - started, 1)
-                report["index_counts"] = index["counts"]
-                if index["counts"]["indexed"] != total:
-                    problems.append(f"not every file was indexed: {index['problems']}")
+                report["index_counts"] = {n: indexes[i]["counts"] for n, i in ids.items()}
+                for name, project_id in ids.items():
+                    if indexes[project_id]["counts"]["indexed"] != totals[project_id]:
+                        problems.append(
+                            f"{name}: not every file was indexed: {indexes[project_id]['problems']}"
+                        )
                 saved_answers: dict[str, dict] = {}
                 for question_id in SMOKE_IDS:
                     question = questions[question_id]
-                    chat_id = client.post("/api/chats").json()["id"]
+                    chat_id = new_chat(client, scope)
                     started = time.monotonic()
                     result = check_answer(question, ask(client, chat_id, question["question"]))
                     result["seconds"] = round(time.monotonic() - started, 1)
@@ -495,22 +664,25 @@ def main() -> int:
                     report,
                     problems,
                 )
-                check_thinking_accepted(client, questions[SMOKE_IDS[1]], report, problems)
-                (docs / "watcher-check.md").write_text(
+                check_thinking_accepted(client, scope, questions[SMOKE_IDS[1]], report, problems)
+                (folders["Company"] / "watcher-check.md").write_text(
                     "The rooftop garden opens at 6 pm on Fridays.", encoding="utf-8"
                 )
+                totals[ids["Company"]] += 1
                 started = time.monotonic()
-                wait_for(lambda: settled(client, total + 1), 120, "the folder watcher")
+                wait_for(lambda: settled(client, totals), 120, "the folder watcher")
                 report["watcher_s"] = round(time.monotonic() - started, 1)
                 api_mode_step(
                     client,
                     ROOT / "vendor" / "llama" / "llama-server.exe",
                     dev_gguf,
                     Path(tmp),
+                    scope,
                     questions[SMOKE_IDS[1]],
                     report,
                     problems,
                 )
+                check_projects(client, ids, folders, questions[SMOKE_IDS[1]], report, problems)
         finally:
             proc.kill()  # a hard kill: llama-server must still end with Tamra (Job Object)
             proc.wait(timeout=30)

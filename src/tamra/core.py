@@ -2,7 +2,9 @@
 
 import hashlib
 import logging
+import os
 import threading
+import unicodedata
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -41,6 +43,55 @@ DOCUMENT_CACHE_MAX_BYTES = 16 * 1024 * 1024  # a larger file is parsed per reque
 
 class EmbedderUnavailable(RuntimeError):
     """The embedding model could not be loaded."""
+
+
+class AnswerBusy(RuntimeError):
+    """An answer is being written, so a project cannot be deleted right now."""
+
+
+class BadName(ValueError):
+    """A project name that is empty, too long, or has control or format characters."""
+
+
+class FolderUsed(ValueError):
+    """The folder is, or lies inside or around, another project's folder."""
+
+
+class FolderMissing(ValueError):
+    """The path is not an absolute, existing directory."""
+
+
+class FolderNotAllowed(ValueError):
+    """A whole drive or share, or a folder that holds or lies inside Tamra's own folders."""
+
+
+MAX_PROJECT_NAME = 80
+_HIDDEN = frozenset({"Cc", "Cf"})  # control and format characters, bidi overrides among them
+
+
+def _clean_name(name: str) -> str:
+    """A project name as it is stored: whitespace collapsed, 1 to 80 characters, with no control
+    or format characters (BadName otherwise). Given and derived names both pass through it."""
+    cleaned = " ".join(name.split())
+    if not 1 <= len(cleaned) <= MAX_PROJECT_NAME:
+        raise BadName("bad name length")
+    if any(unicodedata.category(c) in _HIDDEN for c in cleaned):
+        raise BadName("bad name characters")
+    return cleaned
+
+
+def _derived_name(path: Path) -> str:
+    """The name for a project made without one: its folder's name, made fit to be a name."""
+    raw = path.name or str(path)
+    visible = "".join(c for c in raw if unicodedata.category(c) not in _HIDDEN)
+    cut = " ".join(visible.split())[:MAX_PROJECT_NAME].rstrip()
+    return _clean_name(cut or "Project")
+
+
+def _overlaps(first: Path, second: Path) -> bool:
+    """Whether two folders are the same or one lies inside the other (Windows ignores case)."""
+    a, b = (Path(os.path.normcase(p.resolve())) for p in (first, second))
+    return a == b or a.is_relative_to(b) or b.is_relative_to(a)
 
 
 def _build_api_provider(settings: Settings, key: str) -> Provider:
@@ -90,6 +141,7 @@ class Core:
             else None
         )
         self._closed = False
+        self._projects_lock = threading.Lock()  # guards the folder checks of project changes
         self._documents: OrderedDict[tuple, ParsedDoc] = OrderedDict()
         self._documents_lock = threading.Lock()
         self._models_dir = models_dir
@@ -304,8 +356,8 @@ class Core:
     def file_path(self, file_id: int) -> tuple[FileRecord, Path]:
         """The stored record and the real path of an indexed file (ViewerError if it is gone or
         its stored path leaves the collection folder). The path always comes from the store."""
-        collection = self.store.get_collection()
         record = self.store.get_file(file_id)
+        collection = self.store.get_collection(record.collection_id) if record else None
         if collection is None or record is None:
             raise FileMissing("file not found")
         return record, resolve_file(collection.folder_path, record.rel_path)
@@ -359,36 +411,133 @@ class Core:
                 self._documents.popitem(last=False)
         return record, path, doc
 
+    # --- projects ---
+
     def start(self) -> None:
         self.indexer.start()
-        collection = self.store.get_collection()
-        if collection is not None:
+        collections = self.store.list_collections()
+        for collection in collections:
             self._watch(collection)
+        if collections:
             self.indexer.request_reconcile()
 
-    def set_collection(self, name: str, folder: str) -> Collection:
-        """Index this folder from now on (M1 keeps one collection; chats are kept)."""
-        path = Path(folder.strip()).expanduser()
-        if not path.is_absolute():
-            raise ValueError("Choose a full folder path, for example C:\\Users\\me\\Documents.")
-        if not path.is_dir():
-            raise ValueError(f"Folder not found: {folder}")
-        collection = self.store.replace_collection(name.strip() or path.name, str(path), MODEL_ID)
-        self._watch(collection)
-        self.indexer.request_reconcile()
+    def projects(self) -> list[dict]:
+        """Every project with its index status, ordered by name."""
+        return [self._project_view(collection) for collection in self.store.list_collections()]
+
+    def project(self, collection_id: int) -> dict | None:
+        """One project as `projects()` lists it; None if it is unknown."""
+        collection = self.store.get_collection(collection_id)
+        return None if collection is None else self._project_view(collection)
+
+    def _project_view(self, collection: Collection) -> dict:
+        return {
+            "id": collection.id,
+            "name": collection.name,
+            "folder_path": collection.folder_path,
+            **self._index_status(collection),
+        }
+
+    def create_project(self, name: str, folder: str) -> Collection:
+        """Add a project and index its folder. ValueError (with a message safe to show) if the
+        folder is not usable, is already used by another project, or the name is taken.
+
+        Chats that have no home project (made before any project existed) are adopted by the
+        first project that remains, so the first project gives them their home and scope."""
+        with self._projects_lock:
+            path = self._checked_folder(folder)
+            collection = self.store.create_collection(
+                _clean_name(name) if name.strip() else _derived_name(path), str(path), MODEL_ID
+            )
+            if len(self.store.list_collections()) == 1:
+                self.store.adopt_homeless_chats(collection.id)
+            self._watch(collection)  # under the lock: a delete cannot unwatch before this
+        self.indexer.request_reconcile(collection.id)
         return collection
 
-    def rebuild(self) -> bool:
-        if self.store.get_collection() is None:
+    def rename_project(self, collection_id: int, name: str) -> Collection | None:
+        """Rename a project (None if unknown; BadName if the name is not valid, NameTaken if
+        another project has it)."""
+        if not self.store.rename_collection(collection_id, _clean_name(name)):
+            return None
+        return self.store.get_collection(collection_id)
+
+    def change_project_folder(self, collection_id: int, folder: str) -> Collection | None:
+        """Point a project at another folder: its index is dropped and built again from the new
+        one. None if the project is unknown; ValueError as in create_project."""
+        if self.store.get_collection(collection_id) is None:
+            return None
+        with self._projects_lock:
+            path = self._checked_folder(folder, excluding=collection_id)
+            file_ids = [f.id for f in self.store.list_files(collection_id)]
+            collection = self.store.set_collection_folder(collection_id, str(path), MODEL_ID)
+            if collection is None:  # deleted meanwhile: there is nothing to watch
+                return None
+            self._watch(collection)
+        self._forget_documents(file_ids)
+        self.indexer.request_reconcile(collection.id)
+        return collection
+
+    def rebuild_project(self, collection_id: int) -> bool:
+        """Index a project again from scratch; False if it is unknown."""
+        if self.store.get_collection(collection_id) is None:
             return False
-        self.indexer.request_rebuild()
+        self.indexer.request_rebuild(collection_id)
         return True
 
-    def index_status(self) -> dict | None:
-        collection = self.store.get_collection()
-        if collection is None:
-            return None
-        state = self.indexer.state()
+    def delete_project(self, collection_id: int) -> int | None:
+        """Delete a project's index and its home chats (the folder is untouched); returns how
+        many chats went, or None if the project is unknown. AnswerBusy while an answer streams."""
+        outcome: list[int | None] = []
+        file_ids: list[int] = []
+
+        def delete() -> None:
+            file_ids.extend(f.id for f in self.store.list_files(collection_id))
+            outcome.append(self.store.delete_collection(collection_id))
+
+        # The store delete comes first, inside run_if_idle (an answer may be using the project);
+        # then the watcher, the indexer's memory and the viewer cache let go of it.
+        if not self.answers.run_if_idle(delete):
+            raise AnswerBusy("an answer is being written")
+        with self._projects_lock:  # a folder change or a create cannot re-watch it meanwhile
+            self.watcher.unwatch(collection_id)
+            self.indexer.forget(collection_id)
+            self._forget_documents(file_ids)
+        return outcome[0]
+
+    def _checked_folder(self, folder: str, excluding: int | None = None) -> Path:
+        """The resolved folder, if it exists, is not a whole drive or one of Tamra's own folders,
+        and does not overlap another project's folder. Each refusal is its own ValueError."""
+        path = Path(folder.strip()).expanduser()
+        # A device-namespace alias (\\?\C:\..., \\.\...) would slip past the overlap checks,
+        # which compare plain paths; the folder picker never returns one.
+        if folder.strip().startswith(("\\\\?\\", "\\\\.\\", "//?/", "//./")):
+            raise FolderMissing("Choose a full folder path, for example C:\\Users\\me\\Documents.")
+        if not path.is_absolute():
+            raise FolderMissing("Choose a full folder path, for example C:\\Users\\me\\Documents.")
+        if not path.is_dir():
+            raise FolderMissing(f"Folder not found: {folder}")
+        path = path.resolve()
+        if path.parent == path:  # a drive or a share root
+            raise FolderNotAllowed("a whole drive")
+        # Indexing Tamra's data or models would index its own database; a parent of them (such
+        # as a profile folder that holds AppData) would do the same.
+        if _overlaps(path, self.data_dir) or _overlaps(path, self._models_dir):
+            raise FolderNotAllowed("Tamra's own folder")
+        for other in self.store.list_collections():
+            if other.id != excluding and _overlaps(path, Path(other.folder_path)):
+                raise FolderUsed("folder already used")  # its files would be indexed twice
+        return path
+
+    def _forget_documents(self, file_ids: list[int]) -> None:
+        """Drop the viewer's cached documents of files that left the index."""
+        gone = set(file_ids)
+        with self._documents_lock:
+            for key in [key for key in self._documents if key[0] in gone]:
+                del self._documents[key]
+
+    def _index_status(self, collection: Collection) -> dict:
+        state = self.indexer.state(collection.id)
         return {
             "stale": collection.embedding_model_id != MODEL_ID,
             "counts": self.store.status_counts(collection.id),
@@ -416,7 +565,7 @@ class Core:
 
     def _watch(self, collection: Collection) -> None:
         try:
-            self.watcher.watch(Path(collection.folder_path))
+            self.watcher.watch(collection.id, Path(collection.folder_path))
         except OSError as e:  # e.g. an unplugged drive: the indexer reports the missing folder
-            self.watcher.stop()
+            self.watcher.unwatch(collection.id)
             log.warning("cannot watch %s: %s", collection.folder_path, e)

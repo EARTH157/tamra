@@ -9,19 +9,16 @@ export const th: Record<TranslationKey, string> = {
   "common.retry": "ลองอีกครั้ง",
 
   "app.newChat": "แชทใหม่",
-  "app.chats": "แชท",
-  "app.noChatsNoFolder": "ยังไม่มีแชท เพิ่มโฟลเดอร์เอกสารเพื่อเริ่มต้นใช้งาน",
-  "app.noChatsYet": "ยังไม่มีแชท ลองถามคำถามเพื่อเริ่มแชทแรก",
+  "app.projects": "โปรเจกต์",
+  "app.newProject": "โปรเจกต์ใหม่",
+  "app.noProjects": "ยังไม่มีโปรเจกต์ เพิ่มโฟลเดอร์เอกสารเพื่อเริ่มต้นใช้งาน",
   "app.coreUnreachable":
     "เชื่อมต่อระบบหลักของ Tamra ไม่ได้ การตอบคำถามจะหยุดไว้ก่อนจนกว่าจะเชื่อมต่อได้อีกครั้ง",
   "app.connecting": "กำลังเชื่อมต่อ Tamra…",
 
   "folder.changeTitle": "เปลี่ยนโฟลเดอร์เอกสาร",
-  "folder.chooseTitle": "เลือกโฟลเดอร์เอกสาร",
   "folder.changeText":
     "Tamra จะสร้างดัชนีของโฟลเดอร์ใหม่และตอบจากโฟลเดอร์นี้ ไฟล์ของคุณจะไม่ถูกแก้ไข",
-  "folder.chooseText":
-    "Tamra จะสร้างดัชนีของไฟล์ PDF, Word, ข้อความ และ Markdown ในโฟลเดอร์นี้และโฟลเดอร์ย่อยทั้งหมด ไฟล์ของคุณจะไม่ถูกแก้ไข",
   "folder.pathLabel": "ที่อยู่โฟลเดอร์",
   "folder.pathPlaceholder": "ใส่ที่อยู่โฟลเดอร์แบบเต็ม เช่น D:\\Work\\Documents",
   "folder.browse": "เรียกดู…",
@@ -29,7 +26,7 @@ export const th: Record<TranslationKey, string> = {
 
   "welcome.title": "ยินดีต้อนรับสู่ Tamra",
   "welcome.subtitle": "ถามคำถามจากเอกสารของคุณเอง แล้วตรวจคำตอบกับต้นฉบับได้ทุกข้อ",
-  "welcome.addTitle": "เพิ่มโฟลเดอร์เอกสาร",
+  "welcome.addTitle": "เพิ่มโปรเจกต์แรกของคุณ",
   "welcome.addText": "เลือกโฟลเดอร์ที่มีไฟล์ PDF, Word, ข้อความ หรือ Markdown",
   "welcome.choose": "เลือกโฟลเดอร์",
   "welcome.offline": "ใช้งานได้โดยไม่ต้องออนไลน์",
@@ -42,11 +39,52 @@ export const th: Record<TranslationKey, string> = {
 
   "chatList.untitled": "แชทใหม่",
   "chatList.options": "ตัวเลือกของ {title}",
-  "chatList.menu": "ตัวเลือกแชท",
   "chatList.rename": "เปลี่ยนชื่อ",
   "chatList.delete": "ลบแชท",
   "chatList.renameLabel": "ชื่อแชท",
   "chatList.renameHint": "กด Enter เพื่อบันทึก · กด Esc เพื่อยกเลิก",
+  "chatList.moveToProject": "ย้ายไปโปรเจกต์",
+
+  "projectTree.label": "โปรเจกต์และแชท",
+  "projectTree.options": "ตัวเลือกของโปรเจกต์ {name}",
+  "projectTree.otherChats": "แชทอื่น ๆ",
+  "projectTree.noChats": "ยังไม่มีแชท ลองถามคำถามเพื่อเริ่มแชทแรก",
+
+  "project.settings": "การตั้งค่าโปรเจกต์",
+  "project.delete": "ลบโปรเจกต์",
+  "project.nameLabel": "ชื่อโปรเจกต์",
+  "project.folderLabel": "โฟลเดอร์เอกสาร",
+
+  "project.new.title": "โปรเจกต์ใหม่",
+  "project.new.text": "โปรเจกต์หนึ่งเก็บโฟลเดอร์เอกสารหนึ่งโฟลเดอร์ พร้อมดัชนีการค้นหาและแชทของตัวเอง",
+  "project.new.namePlaceholder": "ถ้าไม่ใส่ จะใช้ชื่อโฟลเดอร์",
+  "project.new.hint": "อ่านไฟล์ PDF, Word, TXT และ Markdown ไฟล์ของคุณจะไม่ถูกแก้ไข",
+  "project.new.create": "สร้างโปรเจกต์",
+
+  "project.settings.text": "ตั้งชื่อโปรเจกต์ เลือกโฟลเดอร์ และดูสถานะดัชนีการค้นหา",
+  "project.settings.index": "ดัชนีการค้นหา",
+  "project.settings.save": "บันทึก",
+
+  "project.deleteTitle": "ลบโปรเจกต์นี้หรือไม่",
+  "project.deleteText":
+    "“{name}” ดัชนีการค้นหา และแชท {count} รายการของโปรเจกต์นี้จะถูกลบออกจากคอมพิวเตอร์เครื่องนี้ โฟลเดอร์และไฟล์ของคุณจะไม่ถูกแตะต้อง",
+  "project.deleteText.one":
+    "“{name}” ดัชนีการค้นหา และแชท 1 รายการของโปรเจกต์นี้จะถูกลบออกจากคอมพิวเตอร์เครื่องนี้ โฟลเดอร์และไฟล์ของคุณจะไม่ถูกแตะต้อง",
+  "project.deleteTextNone":
+    "“{name}” และดัชนีการค้นหาของโปรเจกต์นี้จะถูกลบออกจากคอมพิวเตอร์เครื่องนี้ โฟลเดอร์และไฟล์ของคุณจะไม่ถูกแตะต้อง",
+
+  "project.err.nameTaken": "มีโปรเจกต์ชื่อนี้อยู่แล้ว",
+  "project.err.nameLength": "ชื่อโปรเจกต์ต้องมี 1 ถึง 80 ตัวอักษร และห้ามมีอักขระควบคุม",
+  "project.err.folderNotAllowed":
+    "เลือกโฟลเดอร์เอกสาร ไม่ใช่ทั้งไดรฟ์หรือโฟลเดอร์ข้อมูลของ Tamra",
+  "project.err.folderNotFound": "ไม่พบโฟลเดอร์นี้",
+  "project.err.folderUsed": "มีโปรเจกต์อื่นใช้โฟลเดอร์นี้อยู่แล้ว",
+  "project.err.notFound": "ไม่มีโปรเจกต์นี้แล้ว",
+  "project.err.generic": "ไม่สามารถเปลี่ยนแปลงโปรเจกต์ได้",
+  "project.err.titleEmpty": "ชื่อแชทต้องไม่ว่าง",
+  "project.err.busy": "กำลังเขียนคำตอบอยู่ รอให้เสร็จก่อน",
+  "project.err.scopeEmpty": "เลือกโปรเจกต์ที่จะค้นหาอย่างน้อยหนึ่งโปรเจกต์",
+  "chat.err.notFound": "ไม่มีแชทนี้แล้ว",
 
   "chat.defaultCollection": "เอกสารของคุณ",
   "chat.emptyTitle": "ถามจากเอกสารของคุณ",
@@ -123,6 +161,11 @@ export const th: Record<TranslationKey, string> = {
   "chat.mode.searchText": "แสดงข้อความที่ตรงกับคำถาม ไม่มีข้อความที่ AI เขียน",
   "chat.think": "คิดให้ลึกขึ้น",
   "chat.thinkUnavailable": "โมเดลนี้คิดให้ลึกขึ้นไม่ได้",
+  "chat.scope.menu": "ค้นหาใน",
+  "chat.scope.home": "โปรเจกต์หลัก",
+  "chat.scope.last": "ต้องเลือกไว้อย่างน้อยหนึ่งโปรเจกต์",
+  "chat.scope.more": "{name} + {count}",
+  "chat.staleSkipped": "ข้าม {names} เพราะต้องสร้างดัชนีใหม่",
   "chat.thinking": "กำลังคิด…",
   "chat.thought": "คิดไป {seconds} วินาที",
   "chat.thoughtMeta": "คิดไป {seconds} วินาที",
@@ -176,7 +219,7 @@ export const th: Record<TranslationKey, string> = {
 
   "settings.open": "การตั้งค่า",
   "settings.title": "การตั้งค่า",
-  "settings.subtitle.general": "ภาษา เอกสาร และข้อมูลที่ Tamra เก็บไว้ในคอมพิวเตอร์เครื่องนี้",
+  "settings.subtitle.general": "ภาษา และข้อมูลที่ Tamra เก็บไว้ในคอมพิวเตอร์เครื่องนี้",
   "settings.subtitle.model":
     "เลือกว่าจะให้สร้างคำตอบที่ไหน การค้นหาและการสร้างดัชนีทำงานในคอมพิวเตอร์เครื่องนี้เสมอ",
   "settings.subtitle.style":
@@ -190,17 +233,6 @@ export const th: Record<TranslationKey, string> = {
   "settings.language": "ภาษาของแอป",
   "settings.languageHint": "คำตอบจะใช้ภาษาเดียวกับคำถามของคุณเสมอ",
   "settings.askBeforeDelete": "ถามก่อนลบแชท",
-  "settings.documents": "เอกสาร",
-  "settings.docFolder": "โฟลเดอร์เอกสาร",
-  "settings.noFolder": "ยังไม่ได้เลือกโฟลเดอร์",
-  "settings.changeFolder": "เปลี่ยนโฟลเดอร์",
-  "settings.chooseFolder": "เลือกโฟลเดอร์",
-  "settings.searchIndex": "ดัชนีการค้นหา",
-  "settings.indexSummary": "สร้างดัชนีแล้ว {count} ไฟล์ · สร้างด้วย bge-m3",
-  "settings.indexSummary.one": "สร้างดัชนีแล้ว 1 ไฟล์ · สร้างด้วย bge-m3",
-  "settings.indexPartial": "สร้างดัชนีแล้ว {indexed} จาก {total} ไฟล์ · สร้างด้วย bge-m3",
-  "settings.indexNone": "ยังไม่มีไฟล์ที่สร้างดัชนี · สร้างด้วย bge-m3",
-  "settings.rebuild": "สร้างดัชนีใหม่",
   "settings.data": "ข้อมูล",
   "settings.dataFolder": "โฟลเดอร์ข้อมูล",
   "settings.openFolder": "เปิดโฟลเดอร์",

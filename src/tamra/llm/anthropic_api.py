@@ -6,16 +6,14 @@ from typing import Any, Literal
 
 import anthropic
 
-from tamra.llm.base import Chunk, ErrorReason, Message, ProviderError
+from tamra.llm.base import THINKING_HEADROOM, Chunk, ErrorReason, Message, ProviderError
 
 log = logging.getLogger(__name__)
 
 API_BASE_URL = "https://api.anthropic.com"
 REQUEST_TIMEOUT = anthropic.Timeout(120.0, connect=10.0)
 # Claude 5 models think adaptively even when `thinking` is omitted (a fixed `budget_tokens` is
-# rejected with a 400), and thinking tokens count against max_tokens. Always reserve room for
-# them on top of the answer so a short max_tokens cannot be eaten before the answer starts.
-THINKING_HEADROOM = 2048
+# rejected with a 400), so every request reserves THINKING_HEADROOM.
 
 
 class AnthropicLLM:

@@ -106,3 +106,33 @@ def test_a_failing_core_is_logged_and_shown_after_cleanup(monkeypatch, tmp_path)
     assert len(alerts) == 1
     assert "boom" in alerts[0]
     assert started == []
+
+
+def test_a_second_instance_for_the_same_data_folder_is_refused(tmp_path):
+    first = app._single_instance(tmp_path)
+    try:
+        assert first is not None
+        assert app._single_instance(tmp_path) is None
+        other = app._single_instance(tmp_path / "other")  # another data folder is independent
+        assert other is not None
+        app._close_handle(other)
+    finally:
+        app._close_handle(first)
+    again = app._single_instance(tmp_path)  # closing the handle released the name
+    assert again is not None
+    app._close_handle(again)
+
+
+def test_run_refuses_a_second_instance(monkeypatch, tmp_path):
+    monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path))
+    alerts = []
+    monkeypatch.setattr(app, "_alert", alerts.append)
+    monkeypatch.setattr(app, "_serve", lambda dev: pytest.fail("must not start"))
+    held = app._single_instance(tmp_path)
+    try:
+        app.run(dev=False)
+        assert alerts == ["Tamra is already running."]
+        with pytest.raises(RuntimeError, match="already running"):
+            app.run(dev=True)
+    finally:
+        app._close_handle(held)

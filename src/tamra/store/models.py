@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 Location = dict[str, Any]
@@ -16,6 +16,7 @@ class Collection:
 @dataclass(frozen=True)
 class FileRecord:
     id: int
+    collection_id: int
     rel_path: str
     size: int
     mtime: float
@@ -48,6 +49,8 @@ class Chat:
     title: str
     created_at: str
     updated_at: str
+    collection_id: int | None = None  # the home project; None until the chat has one
+    scope: list[int] = field(default_factory=list)  # the projects a question searches
 
 
 @dataclass(frozen=True)

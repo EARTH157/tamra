@@ -2,7 +2,7 @@ import { BookOpen, FileText, Info, Lightbulb, SearchX, X } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import AnswerText, { type Highlight } from "./AnswerText";
 import { api, attribute, streamAnswer } from "./api";
-import { attributionErrorText, errorText } from "./apiErrors";
+import { attributionErrorText, errorText, projectErrorText } from "./apiErrors";
 import CheckSourceButton from "./CheckSourceButton";
 import Composer from "./Composer";
 import DocumentViewer from "./DocumentViewer";
@@ -12,13 +12,22 @@ import { isNotFound } from "./notFound";
 import { utf16ToCp } from "./offsets";
 import { MIN_SELECTION, type Selected, sentenceBefore } from "./selection";
 import { useSettings } from "./settings";
-import SourcePanel, { type Check, fileName, folderOf, sourceLabel } from "./SourcePanel";
+import SourcePanel, {
+  type Check,
+  fileName,
+  folderOf,
+  shownFile,
+  sourceLabel,
+  spansProjects,
+} from "./SourcePanel";
 import Thinking, { type Thought, thoughtSeconds } from "./Thinking";
 import type {
   AnswerMode,
+  Chat,
   ChatDetail,
   ErrorReason,
   Message,
+  Project,
   SettingsChanges,
   SettingsTab,
   Source,
@@ -57,6 +66,14 @@ type Props = {
   onOpenSettings: (tab: SettingsTab) => void;
   /** False while Settings covers the chat; the models are reloaded when it shows again. */
   visible?: boolean;
+  /** The projects the chat can search: the "Search in" chip is shown when there are any. */
+  projects?: Project[];
+  /** The open chat as the app lists it; it is current after a move or a deleted project. */
+  chat?: Chat | null;
+  /** The home project of a chat that does not exist yet: it is searched unless another is chosen. */
+  defaultProjectId?: number | null;
+  /** The search scope was saved: the app's list of chats takes the updated chat. */
+  onChatChanged?: (chat: Chat) => void;
 };
 
 function sourceOf(sources: Source[], n: number): Source | null {
@@ -84,6 +101,10 @@ export default function ChatView({
   onAnswered,
   onOpenSettings,
   visible = true,
+  projects,
+  chat,
+  defaultProjectId = null,
+  onChatChanged,
 }: Props) {
   const t = useT();
   const { settings, update } = useSettings();
@@ -105,6 +126,13 @@ export default function ChatView({
   const checkSeq = useRef(0); // a check that was replaced or closed is ignored when it answers
   // The CPU-fallback line is shown until dismissed, then not again while the app stays open.
   const [cpuNoticeDismissed, setCpuNoticeDismissed] = useState(false);
+  // The projects whose index was left out of the last answer (it must be rebuilt first).
+  const [skipped, setSkipped] = useState<string[]>([]);
+  // A scope chosen but not yet confirmed by the core: for a chat that does not exist yet it is
+  // kept until the chat is created; for an open chat it shows until the core answers.
+  const [chosenScope, setChosenScope] = useState<number[] | null>(null);
+  const scopeSeq = useRef(0); // only the newest scope change is applied when it answers
+  const scopeSaves = useRef<Promise<unknown>>(Promise.resolve()); // saves still in flight
   const asking = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const thinkAvailable = canThink(models, settings);
@@ -123,6 +151,9 @@ export default function ChatView({
     setCheck(null);
     setViewer(null);
     setNotice(null);
+    setSkipped([]);
+    scopeSeq.current++;
+    setChosenScope(null);
     setThoughts({});
     setDetail(null);
     if (chatId === null) return;
@@ -132,12 +163,18 @@ export default function ChatView({
         if (current) setDetail(loaded);
       })
       .catch((e: Error) => {
-        if (current) setNotice({ message: e.message });
+        if (current) setNotice({ message: projectErrorText(e, t) });
       });
     return () => {
       current = false;
     };
   }, [chatId]);
+
+  // The default project changed while a new chat is being composed: a choice made for the old
+  // default no longer applies.
+  useEffect(() => {
+    if (chatId === null) setChosenScope(null);
+  }, [defaultProjectId, chatId]);
 
   // Keep the newest message in view.
   useEffect(() => {
@@ -151,6 +188,7 @@ export default function ChatView({
     asking.current = true;
     setQuestion("");
     setNotice(null);
+    setSkipped([]);
     setOpened(null);
     checkSeq.current++;
     setCheck(null);
@@ -167,14 +205,27 @@ export default function ChatView({
     setPending(state);
     onBusyChange(true);
     let usedId: number | null = chatId;
+    let streaming = false;
     try {
+      await scopeSaves.current; // the question is asked over the scope the chip shows
       usedId = chatId ?? (await createChat());
+      // A new chat searches its home project; a different choice is saved before the question.
+      if (chatId === null && chosenScope) {
+        try {
+          await saveScope(usedId, chosenScope);
+        } finally {
+          setChosenScope(null); // the chip shows what the core has, saved or not
+        }
+      }
+      streaming = true;
       await streamAnswer(
         usedId,
         text,
         (e) => {
           if (e.type === "sources") {
             state = { ...state, sources: e.sources };
+          } else if (e.type === "notice") {
+            setSkipped(e.names);
           } else if (e.type === "thinking") {
             const thought = state.thought ?? { text: "", startedAt: Date.now(), endedAt: null };
             state = { ...state, thought: { ...thought, text: thought.text + e.text } };
@@ -199,7 +250,10 @@ export default function ChatView({
         { mode, think: think && thinkAvailable },
       );
     } catch (e) {
-      state = { ...state, error: { message: (e as Error).message } };
+      // Before the stream (creating the chat or saving its scope) the core's refusals are known.
+      const message = streaming ? (e as Error).message : projectErrorText(e as Error, t);
+      state = { ...state, error: { message } };
+      if (!streaming) setQuestion((current) => current || text); // nothing was asked: keep the text
     } finally {
       const saved = usedId !== null ? await reload(usedId) : null;
       asking.current = false;
@@ -225,10 +279,41 @@ export default function ChatView({
     } catch {
       setDetail(
         (current) =>
-          current ?? { id, title: "", created_at: "", updated_at: "", messages: [] },
+          current ?? {
+            id,
+            title: "",
+            created_at: "",
+            updated_at: "",
+            project_id: null,
+            scope: [],
+            messages: [],
+          },
       );
       return null;
     }
+  }
+
+  /** Save the projects a chat searches; the open chat and the app take what the core answers. */
+  async function saveScope(id: number, ids: number[], mine?: number): Promise<void> {
+    const updated = await api<Chat>("PUT", `/api/chats/${id}/scope`, { project_ids: ids });
+    if (mine !== undefined && mine !== scopeSeq.current) return; // a newer choice is on its way
+    setDetail((current) => (current && current.id === updated.id ? { ...current, ...updated } : current));
+    onChatChanged?.(updated);
+  }
+
+  /** The "Search in" chip: save the choice for an open chat, or keep it until the chat exists. */
+  function changeScope(ids: number[]) {
+    setChosenScope(ids);
+    if (chatId === null) return;
+    const mine = ++scopeSeq.current;
+    const saving = saveScope(chatId, ids, mine)
+      .then(() => mine === scopeSeq.current && setChosenScope(null))
+      .catch((e: Error) => {
+        if (mine !== scopeSeq.current) return;
+        setChosenScope(null);
+        setNotice({ message: projectErrorText(e, t) });
+      });
+    scopeSaves.current = Promise.all([scopeSaves.current, saving]);
   }
 
   function closePanel() {
@@ -300,6 +385,15 @@ export default function ChatView({
     (notice?.reason === "offline" || notice?.reason === "auth" || notice?.reason === "quota");
   const cpuNotice =
     settings.mode === "local" && models?.gpu_offload === false && !cpuNoticeDismissed;
+
+  // The projects searched: what was chosen and not yet confirmed, else the open chat's scope (from
+  // the app's list, which a move or a deleted project keeps current), else its home project.
+  const known = chat && chat.id === chatId ? chat : detail;
+  const homeId = chatId === null ? defaultProjectId : (known?.project_id ?? defaultProjectId);
+  const inProjects = (ids: number[]) => ids.filter((id) => projects?.some((p) => p.id === id));
+  const searched = [chosenScope ?? known?.scope ?? [], homeId === null ? [] : [homeId]]
+    .map(inProjects)
+    .find((ids) => ids.length > 0) ?? inProjects(projects?.[0] ? [projects[0].id] : []);
 
   const messages: Message[] = detail?.messages ?? [];
   const ready = chatId === null || detail !== null;
@@ -404,6 +498,20 @@ export default function ChatView({
             </div>
           )}
         </div>
+        {skipped.length > 0 && (
+          <div className="chat-notice" role="status">
+            <Info size={16} />
+            <span>{t("chat.staleSkipped", { names: skipped.join(", ") })}</span>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={t("common.dismiss")}
+              onClick={() => setSkipped([])}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
         {cpuNotice && (
           <div className="chat-notice" role="status">
             <Info size={16} />
@@ -436,11 +544,19 @@ export default function ChatView({
           settings={settings}
           onChooseModel={chooseModel}
           onManageModels={() => onOpenSettings("model")}
+          scope={
+            projects && searched.length > 0
+              ? { projects, selected: searched, homeId, onChange: changeScope }
+              : undefined
+          }
         />
       </div>
       {(check || opened) && (
         <SourcePanel
           sources={panelMessage?.sources ?? []}
+          multiProject={spansProjects(
+            panelMessage?.sources ?? (opened?.owner === "pending" ? (pending?.sources ?? []) : []),
+          )}
           messageId={typeof panelOwner === "number" ? panelOwner : null}
           check={check}
           source={opened?.source ?? null}
@@ -536,6 +652,8 @@ function Answer({
 }: AnswerProps) {
   const t = useT();
   const textRoot = useRef<HTMLDivElement>(null);
+  // The project is named on a source only when the answer drew on more than one.
+  const multi = spansProjects(sources);
   if (done && isNotFound(text, sources.length)) {
     return (
       <div className="message assistant">
@@ -561,7 +679,7 @@ function Answer({
                 <span className="passage-head">
                   <FileText size={16} />
                   <span className="passage-file" title={source.file}>
-                    {fileName(source.file)}
+                    {shownFile(source, multi)}
                   </span>
                   <span className="passage-label">{sourceLabel(source)}</span>
                 </span>
@@ -607,7 +725,7 @@ function Answer({
                 <span className="source-num">{source.n}</span>
                 <span className="source-meta">
                   <span className="source-file" title={source.file}>
-                    {fileName(source.file)}
+                    {shownFile(source, multi)}
                   </span>
                   {(source.label || folderOf(source.file)) && (
                     <span className="source-label" title={source.file}>

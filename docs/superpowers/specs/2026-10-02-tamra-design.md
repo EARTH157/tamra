@@ -77,7 +77,11 @@ which is started on demand in local mode and stopped when the app exits.
   character offsets (PDF), heading path and paragraph index (DOCX), or line range (TXT/MD).
 - `chunks_fts` — FTS5 table over `chunks.text`, `tokenize='trigram'`
 - `chunk_vectors` — `sqlite-vec` virtual table, 1024-dim float32, keyed by chunk id
-- `chats(id, title, created_at, updated_at)`, `chat_collections(chat_id, collection_id)`
+- `chats(id, title, collection_id, created_at, updated_at, activity)` — `collection_id` is the
+  chat's **home** project, which sets where the sidebar lists it (null only for a chat made
+  before any project existed). `chat_collections(chat_id, collection_id)` is its **search
+  scope**: the projects a question searches. Deleting a collection deletes its home chats and
+  removes it from the scope of the others. Collection names are unique, ignoring case.
 - `messages(id, chat_id, role, content, provider, model, created_at)`
 - `message_sources(message_id, n, chunk_id, file_id, text_snapshot, location_json, file_hash_at_answer)`
 - `settings(key, value)` — API keys are **not** stored here (see §9)
@@ -90,18 +94,25 @@ demand from the current file.
 
 ## 5. Ingestion and indexing
 
-- A collection is a name plus a folder. Files stay where they are; Tamra never modifies
-  them. Upload or drag-and-drop copies the file into the collection folder, and the watcher
+- A collection (shown as a **project**) is a name plus a folder. Files stay where they are;
+  Tamra never modifies them. Tamra refuses a folder that is a whole drive or share, that
+  overlaps its own data or models folder, or that is the same as, inside, or around another
+  project's folder. Upload or drag-and-drop copies the file into the collection folder, and the watcher
   picks it up. The folder is the source of truth, and the index can always be rebuilt
   ("Rebuild index").
-- **While running:** `watchdog` observes each collection folder. Events are debounced
+- **While running:** `watchdog` observes the folder of every project. Events are debounced
   (about 2 s after the last write). Office temp files (`~$*`) and hidden or system files
   are ignored.
-- **On startup:** reconcile each folder against `files`. Compare size and mtime, hash the
-  content only when they differ, and handle added, changed, and removed files. Any file
-  left in `indexing` (crash) is re-queued.
+- **On startup:** reconcile each folder against `files`, one project after another. Compare
+  size and mtime, hash the content only when they differ, and handle added, changed, and
+  removed files. Any file left in `indexing` (crash) is re-queued. Symlinks and directory
+  junctions are skipped. Folders or files that cannot be read are reported ("Could not read:
+  …"), the indexed files under them are kept, and the rest of the project is reconciled
+  normally; an unreadable folder never passes for empty (which would delete its files).
 - **Pipeline per file:** parse → chunk → embed → write. It runs on a single background
-  worker queue. The UI shows per-file status and overall progress.
+  worker for all projects: reconcile runs project by project, then the pending files are
+  indexed oldest first across projects. Status is reported per project, and the UI shows
+  per-file status and progress.
 - **Parsers:**
   - PDF: `pypdfium2`. Text per page; no character boxes are stored (see §4). A page with no
     text layer is flagged `needs_ocr` (skipped until M5).
@@ -113,11 +124,19 @@ demand from the current file.
   whitespace, then a hard cut. Every chunk records its location (§4).
 - **Embedding model guard:** each collection stores the `embedding_model_id` it was built
   with. On mismatch, the collection is marked stale and the UI asks the user to rebuild. It
-  never silently searches a mismatched index.
+  never silently searches a mismatched index (see §6 for how a stale project is left out of
+  a search).
 
 ## 6. Retrieval and answering
 
-- Each chat selects one or more collections. The selection can change mid-chat.
+- Each chat has a search scope of one or more projects (collections), chosen with the
+  "Search in" chip in the composer. It defaults to the chat's home project and can change
+  mid-chat. If a scope ends up empty (a project in it was deleted), it falls back to the
+  home project; a chat with neither searches nothing. A project whose index was built with
+  another embedding model (stale) is left out of the search and named in a notice; if every
+  project in scope is stale, the question gets an error asking for a rebuild instead.
+  When an answer's sources come from more than one project, each source shows its project's
+  name.
 - **Query text:** the latest user question plus the previous user question, so follow-ups
   like "what about item 2?" stay on topic without an extra LLM call.
 - **Hybrid search:** dense KNN (`sqlite-vec`) and keyword (FTS5 trigram, BM25), each top

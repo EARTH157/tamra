@@ -3,7 +3,8 @@ import { type FormEvent, type KeyboardEvent, useLayoutEffect, useRef } from "rea
 import { useT } from "./i18n";
 import ModeMenu from "./ModeMenu";
 import ModelMenu from "./ModelMenu";
-import type { AnswerMode, ModelsInfo, Settings, SettingsChanges } from "./types";
+import ScopeMenu from "./ScopeMenu";
+import type { AnswerMode, ModelsInfo, Project, Settings, SettingsChanges } from "./types";
 
 type Props = {
   question: string;
@@ -27,6 +28,13 @@ type Props = {
   settings: Settings;
   onChooseModel: (changes: SettingsChanges) => void;
   onManageModels: () => void;
+  /** The "Search in" chip: absent where there is nothing to choose from. */
+  scope?: {
+    projects: Project[];
+    selected: number[];
+    homeId: number | null;
+    onChange: (scope: number[]) => void;
+  };
 };
 
 /** The question box with its chips (mode, model, Think longer) and the send or stop button. */
@@ -48,6 +56,7 @@ export default function Composer({
   settings,
   onChooseModel,
   onManageModels,
+  scope,
 }: Props) {
   const t = useT();
   const box = useRef<HTMLTextAreaElement>(null);
@@ -90,6 +99,15 @@ export default function Composer({
         <div className="composer-actions">
           <div className="chips">
             <ModeMenu mode={mode} onChange={onModeChange} />
+            {scope && (
+              <ScopeMenu
+                projects={scope.projects}
+                scope={scope.selected}
+                homeId={scope.homeId}
+                disabled={disabled || answering}
+                onChange={scope.onChange}
+              />
+            )}
             <ModelMenu
               models={models}
               settings={settings}

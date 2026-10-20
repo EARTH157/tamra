@@ -4,32 +4,19 @@ import ConfirmDialog from "./ConfirmDialog";
 import { useT } from "./i18n";
 import { useSettings } from "./settings";
 import { Row, Section, Select, Toggle } from "./SettingsControls";
-import type { Collection, IndexStatus } from "./types";
 
 type Props = {
-  collection: Collection | null;
-  index: IndexStatus | null;
   chatCount: number;
-  /** An answer is being written: the index cannot be rebuilt now. */
+  /** An answer is being written: the chats cannot be deleted now. */
   busy: boolean;
-  onChangeFolder: () => void;
-  onRebuild: () => void;
   /** All chats were deleted: the app reloads its list and leaves any open chat. */
   onChatsDeleted: () => Promise<void> | void;
 };
 
 const DEFAULT_DATA_FOLDER = "%LOCALAPPDATA%\\Tamra"; // until the core reports the real path
 
-/** The General tab: language, deleting chats, the documents folder and index, and the data. */
-export default function SettingsGeneral({
-  collection,
-  index,
-  chatCount,
-  busy,
-  onChangeFolder,
-  onRebuild,
-  onChatsDeleted,
-}: Props) {
+/** The General tab: language, deleting chats, and the data Tamra keeps. */
+export default function SettingsGeneral({ chatCount, busy, onChatsDeleted }: Props) {
   const t = useT();
   const { settings, update } = useSettings();
   const [error, setError] = useState<string | null>(null);
@@ -59,16 +46,6 @@ export default function SettingsGeneral({
     await onChatsDeleted();
   }
 
-  function indexSummary(): string {
-    const counts = index?.counts;
-    if (!counts) return t("index.checking");
-    const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-    if (index?.stale) return t("index.stale");
-    if (total === 0) return t("settings.indexNone");
-    if (counts.indexed === total) return t("settings.indexSummary", { count: total });
-    return t("settings.indexPartial", { indexed: counts.indexed, total });
-  }
-
   return (
     <>
       {error && (
@@ -96,26 +73,6 @@ export default function SettingsGeneral({
               onChange={(ask_before_delete) => save({ ask_before_delete })}
             />
           </Row>
-        </div>
-      </Section>
-
-      <Section title={t("settings.documents")}>
-        <div className="card">
-          <Row
-            title={t("settings.docFolder")}
-            hint={collection ? collection.folder_path : t("settings.noFolder")}
-          >
-            <button type="button" className="btn" onClick={onChangeFolder} disabled={busy}>
-              {collection ? t("settings.changeFolder") : t("settings.chooseFolder")}
-            </button>
-          </Row>
-          {collection && (
-            <Row title={t("settings.searchIndex")} hint={indexSummary()}>
-              <button type="button" className="btn" onClick={onRebuild} disabled={busy}>
-                {t("settings.rebuild")}
-              </button>
-            </Row>
-          )}
         </div>
       </Section>
 

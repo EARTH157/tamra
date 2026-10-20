@@ -51,10 +51,10 @@ describe("api", () => {
 
   it("sends JSON bodies and returns JSON", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ id: 1 })));
-    await expect(api("PUT", "/api/collection", { folder_path: "C:/d" }, fetchImpl)).resolves.toEqual(
-      { id: 1 },
-    );
-    expect(fetchImpl).toHaveBeenCalledWith("/api/collection", {
+    await expect(
+      api("PUT", "/api/projects/1/folder", { folder_path: "C:/d" }, fetchImpl),
+    ).resolves.toEqual({ id: 1 });
+    expect(fetchImpl).toHaveBeenCalledWith("/api/projects/1/folder", {
       method: "PUT",
       headers: { "X-Tamra-Token": "t0k", "Content-Type": "application/json" },
       body: '{"folder_path":"C:/d"}',
@@ -70,7 +70,7 @@ describe("api", () => {
     const fetchImpl = vi.fn(
       async () => new Response(JSON.stringify({ detail: "Folder not found: X" }), { status: 400 }),
     );
-    const error = await api("PUT", "/api/collection", {}, fetchImpl).catch((e: unknown) => e);
+    const error = await api("PUT", "/api/projects/1/folder", {}, fetchImpl).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).status).toBe(400);
     expect((error as ApiError).message).toBe("Folder not found: X");

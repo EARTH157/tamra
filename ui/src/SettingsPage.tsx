@@ -3,20 +3,16 @@ import { useT } from "./i18n";
 import SettingsGeneral from "./SettingsGeneral";
 import SettingsModel from "./SettingsModel";
 import SettingsStyle from "./SettingsStyle";
-import type { Collection, IndexStatus, SettingsTab } from "./types";
+import type { SettingsTab } from "./types";
 
 const TABS: SettingsTab[] = ["general", "model", "style"];
 
 type Props = {
   tab: SettingsTab;
   onTabChange: (tab: SettingsTab) => void;
-  collection: Collection | null;
-  index: IndexStatus | null;
   chatCount: number;
-  /** An answer is being written: the index and the chats cannot be changed now. */
+  /** An answer is being written: the chats cannot be deleted now. */
   busy: boolean;
-  onChangeFolder: () => void;
-  onRebuild: () => void;
   onChatsDeleted: () => Promise<void> | void;
 };
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./api";
-import { attributionErrorText, errorText, viewerErrorText } from "./apiErrors";
+import { attributionErrorText, errorText, projectErrorText, viewerErrorText } from "./apiErrors";
 import { type Params, translate, type TranslationKey } from "./i18n";
 
 const en = (key: TranslationKey, params?: Params) => translate("en", key, params);
@@ -85,5 +85,61 @@ describe("viewerErrorText", () => {
     expect(viewerErrorText(new TypeError("Failed to fetch"), en)).toBe(
       "Tamra could not reach its core.",
     );
+  });
+});
+
+describe("projectErrorText", () => {
+  const refusals: [number, string, string][] = [
+    [409, "Another project already has this name.", "A project with this name already exists."],
+    [409, "This folder is already used by another project.", "Another project already uses this folder."],
+    [400, "Folder not found.", "That folder does not exist."],
+    [
+      400,
+      "The project name must be 1 to 80 characters, without control or format characters.",
+      "The project name must be 1 to 80 characters, without control or format characters.",
+    ],
+    [
+      400,
+      "Choose a folder of documents, not a whole drive or Tamra's own folder.",
+      "Choose a folder of documents, not a whole drive or Tamra's own data folder.",
+    ],
+    [400, "The project could not be changed.", "The project could not be changed."],
+    [400, "The chat title must not be empty.", "The chat title must not be empty."],
+    [404, "Project not found.", "This project no longer exists."],
+    [404, "Unknown project.", "This project no longer exists."],
+    [404, "Chat not found.", "This chat no longer exists."],
+    [400, "Choose at least one project to search.", "Choose at least one project to search."],
+    [409, "An answer is being written. Wait for it to finish.", "An answer is being written. Wait for it to finish."],
+  ];
+
+  it.each(refusals)("words %i %s in English", (status, detail, text) => {
+    expect(projectErrorText(new ApiError(status, detail), en)).toBe(text);
+  });
+
+  it.each(refusals)("words %i %s in Thai too", (status, detail) => {
+    const text = projectErrorText(new ApiError(status, detail), th);
+    expect(text).not.toBe(detail);
+    expect(text).toMatch(/[฀-๿]/); // Thai script
+  });
+
+  it("words the newer refusals in natural Thai", () => {
+    const thai = (detail: string) => projectErrorText(new ApiError(400, detail), th);
+    expect(thai("Choose a folder of documents, not a whole drive or Tamra's own folder.")).toBe(
+      "เลือกโฟลเดอร์เอกสาร ไม่ใช่ทั้งไดรฟ์หรือโฟลเดอร์ข้อมูลของ Tamra",
+    );
+    expect(thai("The project could not be changed.")).toBe("ไม่สามารถเปลี่ยนแปลงโปรเจกต์ได้");
+    expect(thai("The chat title must not be empty.")).toBe("ชื่อแชทต้องไม่ว่าง");
+    expect(thai("Chat not found.")).toBe("ไม่มีแชทนี้แล้ว");
+    expect(thai("Choose at least one project to search.")).toBe(
+      "เลือกโปรเจกต์ที่จะค้นหาอย่างน้อยหนึ่งโปรเจกต์",
+    );
+  });
+
+  it("falls back to the general wording for anything else", () => {
+    expect(projectErrorText(new ApiError(500, "HTTP 500"), en)).toBe("HTTP 500");
+    expect(projectErrorText(new Error("network down"), en)).toBe("network down");
+    expect(
+      projectErrorText(new ApiError(400, "invalid value for setting api_base_url: 'x'"), en),
+    ).toContain("must start with http://");
   });
 });

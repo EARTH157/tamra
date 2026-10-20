@@ -22,7 +22,8 @@ from tamra.store.models import (
 from tamra.store.schema import migrate
 
 FILE_STATUSES = ("pending", "indexing", "indexed", "failed", "skipped")
-_FILE_COLUMNS = "id, rel_path, size, mtime, content_hash, status, error, indexed_at"
+_FILE_COLUMNS = "id, collection_id, rel_path, size, mtime, content_hash, status, error, indexed_at"
+_COLLECTION_COLUMNS = "id, name, folder_path, embedding_model_id, created_at"
 
 
 def _now() -> str:
@@ -36,6 +37,13 @@ def _blob(vector: np.ndarray) -> bytes:
 def _source(row: Sequence) -> SourceRecord:
     """A SourceRecord from (n, chunk_id, file_id, rel_path, text_snapshot, location_json, hash)."""
     return SourceRecord(row[0], row[1], row[2], row[3], row[4], json.loads(row[5]), row[6])
+
+
+class NameTaken(ValueError):
+    """Another project already has this name (names are compared without regard to case)."""
+
+    def __init__(self) -> None:
+        super().__init__("name taken")
 
 
 class Store:
@@ -64,26 +72,98 @@ class Store:
 
     # Collections ----------------------------------------------------------------------------
 
-    def get_collection(self) -> Collection | None:
-        """The collection (M1 keeps exactly one), or None before a folder is chosen."""
+    def list_collections(self) -> list[Collection]:
+        """Every project, ordered by name (case-insensitively)."""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {_COLLECTION_COLUMNS} FROM collections ORDER BY name COLLATE NOCASE, id"
+            ).fetchall()
+        return [Collection(*row) for row in rows]
+
+    def get_collection(self, collection_id: int) -> Collection | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, name, folder_path, embedding_model_id, created_at"
-                " FROM collections ORDER BY id LIMIT 1"
+                f"SELECT {_COLLECTION_COLUMNS} FROM collections WHERE id = ?", (collection_id,)
             ).fetchone()
         return Collection(*row) if row else None
 
-    def replace_collection(self, name: str, folder_path: str, model_id: str) -> Collection:
-        """Drop the existing collection and its whole index, then create this one."""
+    def _name_taken(self, name: str, *, excluding: int | None = None) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM collections WHERE name = ? COLLATE NOCASE AND id IS NOT ?",
+            (name, excluding),
+        ).fetchone()
+        return row is not None
+
+    def create_collection(self, name: str, folder_path: str, model_id: str) -> Collection:
+        """Add a project. Raises NameTaken (a ValueError) if the name is taken, in any case."""
         created = _now()
         with self._lock, self._conn:
-            self._conn.execute("DELETE FROM collections")
+            if self._name_taken(name):
+                raise NameTaken
             cursor = self._conn.execute(
                 "INSERT INTO collections (name, folder_path, embedding_model_id, created_at)"
                 " VALUES (?, ?, ?, ?)",
                 (name, folder_path, model_id, created),
             )
         return Collection(cursor.lastrowid, name, folder_path, model_id, created)
+
+    def rename_collection(self, collection_id: int, name: str) -> bool:
+        """Rename a project; False if unknown, NameTaken (a ValueError) when the name is taken."""
+        with self._lock, self._conn:
+            if self._name_taken(name, excluding=collection_id):
+                raise NameTaken
+            cursor = self._conn.execute(
+                "UPDATE collections SET name = ? WHERE id = ?", (name, collection_id)
+            )
+        return cursor.rowcount > 0
+
+    def _drop_index(self, collection_id: int) -> None:
+        """Delete a project's files, chunks, keyword entries and vectors (the caller holds a
+        transaction). The chunk delete trigger removes each chunk's vector; vec0 has no foreign
+        keys, so the rows left for this collection are removed explicitly as well."""
+        self._conn.execute(
+            "DELETE FROM chunks WHERE file_id IN (SELECT id FROM files WHERE collection_id = ?)",
+            (collection_id,),
+        )
+        self._conn.execute("DELETE FROM chunk_vectors WHERE collection_id = ?", (collection_id,))
+        self._conn.execute("DELETE FROM files WHERE collection_id = ?", (collection_id,))
+
+    def set_collection_folder(
+        self, collection_id: int, folder_path: str, model_id: str
+    ) -> Collection | None:
+        """Point a project at another folder: its whole index is dropped in the same transaction.
+        None if the project is unknown."""
+        with self._lock, self._conn:
+            if self.get_collection(collection_id) is None:
+                return None
+            self._drop_index(collection_id)
+            self._conn.execute(
+                "UPDATE collections SET folder_path = ?, embedding_model_id = ? WHERE id = ?",
+                (folder_path, model_id, collection_id),
+            )
+        return self.get_collection(collection_id)
+
+    def delete_collection(self, collection_id: int) -> int | None:
+        """Delete a project with its index and its home chats; returns how many chats went
+        (0 for a project with none), or None if the project is unknown.
+
+        Other chats that also searched it lose it from their scope; one left with an empty scope
+        falls back to its home project.
+        """
+        with self._lock, self._conn:
+            if self.get_collection(collection_id) is None:
+                return None
+            deleted = self._conn.execute(
+                "DELETE FROM chats WHERE collection_id = ?", (collection_id,)
+            ).rowcount
+            self._drop_index(collection_id)
+            self._conn.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
+            self._conn.execute(
+                "INSERT INTO chat_collections (chat_id, collection_id)"
+                " SELECT id, collection_id FROM chats WHERE collection_id IS NOT NULL"
+                " AND id NOT IN (SELECT chat_id FROM chat_collections)"
+            )
+        return deleted
 
     def reset_index(self, collection_id: int, model_id: str) -> None:
         """Rebuild: drop every chunk, mark every file pending, and record the current model."""
@@ -126,6 +206,24 @@ class Store:
                 f"SELECT {_FILE_COLUMNS} FROM files"
                 " WHERE collection_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
                 (collection_id,),
+            ).fetchone()
+        return FileRecord(*row) if row else None
+
+    def next_pending_file_any(
+        self, model_id: str, exclude: Sequence[int] = ()
+    ) -> FileRecord | None:
+        """The oldest pending file across the projects indexed with this embedding model.
+        A project with another model is stale: it is skipped until it is rebuilt, and so are
+        the projects named in exclude."""
+        columns = ", ".join(f"f.{name.strip()}" for name in _FILE_COLUMNS.split(","))
+        marks = ",".join("?" * len(exclude))
+        skip = f" AND f.collection_id NOT IN ({marks})" if exclude else ""
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {columns} FROM files f JOIN collections c ON c.id = f.collection_id"
+                f" WHERE f.status = 'pending' AND c.embedding_model_id = ?{skip}"
+                " ORDER BY f.id LIMIT 1",
+                (model_id, *exclude),
             ).fetchone()
         return FileRecord(*row) if row else None
 
@@ -250,27 +348,41 @@ class Store:
         return [by_id[i] for i in ids if i in by_id]
 
     def search_dense(
-        self, collection_id: int, vector: np.ndarray, k: int
+        self, collection_ids: Sequence[int], vector: np.ndarray, k: int
     ) -> list[tuple[int, float]]:
-        """Nearest chunks as (chunk id, cosine similarity), most similar first."""
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT rowid, distance FROM chunk_vectors"
-                " WHERE embedding MATCH ? AND k = ? AND collection_id = ? ORDER BY distance",
-                (_blob(vector), k, collection_id),
-            ).fetchall()
-        return [(rowid, 1.0 - distance) for rowid, distance in rows]
+        """Nearest chunks of these projects as (chunk id, cosine similarity), most similar first.
 
-    def search_keyword(self, collection_id: int, fts_query: str, k: int) -> list[int]:
-        """Chunk ids matching an FTS5 query (see retriever.fts_query), best BM25 first."""
+        The vec0 partition key needs an equality, so each project is searched on its own and the
+        results are merged.
+        """
+        blob = _blob(vector)
+        found: list[tuple[int, float]] = []
+        with self._lock:
+            for collection_id in dict.fromkeys(collection_ids):
+                rows = self._conn.execute(
+                    "SELECT rowid, distance FROM chunk_vectors"
+                    " WHERE embedding MATCH ? AND k = ? AND collection_id = ? ORDER BY distance",
+                    (blob, k, collection_id),
+                ).fetchall()
+                found.extend((rowid, 1.0 - distance) for rowid, distance in rows)
+        found.sort(key=lambda hit: (-hit[1], hit[0]))
+        return found[:k]
+
+    def search_keyword(self, collection_ids: Sequence[int], fts_query: str, k: int) -> list[int]:
+        """Chunk ids of these projects matching an FTS5 query (see retriever.fts_query), best
+        BM25 first."""
+        ids = list(dict.fromkeys(collection_ids))
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
         with self._lock:
             rows = self._conn.execute(
                 "SELECT c.id FROM chunks_fts"
                 " JOIN chunks c ON c.id = chunks_fts.rowid"
                 " JOIN files f ON f.id = c.file_id"
-                " WHERE chunks_fts MATCH ? AND f.collection_id = ?"
-                " ORDER BY bm25(chunks_fts) LIMIT ?",
-                (fts_query, collection_id, k),
+                f" WHERE chunks_fts MATCH ? AND f.collection_id IN ({marks})"
+                " ORDER BY bm25(chunks_fts), c.id LIMIT ?",
+                (fts_query, *ids, k),
             ).fetchall()
         return [row[0] for row in rows]
 
@@ -301,29 +413,123 @@ class Store:
 
     # Chats ----------------------------------------------------------------------------------
 
-    def create_chat(self, title: str = "") -> Chat:
+    def _chats(self, where: str = "", params: tuple = ()) -> list[Chat]:
+        """Chats (newest activity first) with their search scopes."""
+        rows = self._conn.execute(
+            "SELECT id, title, created_at, updated_at, collection_id"
+            f" FROM chats{where} ORDER BY activity DESC",
+            params,
+        ).fetchall()
+        scopes: dict[int, list[int]] = {}
+        for chat_id, collection_id in self._conn.execute(
+            "SELECT chat_id, collection_id FROM chat_collections"
+            f" WHERE chat_id IN (SELECT id FROM chats{where}) ORDER BY collection_id",
+            params,
+        ):
+            scopes.setdefault(chat_id, []).append(collection_id)
+        return [Chat(*row, scope=scopes.get(row[0], [])) for row in rows]
+
+    def _require_collections(self, collection_ids: Sequence[int]) -> None:
+        for collection_id in collection_ids:
+            found = self._conn.execute(
+                "SELECT 1 FROM collections WHERE id = ?", (collection_id,)
+            ).fetchone()
+            if found is None:
+                raise ValueError(f"unknown project: {collection_id}")
+
+    def create_chat(self, title: str = "", collection_id: int | None = None) -> Chat:
+        """A new chat; given a project, it is the chat's home and its whole search scope."""
         created = _now()
         with self._lock, self._conn:
+            if collection_id is not None:
+                self._require_collections([collection_id])
             cursor = self._conn.execute(
-                "INSERT INTO chats (title, created_at, updated_at, activity)"
-                " VALUES (?, ?, ?, (SELECT COALESCE(MAX(activity), 0) + 1 FROM chats))",
-                (title, created, created),
+                "INSERT INTO chats (title, created_at, updated_at, activity, collection_id)"
+                " VALUES (?, ?, ?, (SELECT COALESCE(MAX(activity), 0) + 1 FROM chats), ?)",
+                (title, created, created, collection_id),
             )
-        return Chat(cursor.lastrowid, title, created, created)
+            if collection_id is not None:
+                self._conn.execute(
+                    "INSERT INTO chat_collections (chat_id, collection_id) VALUES (?, ?)",
+                    (cursor.lastrowid, collection_id),
+                )
+        scope = [] if collection_id is None else [collection_id]
+        return Chat(cursor.lastrowid, title, created, created, collection_id, scope)
+
+    def adopt_homeless_chats(self, collection_id: int) -> int:
+        """Give every chat that has no home project this one as its home and its search scope;
+        returns how many were adopted. ValueError if the project is unknown."""
+        with self._lock, self._conn:
+            self._require_collections([collection_id])
+            chat_ids = [
+                row[0]
+                for row in self._conn.execute("SELECT id FROM chats WHERE collection_id IS NULL")
+            ]
+            self._conn.execute(
+                "UPDATE chats SET collection_id = ? WHERE collection_id IS NULL", (collection_id,)
+            )
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO chat_collections (chat_id, collection_id) VALUES (?, ?)",
+                [(chat_id, collection_id) for chat_id in chat_ids],
+            )
+        return len(chat_ids)
 
     def get_chat(self, chat_id: int) -> Chat | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT id, title, created_at, updated_at FROM chats WHERE id = ?", (chat_id,)
-            ).fetchone()
-        return Chat(*row) if row else None
+            chats = self._chats(" WHERE id = ?", (chat_id,))
+        return chats[0] if chats else None
 
     def list_chats(self) -> list[Chat]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT id, title, created_at, updated_at FROM chats ORDER BY activity DESC"
-            ).fetchall()
-        return [Chat(*row) for row in rows]
+            return self._chats()
+
+    def move_chat(self, chat_id: int, collection_id: int) -> bool:
+        """Make a project the chat's home; False if the chat is unknown (ValueError if the
+        project is).
+
+        When the old home was the only project searched, the scope follows the move; otherwise
+        the new home is added to the scope.
+        """
+        with self._lock, self._conn:
+            self._require_collections([collection_id])
+            chat = self._conn.execute(
+                "SELECT collection_id FROM chats WHERE id = ?", (chat_id,)
+            ).fetchone()
+            if chat is None:
+                return False
+            scope = [
+                row[0]
+                for row in self._conn.execute(
+                    "SELECT collection_id FROM chat_collections WHERE chat_id = ?", (chat_id,)
+                )
+            ]
+            self._conn.execute(
+                "UPDATE chats SET collection_id = ? WHERE id = ?", (collection_id, chat_id)
+            )
+            if scope == [chat[0]]:
+                self._conn.execute("DELETE FROM chat_collections WHERE chat_id = ?", (chat_id,))
+            self._conn.execute(
+                "INSERT OR IGNORE INTO chat_collections (chat_id, collection_id) VALUES (?, ?)",
+                (chat_id, collection_id),
+            )
+        return True
+
+    def set_chat_scope(self, chat_id: int, collection_ids: Sequence[int]) -> bool:
+        """Set the projects a chat searches. The list must be non-empty and name existing
+        projects (ValueError otherwise); False if the chat is unknown."""
+        ids = list(dict.fromkeys(collection_ids))
+        if not ids:
+            raise ValueError("a chat must search at least one project")
+        with self._lock, self._conn:
+            self._require_collections(ids)
+            if not self._conn.execute("SELECT 1 FROM chats WHERE id = ?", (chat_id,)).fetchone():
+                return False
+            self._conn.execute("DELETE FROM chat_collections WHERE chat_id = ?", (chat_id,))
+            self._conn.executemany(
+                "INSERT INTO chat_collections (chat_id, collection_id) VALUES (?, ?)",
+                [(chat_id, collection_id) for collection_id in ids],
+            )
+        return True
 
     def rename_chat(self, chat_id: int, title: str) -> bool:
         """Set a chat's title (whitespace collapsed, at most 60 characters); False if unknown."""

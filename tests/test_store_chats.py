@@ -95,7 +95,7 @@ def test_deleting_a_chat_removes_its_messages(store):
 
 
 def test_message_sources_outlive_the_indexed_file(store):
-    coll = store.replace_collection("Docs", "C:/docs", "m")
+    coll = store.create_collection("Docs", "C:/docs", "m")
     file_id = store.add_file(coll.id, "a.md", 1, 1.0)
     vector = np.zeros(1024, dtype=np.float32)
     vector[0] = 1.0
@@ -106,7 +106,7 @@ def test_message_sources_outlive_the_indexed_file(store):
         content_hash="h",
         note=None,
     )
-    chunk = store.get_chunks([store.search_dense(coll.id, vector, 1)[0][0]])[0]
+    chunk = store.get_chunks([store.search_dense([coll.id], vector, 1)[0][0]])[0]
     chat = store.create_chat()
     store.add_user_message(chat.id, "q")
     store.add_assistant_message(
