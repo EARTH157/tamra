@@ -34,7 +34,8 @@ function contentOffset(node: Node, offset: number, root: HTMLElement): number | 
   const own = carrier(node, root);
   if (own) {
     const [start, end] = offsetsOf(own);
-    if (own.dataset.cite !== undefined) return offset > 0 ? end : start; // a chip is all or nothing
+    // A chip or a formula is all or nothing.
+    if (own.dataset.cite !== undefined || own.dataset.math !== undefined) return offset > 0 ? end : start;
     if (node instanceof Text) return start + Math.min(offset, end - start);
     return offset > 0 ? end : start;
   }

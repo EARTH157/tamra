@@ -86,6 +86,31 @@ describe("selectionInside", () => {
     expect(selectionInside(a, content)).toEqual({ text: content, start: 0, end: content.length });
   });
 
+  it("takes a formula all or nothing, and sends its raw LaTeX", async () => {
+    const content = String.raw`Speed is $ \frac{\pi}{4} $ rad/s [1].`;
+    const { a } = await mountAnswers(content);
+    const inside = a.querySelector("span.math mn")!.firstChild!; // the 4 of the fraction
+    const rest = textOf(a, 2); // " rad/s " (index 1 is the formula)
+    // A boundary inside the formula is its start or its end, as for a chip: the whole formula or none of it.
+    select([inside, 0], [rest, 6]);
+    expect(selectionInside(a, content)).toEqual({
+      text: String.raw`$ \frac{\pi}{4} $ rad/s`,
+      start: 9,
+      end: 32,
+    });
+    // Ending inside it reaches on to the closing $.
+    select([textOf(a, 0), 6], [inside, 1]);
+    expect(selectionInside(a, content)?.text).toBe(String.raw`is $ \frac{\pi}{4} $`);
+  });
+
+  it("selects over a formula, then a chip right after it", async () => {
+    const content = String.raw`See $x^2$[1] now.`;
+    const { a } = await mountAnswers(content);
+    const chip = a.querySelector('button[data-cite="1"]')!;
+    select([textOf(a, 0), 0], [chip.firstChild!, 1]);
+    expect(selectionInside(a, content)).toEqual({ text: String.raw`See $x^2$[1]`, start: 0, end: 12 });
+  });
+
   it("trims the selection and drops one that is too short or too long", async () => {
     const content = "  Hello world  ";
     const { a } = await mountAnswers(content);

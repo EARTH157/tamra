@@ -1021,6 +1021,14 @@ svg.lucide {
   height: var(--gap-para);
 }
 
+/* A formula is KaTeX's MathML, which the browser draws with its own math font. */
+.math-display {
+  display: block;
+  margin: 8px 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
 .cite {
   display: inline-flex;
   align-items: center;

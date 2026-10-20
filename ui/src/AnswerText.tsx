@@ -1,6 +1,7 @@
-import { Fragment, type Ref } from "react";
-import { splitCitations } from "./citations";
+import { Fragment, type Ref, useMemo } from "react";
+import { type Segment, splitCitations } from "./citations";
 import { useT } from "./i18n";
+import { renderMath, splitMath } from "./math";
 
 /** A range of the answer text, in offsets of its content. */
 export type Highlight = { start: number; end: number };
@@ -90,7 +91,64 @@ function Pieces({ text, start, highlight }: { text: string; start: number; highl
   );
 }
 
-/** Answer text as plain text, with [n] markers as buttons that open source n. */
+/**
+ * A formula as KaTeX's MathML. The markup is only ever KaTeX's output: the answer's own text goes in
+ * as TeX, which KaTeX escapes. With offsets the span stands for its whole raw range (delimiters
+ * included), all or nothing for a selection like a chip.
+ */
+function Formula({
+  src,
+  display,
+  start,
+  end,
+  highlight = null,
+}: {
+  src: string;
+  display: boolean;
+  start?: number;
+  end?: number;
+  highlight?: Highlight | null;
+}) {
+  const html = useMemo(() => renderMath(src, display), [src, display]);
+  const hit = !!highlight && start !== undefined && end !== undefined && highlight.start < end && highlight.end > start;
+  return (
+    <span
+      className={`math ${display ? "math-display" : "math-inline"}${hit ? " answer-hit" : ""}`}
+      data-math=""
+      data-start={start}
+      data-end={end}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+/** Text in which `$..$`, `$$..$$`, `\(..\)` and `\[..\]` are shown as formulas; no offsets. */
+export function MathText({ text }: { text: string }) {
+  return splitMath(text).map((part, i) =>
+    part.kind === "text" ? (
+      <Fragment key={i}>{part.text}</Fragment>
+    ) : (
+      <Formula key={i} src={part.src} display={part.display} />
+    ),
+  );
+}
+
+type Piece = Segment | { kind: "math"; src: string; display: boolean; start: number; end: number };
+
+/** Formulas first (a "[1]" inside one is TeX), then the citation markers of the text between them. */
+function piecesOf(text: string, sourceCount: number): Piece[] {
+  return splitMath(text).flatMap((part): Piece[] =>
+    part.kind === "math"
+      ? [part]
+      : splitCitations(part.text, sourceCount).map((segment) => ({
+          ...segment,
+          start: segment.start + part.start,
+          end: segment.end + part.start,
+        })),
+  );
+}
+
+/** Answer text as plain text, with [n] markers as buttons that open source n and formulas as math. */
 export default function AnswerText({
   text,
   sourceCount,
@@ -102,8 +160,17 @@ export default function AnswerText({
   const t = useT();
   return (
     <div className="answer-text" ref={ref}>
-      {splitCitations(text, sourceCount).map((segment, i) =>
-        segment.kind === "text" ? (
+      {piecesOf(text, sourceCount).map((segment, i) =>
+        segment.kind === "math" ? (
+          <Formula
+            key={i}
+            src={segment.src}
+            display={segment.display}
+            start={segment.start}
+            end={segment.end}
+            highlight={highlight}
+          />
+        ) : segment.kind === "text" ? (
           <TextWithParagraphs
             key={i}
             text={segment.text}

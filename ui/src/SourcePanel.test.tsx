@@ -121,6 +121,14 @@ describe("SourcePanel", () => {
     expect(panel.querySelector(".source-warning")).toBeNull();
   });
 
+  it("shows a formula of the selected answer text as math", async () => {
+    mockFetch({ [locateUrl(1, match)]: () => json(notFound) });
+    view = await mount(<SourcePanel {...base} check={check({ selection: "Speed is $x^2$ rad/s" })} />);
+    const answer = view.container.querySelector(".compare-row .compare-text")!;
+    expect(answer.querySelector("math")).not.toBeNull();
+    expect(answer.querySelector("script")).toBeNull();
+  });
+
   it("shows the located page of a PDF", async () => {
     mockFetch({ [locateUrl(1, match)]: () => json(locatePdf), ...pageRoutes });
     view = await mount(<SourcePanel {...base} check={check()} />);

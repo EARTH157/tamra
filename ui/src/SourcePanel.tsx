@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, FileText, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { TextWithParagraphs } from "./AnswerText";
+import { MathText, TextWithParagraphs } from "./AnswerText";
 import { locateSource } from "./api";
 import { type TranslationKey, useT } from "./i18n";
 import { cpToUtf16 } from "./offsets";
@@ -193,7 +193,9 @@ export default function SourcePanel({
           <h3 className="compare-title">{t("source.compare")}</h3>
           <div className="compare-row">
             <span className="compare-pill">{t("source.answer")}</span>
-            <p className="compare-text">{check.selection}</p>
+            <p className="compare-text">
+              <MathText text={check.selection} />
+            </p>
           </div>
           {match && (
             <>
