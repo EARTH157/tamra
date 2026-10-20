@@ -6,6 +6,7 @@ from tamra.answer import (
     AnswerSettings,
     Route,
     auto_citation,
+    build_messages,
     cited_numbers,
     detect_language,
     location_label,
@@ -86,6 +87,62 @@ def test_follow_ups_carry_the_previous_exchange(env):
     assert [m["role"] for m in second] == ["system", "user", "assistant", "user"]
     assert second[1]["content"] == "How long is the lease term?"
     assert second[3]["content"] == "and parking?"
+
+
+def test_the_model_sees_the_last_four_exchanges_oldest_first(env):
+    store, make, chat = env
+    llm = FakeLLM()
+    service = make(llm)
+    for i in range(5):
+        list(service.ask(chat.id, f"How long is the lease term? {i}"))
+    list(service.ask(chat.id, "and parking?"))
+    last = llm.calls[-1]
+    assert [m["role"] for m in last] == ["system"] + ["user", "assistant"] * 4 + ["user"]
+    assert [m["content"] for m in last[1:-1:2]] == [
+        f"How long is the lease term? {i}" for i in range(1, 5)
+    ]
+    assert last[2]["content"] == "The lease is three years."  # its [1] pointed at old sources
+    assert last[-1]["content"] == "and parking?"
+
+
+def _record(n: int) -> SourceRecord:
+    return SourceRecord(
+        n,
+        n,
+        n,
+        "lease.md",
+        "The lease term is three years",
+        {"kind": "text", "line_start": 1, "line_end": 1},
+        "h",
+    )
+
+
+def test_build_messages_adds_answered_exchanges_without_their_markers():
+    history = [
+        ("q1", "The lease is three years [1]. Parking is free [2][3]."),
+        ("q2", None),  # cancelled or failed
+        ("q3", ""),  # search mode: passages only
+        ("q3b", " [1]"),  # nothing left once the marker goes
+        ("q4", "Rent is due [1, 2] monthly."),
+    ]
+    messages = build_messages("q5", history, [_record(1)], "en")
+    assert [(m["role"], m["content"]) for m in messages[1:]] == [
+        ("user", "q1"),
+        ("assistant", "The lease is three years. Parking is free."),
+        ("user", "q4"),
+        ("assistant", "Rent is due monthly."),
+        ("user", "q5"),
+    ]
+
+
+def test_build_messages_cuts_each_earlier_answer_to_600_characters():
+    messages = build_messages("q2", [("q1", "x" * 700 + " [1]")], [_record(1)], "en")
+    assert messages[2]["content"] == "x" * 600
+
+
+def test_the_system_prompt_lets_earlier_messages_say_what_a_question_means():
+    system = build_messages("q", [], [_record(1)], "en")[0]["content"]
+    assert "Earlier messages" in system
 
 
 def test_cancel_stops_generation_and_keeps_the_partial_answer(env):

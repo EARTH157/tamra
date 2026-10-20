@@ -74,15 +74,19 @@ def test_get_message_returns_one_message_with_its_sources(store):
     assert store.get_message(message_id + 100) is None
 
 
-def test_last_exchange_returns_the_latest_question_and_its_answer(store):
+def test_recent_exchanges_are_the_latest_questions_oldest_first_with_their_answers(store):
     chat = store.create_chat()
-    assert store.last_exchange(chat.id) == (None, None)
+    assert store.recent_exchanges(chat.id, 4) == []
     store.add_user_message(chat.id, "q1")
     store.add_assistant_message(chat.id, "a1", provider=None, model=None, sources=[])
-    store.add_user_message(chat.id, "q2")
-    assert store.last_exchange(chat.id) == ("q2", None)
-    store.add_assistant_message(chat.id, "a2", provider=None, model=None, sources=[])
-    assert store.last_exchange(chat.id) == ("q2", "a2")
+    store.add_user_message(chat.id, "q2")  # no answer (cancelled or failed)
+    store.add_user_message(chat.id, "q3")
+    assert store.recent_exchanges(chat.id, 4) == [("q1", "a1"), ("q2", None), ("q3", None)]
+    store.add_assistant_message(chat.id, "a3", provider=None, model=None, sources=[])
+    assert store.recent_exchanges(chat.id, 2) == [("q2", None), ("q3", "a3")]
+    other = store.create_chat()
+    store.add_user_message(other.id, "elsewhere")
+    assert store.recent_exchanges(chat.id, 1) == [("q3", "a3")]
 
 
 def test_deleting_a_chat_removes_its_messages(store):

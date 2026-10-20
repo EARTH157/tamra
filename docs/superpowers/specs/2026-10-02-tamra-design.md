@@ -139,6 +139,8 @@ demand from the current file.
   name.
 - **Query text:** the latest user question plus the previous user question, so follow-ups
   like "what about item 2?" stay on topic without an extra LLM call.
+- **Conversation:** the last 4 exchanges of the chat go to the model, their citation markers
+  removed, each answer cut to 600 characters.
 - **Hybrid search:** dense KNN (`sqlite-vec`) and keyword (FTS5 trigram, BM25), each top
   ~30, fused with Reciprocal Rank Fusion.
 - **Context budget:** take the top chunks that fit the active model's context, about 4 for

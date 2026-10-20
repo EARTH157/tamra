@@ -173,6 +173,12 @@ These came from the owner's own use of the M4 exe and are on the same branch.
    with KaTeX 0.19.0 (MIT) as MathML: no fonts or CSS, `trust: false`, and errors shown as text. A
    `$` follows pandoc's rule, so prices such as "$5 and $10" stay text. A selection that starts or
    ends inside a formula takes the whole formula.
+4. **Conversation memory.** The owner found that follow-ups lost the thread. Chats were saved, but
+   the model saw only the previous exchange, its answer cut to 600 characters. It now sees the last
+   4 exchanges of the chat (`Store.recent_exchanges`), oldest first. Earlier answers lose their
+   `[n]` markers, since their sources are no longer in the prompt, and are cut to 600 characters;
+   a question without an answer (cancelled, failed, or search mode) is left out. Retrieval still
+   adds only the previous question to the query.
 
 The PDF page and the formulas are checked by unit tests only; their look in the WebView2 window is
 the owner's check.

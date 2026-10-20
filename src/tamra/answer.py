@@ -27,6 +27,8 @@ NOT_FOUND = {
 SYSTEM_PROMPT = """You answer questions using only the numbered sources below.
 Rules:
 - Use only facts stated in the sources. If they do not answer the question, say so plainly.
+- Earlier messages in the conversation tell what the question refers to; facts still come only
+  from the sources.
 - Cite each sentence that uses a source with its number in brackets, like [1] or [2][3].
 - Write the whole answer in {language}, the language of the question.
 - Be concise.
@@ -42,6 +44,9 @@ AUTO_CITE_MIN_OVERLAP = 0.5  # share of the answer's trigrams found in one sourc
 # (ui/src/citations.ts) read the same form.
 MARKER_GROUP = r"\[\d{1,3}(?:\s*,\s*\d{1,3})*\]"
 _MARKER = re.compile(MARKER_GROUP)
+# A marker with the spaces before it, so "years [1]." becomes "years." without a double space.
+_SPACED_MARKER = re.compile(r"[ \t]*" + MARKER_GROUP)
+HISTORY_TURNS = 4  # earlier exchanges sent to the model: fits beside the 4-source local budget
 _DIGITS = re.compile(r"\d+")
 
 
@@ -155,10 +160,12 @@ def source_payloads(store: Store, sources: Sequence[SourceRecord]) -> list[dict]
 
 def build_messages(
     question: str,
-    previous: tuple[str | None, str | None],
+    history: Sequence[tuple[str, str | None]],
     sources: list[SourceRecord],
     language: str,
 ) -> list[Message]:
+    """The prompt: system with the sources, the answered earlier exchanges (oldest first), then
+    the question. Earlier answers lose their markers: their sources are no longer in the prompt."""
     blocks = "\n\n".join(
         f"[{s.n}] {s.rel_path} ({location_label(s.location)})\n{s.text}" for s in sources
     )
@@ -168,10 +175,11 @@ def build_messages(
             "content": SYSTEM_PROMPT.format(language=LANGUAGE_NAMES[language], sources=blocks),
         }
     ]
-    previous_question, previous_answer = previous
-    if previous_question and previous_answer:
-        messages.append({"role": "user", "content": previous_question})
-        messages.append({"role": "assistant", "content": previous_answer[:600]})
+    for earlier_question, earlier_answer in history:
+        answer = _SPACED_MARKER.sub("", earlier_answer or "").strip()[:600]
+        if answer:  # cancelled, failed and search-mode questions have no answer
+            messages.append({"role": "user", "content": earlier_question})
+            messages.append({"role": "assistant", "content": answer})
     messages.append({"role": "user", "content": question})
     return messages
 
@@ -291,9 +299,9 @@ class AnswerService:
             }
             return
         route = self._route()
-        previous = self._store.last_exchange(chat_id)
+        history = self._store.recent_exchanges(chat_id, HISTORY_TURNS)
         language = detect_language(question)
-        query = query_text(question, previous[0])
+        query = query_text(question, history[-1][0] if history else None)
         try:
             vector = self._embed_query(query)
         except Exception as e:
@@ -329,7 +337,7 @@ class AnswerService:
             )
             yield {"type": "done", "message_id": message_id}
             return
-        messages = build_messages(question, previous, sources, language)
+        messages = build_messages(question, history, sources, language)
         parts: list[str] = []
         error: str | None = None
         reason = "other"
