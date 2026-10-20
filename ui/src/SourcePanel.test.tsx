@@ -286,6 +286,71 @@ describe("SourcePanel", () => {
     expect(fitScale(612, 612, 1)).toBe(1);
     expect(fitScale(1000, 612, 2)).toBe(3);
     expect(fitScale(50, 612, 1)).toBe(0.5);
+    expect(fitScale(400, 612, 1, 200)).toBe(1.5); // zoomed: twice the fitted width
+    expect(fitScale(0, 612, 1, 150)).toBe(1.5);
+  });
+
+  it("zooms the fitted page in steps, asking for one image per new scale", async () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { value: 400, configurable: true });
+    // 400 px over a 612 pt page: 100% -> 0.75, 125% and 150% -> 1, 200% -> 1.5, 300% -> 2
+    const calls = mockFetch({
+      [locateUrl(1, match)]: () => json(locatePdf),
+      [pageRoute(14, 0.75)]: png,
+      [pageRoute(14, 1)]: png,
+      [pageRoute(14, 1.5)]: png,
+      [pageRoute(14, 2)]: png,
+    });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    const zoomIn = () => view!.container.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')!;
+    const zoomOut = () => view!.container.querySelector<HTMLButtonElement>('button[aria-label="Zoom out"]')!;
+    const readout = () => view!.container.querySelector(".source-zoom .viewer-readout")?.textContent;
+    const width = () => view!.container.querySelector<HTMLElement>(".pdf-page")?.style.width;
+    expect(readout()).toBe("100%");
+    expect(width()).toBe("100%");
+    expect(zoomOut().disabled).toBe(true);
+    expect(zoomIn().disabled).toBe(false);
+    await click(zoomIn());
+    expect(readout()).toBe("125%");
+    expect(width()).toBe("125%");
+    await click(zoomIn());
+    expect(readout()).toBe("150%");
+    await click(zoomIn());
+    await click(zoomIn());
+    expect(readout()).toBe("300%");
+    expect(zoomIn().disabled).toBe(true);
+    expect(zoomOut().disabled).toBe(false);
+    const pages = calls.map((c) => c.key).filter((key) => key.includes("/pages/"));
+    expect(pages).toEqual([pageRoute(14, 0.75), pageRoute(14, 1), pageRoute(14, 1.5), pageRoute(14, 2)]);
+  });
+
+  it("keeps the zoom for the next passage of the same file and resets it for another file", async () => {
+    const third: Match = { ...match, start: 0, end: 10, text: "Staff get " };
+    const other: Match = { ...match, n: 2, file_id: 9, file: "other.pdf" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => (String(input).includes("/pages/") ? png() : json(locatePdf))),
+    );
+    function Host() {
+      const [index, setIndex] = useState(0);
+      return (
+        <SourcePanel
+          {...base}
+          check={check({ matches: [match, third, other], index })}
+          onIndexChange={setIndex}
+        />
+      );
+    }
+    view = await mount(<Host />);
+    const readout = () => view!.container.querySelector(".source-zoom .viewer-readout")?.textContent;
+    await click(view.container.querySelector('button[aria-label="Zoom in"]'));
+    expect(readout()).toBe("125%");
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    await settle();
+    expect(readout()).toBe("125%");
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    await settle();
+    expect(view.container.querySelector(".pdf-page img")?.getAttribute("alt")).toBe("Page 14 of other.pdf");
+    expect(readout()).toBe("100%");
   });
 
   it("previews the page of a source opened as it is, locating the whole snapshot", async () => {

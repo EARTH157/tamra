@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, FileText, TriangleAlert, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, Minus, Plus, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { MathText, TextWithParagraphs } from "./AnswerText";
 import { locateSource } from "./api";
@@ -6,6 +6,9 @@ import { type TranslationKey, useT } from "./i18n";
 import { cpToUtf16 } from "./offsets";
 import PdfPage from "./PdfPage";
 import type { Locate, Match, Source, ViewerRequest } from "./types";
+
+/** The zoom steps of the panel's PDF page, in percent of the panel width. */
+export const PANEL_ZOOM_STEPS = [100, 125, 150, 200, 300];
 
 /** The file name of a collection-relative path ("a/b/c.pdf" -> "c.pdf"). */
 export function fileName(path: string): string {
@@ -130,6 +133,13 @@ export default function SourcePanel({
   const preview =
     fresh ??
     (located === undefined && target && fileId != null && held?.fileId === fileId ? held.located : null);
+  // The zoom belongs to the file shown: the next passage of the same file keeps it, another file
+  // starts at 100% (the panel width).
+  const [zoomed, setZoomed] = useState({ fileId, zoom: PANEL_ZOOM_STEPS[0] });
+  if (zoomed.fileId !== fileId) setZoomed({ fileId, zoom: PANEL_ZOOM_STEPS[0] });
+  const zoom = zoomed.fileId === fileId ? zoomed.zoom : PANEL_ZOOM_STEPS[0];
+  const zoomAt = PANEL_ZOOM_STEPS.indexOf(zoom);
+  const zoomTo = (at: number) => setZoomed({ fileId, zoom: PANEL_ZOOM_STEPS[at] });
   const previewPage =
     preview?.page !== undefined && fileId !== null && fileId !== undefined && title ? (
       <PdfPage
@@ -138,7 +148,7 @@ export default function SourcePanel({
         fileId={fileId}
         file={fileName(title)}
         page={preview.page}
-        zoom={100}
+        zoom={zoom}
         highlight={{ page: preview.page, rects: preview.rects ?? [] }}
       />
     ) : null;
@@ -237,6 +247,31 @@ export default function SourcePanel({
             </>
           )}
         </section>
+      )}
+      {previewPage && (
+        <div className="source-zoom">
+          <div className="viewer-control">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={t("viewer.zoomOut")}
+              disabled={zoomAt <= 0}
+              onClick={() => zoomTo(Math.max(0, zoomAt - 1))}
+            >
+              <Minus size={18} />
+            </button>
+            <span className="viewer-readout">{zoom}%</span>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={t("viewer.zoomIn")}
+              disabled={zoomAt >= PANEL_ZOOM_STEPS.length - 1}
+              onClick={() => zoomTo(Math.min(PANEL_ZOOM_STEPS.length - 1, zoomAt + 1))}
+            >
+              <Plus size={18} />
+            </button>
+          </div>
+        </div>
       )}
       <div className="source-body">
         {check?.status === "loading" && (

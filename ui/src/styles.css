@@ -1739,7 +1739,15 @@ svg.lucide {
   flex: 1;
   min-height: 0;
   padding: 20px;
-  overflow-y: auto;
+  overflow: auto; /* a zoomed page scrolls here, not the window */
+}
+
+/* Outside .source-body, so the zoom stays in view while a zoomed page scrolls. */
+.source-zoom {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  padding: 12px 20px 0;
 }
 
 .source-state {

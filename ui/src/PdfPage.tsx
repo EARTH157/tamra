@@ -64,12 +64,13 @@ export function pageScale(zoom: number, pixelRatio: number): number {
 const ASSUMED_PAGE_WIDTH = 612;
 
 /**
- * The render scale that is sharp when a page is fitted to `boxWidth` CSS pixels. It is rounded up to
- * a quarter, so the small difference between page sizes (A4 or Letter) does not ask for a second image.
+ * The render scale that is sharp when a page is fitted to `boxWidth` CSS pixels, then zoomed by `zoom`
+ * percent. It is rounded up to a quarter, so the small difference between page sizes (A4 or Letter)
+ * does not ask for a second image.
  */
-export function fitScale(boxWidth: number, pageWidth: number, pixelRatio: number): number {
-  if (boxWidth <= 0) return pageScale(100, pixelRatio);
-  return Math.ceil(pageScale((100 * boxWidth) / pageWidth, pixelRatio) * 4) / 4;
+export function fitScale(boxWidth: number, pageWidth: number, pixelRatio: number, zoom = 100): number {
+  if (boxWidth <= 0) return pageScale(zoom, pixelRatio);
+  return Math.ceil(pageScale((zoom * boxWidth) / pageWidth, pixelRatio) * 4) / 4;
 }
 
 const percent = (fraction: number) => Number((fraction * 100).toFixed(3));
@@ -83,11 +84,11 @@ type Props = {
   file: string;
   /** 1-based. */
   page: number;
-  /** Percent. */
+  /** Percent; with `fit`, of the fitted width. */
   zoom: number;
   /** The passage to mark: boxes as fractions of the page, drawn only while that page is shown. */
   highlight: { page: number; rects: number[][] } | null;
-  /** Fit the page to the width of its container (the source panel) instead of sizing it by `zoom`. */
+  /** Fit the page to the width of its container (the source panel), then zoom it from there. */
   fit?: boolean;
 };
 
@@ -114,7 +115,7 @@ export default function PdfPage({ fileId, file, page, zoom, highlight, fit = fal
     return () => observer.disconnect();
   }, [fit]);
   const scale = fit
-    ? fitScale(boxWidth ?? 0, fullWidth ?? ASSUMED_PAGE_WIDTH, window.devicePixelRatio)
+    ? fitScale(boxWidth ?? 0, fullWidth ?? ASSUMED_PAGE_WIDTH, window.devicePixelRatio, zoom)
     : pageScale(zoom, window.devicePixelRatio);
   const unmeasured = fit && boxWidth === null;
   const key = `${fileId}:${page}:${scale}`;
@@ -163,9 +164,10 @@ export default function PdfPage({ fileId, file, page, zoom, highlight, fit = fal
   );
 
   const marks = shown && highlight && highlight.page === shown.page ? highlight.rects : [];
-  const markKey = shown ? `${shown.url}:${JSON.stringify(marks)}` : "";
+  // A fitted page takes its new width at once, so a zoom there brings the passage back into view.
+  const markKey = shown ? `${shown.url}:${fit ? zoom : ""}:${JSON.stringify(marks)}` : "";
   const width = fit
-    ? "100%"
+    ? `${zoom}%`
     : fullWidth !== null && shown
       ? `${Math.round(fullWidth * shown.zoom) / 100}px`
       : null;
