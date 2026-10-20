@@ -15,7 +15,7 @@ import numpy as np
 from tamra import secrets
 from tamra.answer import AnswerService, AnswerSettings, Route
 from tamra.attribution import Attributor, Match
-from tamra.embedder import MODEL_ID, Embedder
+from tamra.embedder import MODEL_ID, Embedder, EmbedderUnavailable
 from tamra.ingest.chunker import TokenSpans, bge_token_spans
 from tamra.ingest.indexer import EmbedderLike, Indexer
 from tamra.ingest.parsers import ParsedDoc, ParseError, parse_file
@@ -39,10 +39,6 @@ OPENAI_BASE_URL = "https://api.openai.com"
 _PROVIDER_FIELDS = frozenset({"mode", "api_provider", "api_model", "api_base_url"})
 DOCUMENT_CACHE_SIZE = 8  # parsed documents kept for the viewer, so paging a PDF parses it once
 DOCUMENT_CACHE_MAX_BYTES = 16 * 1024 * 1024  # a larger file is parsed per request, not kept
-
-
-class EmbedderUnavailable(RuntimeError):
-    """The embedding model could not be loaded."""
 
 
 class AnswerBusy(RuntimeError):

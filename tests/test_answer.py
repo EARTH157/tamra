@@ -11,6 +11,7 @@ from tamra.answer import (
     location_label,
     source_payloads,
 )
+from tamra.embedder import EmbedderUnavailable
 from tamra.llm.base import Chunk, LLMError, ProviderError
 from tamra.llm.llama_server import LlamaServerError
 from tamra.store import ChunkInput, SourceRecord, Store
@@ -639,20 +640,22 @@ def test_saved_sources_carry_the_project_name_or_none_once_the_file_is_gone(two)
     assert [p["project"] for p in source_payloads(store, saved.sources)] == [None]
 
 
-def test_a_question_the_search_model_cannot_embed_is_not_saved(env):
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [(EmbedderUnavailable("model.onnx not found"), "embedding_missing"), (MemoryError(), None)],
+)
+def test_a_question_the_search_model_cannot_embed_is_not_saved(env, error, reason):
     store, make, chat = env
 
-    def missing(text):
-        raise FileNotFoundError("model.onnx not found")
+    def failing(text):
+        raise error
 
-    collection = store.list_collections()[0]
     service = AnswerService(
-        store, missing, lambda: Route("local", FakeLLM), model_id="m", settings=AnswerSettings()
+        store, failing, lambda: Route("local", FakeLLM), model_id="m", settings=AnswerSettings()
     )
     events = list(service.ask(chat.id, "What is the lease term?"))
     assert len(events) == 1
     assert events[0]["type"] == "error"
-    assert events[0]["reason"] == "embedding_missing"
+    assert events[0].get("reason") == reason  # only missing files send the user to Settings
     assert events[0]["message"].startswith("Embedding model unavailable")
     assert store.list_messages(chat.id) == []
-    assert collection.id  # the chat has a project; only the model was missing

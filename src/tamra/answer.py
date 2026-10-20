@@ -9,6 +9,7 @@ from typing import Literal
 
 import numpy as np
 
+from tamra.embedder import EmbedderUnavailable
 from tamra.llm.base import LLMError, Message, Provider
 from tamra.llm.llama_server import LlamaServerError
 from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
@@ -295,13 +296,12 @@ class AnswerService:
         query = query_text(question, previous[0])
         try:
             vector = self._embed_query(query)
-        except Exception as e:  # the model files are missing or cannot be loaded
+        except Exception as e:
             # Nothing is saved yet: a question that cannot be answered stays out of the chat.
-            yield {
-                "type": "error",
-                "message": f"Embedding model unavailable: {e}",
-                "reason": "embedding_missing",
-            }
+            event = {"type": "error", "message": f"Embedding model unavailable: {e}"}
+            if isinstance(e, EmbedderUnavailable):  # missing files: Settings can download them
+                event["reason"] = "embedding_missing"
+            yield event
             return
         self._store.add_user_message(chat_id, question)
         hits = hybrid_search(self._store, [c.id for c in searched], vector, fts_query(query))

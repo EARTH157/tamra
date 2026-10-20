@@ -10,6 +10,10 @@ MODEL_ID = "bge-m3-int8@Xenova/bge-m3:4de13258"  # the export pinned in scripts/
 MODEL_FILES = ("tokenizer.json", "model.onnx")
 
 
+class EmbedderUnavailable(RuntimeError):
+    """The embedding model could not be loaded (missing or unreadable model files)."""
+
+
 class Embedder:
     """bge-m3 dense embeddings: CLS token of last_hidden_state, L2-normalised."""
 
