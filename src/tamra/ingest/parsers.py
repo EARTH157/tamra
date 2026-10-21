@@ -32,6 +32,7 @@ ECHO_MIN = 3  # garbled Thai: Chromium/Skia prints have 5-44 echoes a page, clea
 INK_SCALE = 0.25  # an 18 dpi render tells a drawn page from an empty one
 INVISIBLE_MIN_CHARS = 100
 INVISIBLE_INK_PER_CHAR = 0.1  # dark pixels per character: drawn pages have 0.35-8, hidden 0
+SCAN_IMAGE_AREA = 0.5  # one image this share of the page is a scan; logos and photos are less
 
 _THAI_LETTER = "\u0e01-\u0e2e"
 _THAI_MARK = "\u0e31\u0e34-\u0e3a\u0e47-\u0e4e"
@@ -174,8 +175,7 @@ def _not_drawn(page, text: str) -> bool:
     chars = len(text.strip())
     if chars < INVISIBLE_MIN_CHARS:
         return False
-    # a searchable scan: the invisible text is the image's OCR layer, so skip the slow render
-    if any(o.type == pdfium_c.FPDF_PAGEOBJ_IMAGE for o in page.get_objects(max_depth=2)):
+    if _is_scan(page):  # the invisible text is the image's OCR layer: skip the slow render
         return False
     bitmap = page.render(scale=INK_SCALE, grayscale=True)
     try:
@@ -183,6 +183,16 @@ def _not_drawn(page, text: str) -> bool:
     finally:
         bitmap.close()
     return dark / chars < INVISIBLE_INK_PER_CHAR
+
+
+def _is_scan(page) -> bool:
+    """One image object covers at least SCAN_IMAGE_AREA of the page."""
+    width, height = page.get_size()
+    for obj in page.get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE], max_depth=2):
+        left, bottom, right, top = obj.get_bounds()  # FPDFPageObj_GetBounds, in points
+        if (right - left) * (top - bottom) >= SCAN_IMAGE_AREA * width * height:
+            return True
+    return False
 
 
 def with_ocr(doc: ParsedDoc, pages: dict[int, str]) -> ParsedDoc:

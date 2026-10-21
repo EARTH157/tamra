@@ -254,24 +254,34 @@ def test_text_that_is_not_drawn_is_sent_to_ocr(tmp_path):
     assert hidden.ocr_pages == (1,) and short.ocr_pages == ()
 
 
-def test_a_searchable_scan_is_not_sent_to_ocr(tmp_path):
-    """An image with an invisible OCR layer: the layer is the scan's text, and the page is not
-    rendered to check it (a blank image here would otherwise flag it)."""
+def hidden_text_with_image(tmp_path, width: float, height: float) -> Path:
+    """A page of invisible text with a white image of width x height points on it."""
     lines = ["Hidden text that the reader never sees on this page."] * 4
     pdf = pdfium.PdfDocument(make_pdf(tmp_path / "h.pdf", [lines], invisible=True))
     try:
         page = pdf[0]
         bitmap = pdfium.PdfBitmap.new_native(8, 8, pdfium_c.FPDFBitmap_Gray)
-        bitmap.to_numpy()[...] = 255  # a white scan
+        bitmap.to_numpy()[...] = 255  # blank: a render alone would flag the page
         image = pdfium.PdfImage.new(pdf)
         image.set_bitmap(bitmap)
-        image.set_matrix(pdfium.PdfMatrix().scale(*page.get_size()))
+        image.set_matrix(pdfium.PdfMatrix().scale(width, height))
         page.insert_obj(image)
         page.gen_content()
-        pdf.save(tmp_path / "scan.pdf")
+        pdf.save(tmp_path / "out.pdf")
     finally:
         pdf.close()
-    assert parse_pdf(tmp_path / "scan.pdf").ocr_pages == ()
+    return tmp_path / "out.pdf"
+
+
+def test_a_searchable_scan_is_not_sent_to_ocr(tmp_path):
+    """A full-page image with an invisible OCR layer: the layer is the scan's text, and the
+    page is not rendered to check it."""
+    assert parse_pdf(hidden_text_with_image(tmp_path, 595, 842)).ocr_pages == ()
+
+
+def test_invisible_text_beside_a_small_image_is_sent_to_ocr(tmp_path):
+    """A logo is not a scan: the page's invisible text is still checked."""
+    assert parse_pdf(hidden_text_with_image(tmp_path, 60, 60)).ocr_pages == (1,)
 
 
 def test_with_ocr_replaces_pages_and_keeps_text_ocr_did_not_find(tmp_path):
