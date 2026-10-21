@@ -8,14 +8,20 @@ import { Section } from "./SettingsControls";
 import { formatSize, ModelAction } from "./SettingsLocal";
 
 const POLL_MS = 1000;
-const FIXED_NAME = "bge-m3"; // the dialog asks about the model, not its quantisation
+const ROWS = {
+  embedding: { title: "settings.searchModel", hint: "settings.searchModelHint", name: "bge-m3" },
+  ocr: { title: "settings.ocrModel", hint: "settings.ocrModelHint", name: "PP-OCRv5" },
+} as const; // the dialog names the model, not its quantisation or file set
 
-/** The search (embedding) model: needed in both modes, so it sits above the mode's own list. */
-export default function SettingsSearchModel({ models, refresh }: ModelsApi) {
+type Props = ModelsApi & { kind?: keyof typeof ROWS };
+
+/** A model every mode needs (search, OCR): status, size and download, above the mode's own list. */
+export default function SettingsSearchModel({ models, refresh, kind = "embedding" }: Props) {
   const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const model = models?.embedding;
+  const row = ROWS[kind];
+  const model = kind === "ocr" ? models?.ocr : models?.embedding;
   const active = model ? isDownloading(model) : false;
 
   useEffect(() => {
@@ -51,7 +57,7 @@ export default function SettingsSearchModel({ models, refresh }: ModelsApi) {
   }
 
   return (
-    <Section title={t("settings.searchModel")}>
+    <Section title={t(row.title)}>
       {error && (
         <p className="field-error settings-error" role="alert">
           {error}
@@ -71,10 +77,10 @@ export default function SettingsSearchModel({ models, refresh }: ModelsApi) {
           onCancel={() => void cancelDownload()}
         />
       </div>
-      <p className="settings-row-hint search-model-hint">{t("settings.searchModelHint")}</p>
+      <p className="settings-row-hint search-model-hint">{t(row.hint)}</p>
       {confirming && (
         <ConfirmDialog
-          title={t("settings.downloadTitle", { name: FIXED_NAME, size: formatSize(model.size, t) })}
+          title={t("settings.downloadTitle", { name: row.name, size: formatSize(model.size, t) })}
           text={t("settings.downloadText")}
           confirmLabel={t("settings.download")}
           onConfirm={startDownload}

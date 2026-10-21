@@ -135,6 +135,12 @@ describe("SourcePanel", () => {
     expect(subtitle()).toBe("page 14 of 32");
   });
 
+  it("marks a located page that was read by OCR", async () => {
+    mockFetch({ [locateUrl(1, match)]: () => json({ ...locatePdf, ocr: true }), ...pageRoutes });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    expect(subtitle()).toBe("page 14 of 32 · OCR");
+  });
+
   it("previews the real PDF page with the passage marked, instead of the snapshot", async () => {
     const calls = mockFetch({ [locateUrl(1, match)]: () => json(locatePdf), ...pageRoutes });
     view = await mount(<SourcePanel {...base} check={check()} />);

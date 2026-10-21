@@ -364,6 +364,35 @@ describe("AI model tab: local", () => {
     expect(find('button[aria-label="Download bge-m3 (int8)"]')).toBeDefined();
   });
 
+  it("shows the OCR row after the search model and downloads it after confirming", async () => {
+    const { calls } = await mountPage({
+      tab: "model",
+      models: modelsInfo({
+        ocr: embeddingModel({
+          id: "pp-ocrv5-mobile",
+          name: "PP-OCRv5 mobile",
+          size: 29_366_176,
+          installed: false,
+        }),
+      }),
+      routes: {
+        "POST /api/models/pp-ocrv5-mobile/download": () => json({ status: "downloading" }, 202),
+      },
+    });
+    const heading = [...view!.container.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(heading.indexOf("Search model")).toBeLessThan(heading.indexOf("Text recognition (OCR)"));
+    expect(text()).toContain("Reads scanned PDF pages that have no text.");
+    await click(find('button[aria-label="Download PP-OCRv5 mobile"]'));
+    expect(dialog()?.querySelector("h2")?.textContent).toBe("Download PP-OCRv5 (29 MB)?");
+    await click(buttonByText(dialog()!, "Download"));
+    expect(keys(calls)).toContain("POST /api/models/pp-ocrv5-mobile/download");
+  });
+
+  it("shows no OCR row when the core has no OCR model", async () => {
+    await mountPage({ tab: "model", models: modelsInfo({ ocr: null }) });
+    expect(text()).not.toContain("Text recognition (OCR)");
+  });
+
   it("says so when there is no dedicated GPU", async () => {
     await mountPage({
       tab: "model",

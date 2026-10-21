@@ -56,6 +56,7 @@ export default function SettingsModel() {
         </div>
       </Section>
       <SettingsSearchModel {...modelsApi} />
+      <SettingsSearchModel {...modelsApi} kind="ocr" />
       {settings.mode === "api" ? <SettingsCloud /> : <SettingsLocal {...modelsApi} />}
     </>
   );

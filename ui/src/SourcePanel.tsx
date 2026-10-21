@@ -78,7 +78,8 @@ type Translate = (key: TranslationKey, params?: Record<string, string | number>)
 function whereLine(match: Match, located: Locate | null | undefined, t: Translate): string {
   if (located?.found) {
     if (located.kind === "pdf" && located.page !== undefined && located.page_count !== undefined) {
-      return t("source.pageOf", { page: located.page, count: located.page_count });
+      const where = t("source.pageOf", { page: located.page, count: located.page_count });
+      return located.ocr ? `${where} · OCR` : where;
     }
     if (located.kind === "text" && located.start !== undefined && located.end !== undefined) {
       const last = located.end - 1;

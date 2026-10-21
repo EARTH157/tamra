@@ -214,6 +214,9 @@ export const en = {
   "index.filesIndexed": "{count} files indexed",
   "index.filesIndexed.one": "1 file indexed",
   "index.current": "Indexing {file}",
+  "index.reading": "Reading page {page} of {pages}",
+  "index.needsOcr":
+    "Scanned pages need the text recognition (OCR) model. Download it in Settings.",
   "index.needAttention": "{count} files need attention",
   "index.needAttention.one": "1 file needs attention",
   "index.failed": "Failed: {error}",
@@ -261,6 +264,9 @@ export const en = {
   "settings.searchModel": "Search model",
   "settings.searchModelHint":
     "Needed to search your documents. It always runs on this computer.",
+  "settings.ocrModel": "Text recognition (OCR)",
+  "settings.ocrModelHint":
+    "Reads scanned PDF pages that have no text. It always runs on this computer.",
   "settings.localModel": "Local model",
   "settings.detected": "Detected {ram} GB RAM · {gpu}",
   "settings.gpu": "{name}, {vram} GB VRAM",

@@ -100,6 +100,46 @@ describe("IndexStatus", () => {
     expect(buttonByText(view.container, "3 files need attention")).toBeDefined();
   });
 
+  it("says which page OCR is reading", async () => {
+    const index = { ...idle, current: "scan.pdf", reading: { page: 3, pages: 40 } };
+    view = await mount(
+      <IndexStatus
+        project={project(index)}
+        disabled={false}
+        onChangeFolder={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+    expect(view.container.textContent).toContain("Indexing scan.pdf");
+    expect(view.container.textContent).toContain("Reading page 3 of 40");
+  });
+
+  it("explains a scan that waits for the OCR model and links to the AI model settings", async () => {
+    const onOpenModelSettings = vi.fn();
+    const problems = [
+      {
+        rel_path: "scan.pdf",
+        status: "indexed",
+        error: "no text layer on page(s) 2 (needs OCR)",
+        needs_ocr: true,
+      },
+    ];
+    view = await mount(
+      <IndexStatus
+        project={project({ ...idle, problems })}
+        disabled={false}
+        onChangeFolder={vi.fn()}
+        onRebuild={vi.fn()}
+        onOpenModelSettings={onOpenModelSettings}
+      />,
+    );
+    await click(buttonByText(view.container, "1 file needs attention"));
+    const item = view.container.querySelector<HTMLElement>(".problems li")!;
+    expect(item.textContent).toContain("Scanned pages need the text recognition (OCR) model.");
+    await click(buttonByText(item, "Open model settings"));
+    expect(onOpenModelSettings).toHaveBeenCalled();
+  });
+
   it("offers a rebuild when the index is stale", async () => {
     const onRebuild = vi.fn();
     const index = { stale: true, counts, current: null, error: null, problems: [] };

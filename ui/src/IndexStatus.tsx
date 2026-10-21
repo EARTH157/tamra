@@ -7,6 +7,7 @@ type Translate = ReturnType<typeof useT>;
 
 /** "Failed: <error>", "Skipped: <error>", or the note of a file indexed with missing parts. */
 function problemText(problem: ProblemFile, t: Translate): string {
+  if (problem.needs_ocr) return t("index.needsOcr");
   const error = problem.error ?? "";
   if (problem.status === "failed") {
     return error ? t("index.failed", { error }) : t("index.failedBare");
@@ -76,6 +77,11 @@ export function IndexBody({ index, onRebuild, onOpenModelSettings, disabled }: B
               {t("index.current", { file: index.current })}
             </div>
           )}
+          {index?.reading && (
+            <div className="collection-current">
+              {t("index.reading", { page: index.reading.page, pages: index.reading.pages })}
+            </div>
+          )}
         </>
       ) : (
         <div className="collection-count done">
@@ -117,6 +123,11 @@ export function IndexBody({ index, onRebuild, onOpenModelSettings, disabled }: B
                   <span className="problem-error" title={problemText(problem, t)}>
                     {problemText(problem, t)}
                   </span>
+                  {problem.needs_ocr && onOpenModelSettings && (
+                    <button type="button" className="link-button" onClick={onOpenModelSettings}>
+                      {t("chat.openModelSettings")}
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
