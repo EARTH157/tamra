@@ -17,8 +17,8 @@ from tamra.answer import AnswerService, AnswerSettings, Route
 from tamra.attribution import Attributor, Match
 from tamra.embedder import MODEL_ID, Embedder, EmbedderUnavailable
 from tamra.ingest.chunker import TokenSpans, bge_token_spans
-from tamra.ingest.indexer import EmbedderLike, Indexer
-from tamra.ingest.parsers import ParsedDoc, ParseError, parse_file
+from tamra.ingest.indexer import EmbedderLike, Indexer, OcrLike
+from tamra.ingest.parsers import ParsedDoc, ParseError, parse_file, with_ocr
 from tamra.ingest.watcher import FolderWatcher
 from tamra.llm.anthropic_api import AnthropicLLM
 from tamra.llm.base import Provider, ProviderError
@@ -27,6 +27,8 @@ from tamra.llm.runtime import LocalLLM
 from tamra.models.catalog import Catalog, load_catalog
 from tamra.models.hardware import Hardware, detect
 from tamra.models.manager import ModelManager
+from tamra.ocr import MODEL_DIR as OCR_MODEL_DIR
+from tamra.ocr import OcrEngine
 from tamra.settings import Settings, load_settings, save_settings
 from tamra.store import Collection, FileRecord, MessageRecord, SourceRecord, Store
 from tamra.viewer import FileMissing, Unreadable, ViewerError, resolve_file
@@ -111,15 +113,17 @@ class Core:
         embedder_factory: Callable[[], EmbedderLike] | None = None,
         token_spans_factory: Callable[[], TokenSpans] | None = None,
         llm: LocalLLM | None = None,
+        ocr_factory: Callable[[], OcrLike | None] | None = None,
         api_factory: Callable[[Settings, str], Provider] = _build_api_provider,
         catalog: Catalog | None = None,
         answer_settings: AnswerSettings | None = None,
         debounce: float = 2.0,
         warm_attribution: bool = False,
     ):
-        """`llm` replaces the local runtime and `api_factory` builds the API provider from the
-        settings and the key; both exist so tests can use fakes. `warm_attribution` embeds a
-        new answer's sources in the background so the first "Check source" is fast."""
+        """`llm` replaces the local runtime, `ocr_factory` the OCR models, and `api_factory`
+        builds the API provider from the settings and the key; they exist so tests can use
+        fakes. `warm_attribution` embeds a new answer's sources in the background so the first
+        "Check source" is fast."""
         data_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir = data_dir
         bge = models_dir / "bge-m3"
@@ -157,7 +161,12 @@ class Core:
             data_dir / "logs" / "llama-server.log",
             label_for=self._local_label,
         )
-        self.indexer = Indexer(self.store, self.embedder, spans_factory, MODEL_ID)
+        self._ocr_factory = ocr_factory or self._load_ocr
+        self._ocr: OcrLike | None = None
+        self._ocr_lock = threading.Lock()
+        self.indexer = Indexer(
+            self.store, self.embedder, spans_factory, MODEL_ID, ocr=self.ocr_engine
+        )
         self.watcher = FolderWatcher(self.indexer.request_reconcile, debounce=debounce)
         self.answers = AnswerService(
             self.store,
@@ -303,9 +312,34 @@ class Core:
                     raise EmbedderUnavailable(str(e)) from e
             return self._embedder
 
+    def ocr_engine(self) -> OcrLike | None:
+        """The OCR models, loaded on first use and kept. None while they are not installed or
+        cannot be loaded; scanned pages then wait, and the next file tries again."""
+        with self._ocr_lock:
+            if self._ocr is None:
+                try:
+                    self._ocr = self._ocr_factory()
+                except Exception as e:  # damaged or unreadable model files
+                    log.warning("the OCR models cannot be loaded: %s", e)
+            return self._ocr
+
+    def _ocr_installed(self) -> bool:
+        entry = self._catalog.ocr()
+        return entry is not None and entry.id in self._catalog.installed(self._models_dir)
+
+    def _load_ocr(self) -> OcrLike | None:
+        if not self._ocr_installed():
+            return None
+        return OcrEngine.load(self._models_dir / OCR_MODEL_DIR)
+
     def _model_installed(self, model_id: str) -> None:
-        """The search model arrived: files that paused for lack of it are indexed now."""
-        if model_id == self._catalog.embedding().id:
+        """The search model arrived: files that paused for lack of it are indexed now. The OCR
+        models arrived: every file with pages left for OCR is read again, in every project."""
+        ocr = self._catalog.ocr()
+        if ocr is not None and model_id == ocr.id:
+            self.store.requeue_ocr_files()
+            self.indexer.request_reconcile()
+        elif model_id == self._catalog.embedding().id:
             self.indexer.request_reconcile()
 
     def _embed_query(self, text: str) -> np.ndarray:
@@ -386,13 +420,14 @@ class Core:
         return (stat.st_size, stat.st_mtime) != (record.size, record.mtime)
 
     def document(self, file_id: int) -> tuple[FileRecord, Path, ParsedDoc]:
-        """The file parsed as it is now, from a small cache keyed by size and modified time."""
+        """The file parsed as it is now, with the OCR text the index used for its scanned pages,
+        from a small cache keyed by size, modified time and index time."""
         record, path = self.file_path(file_id)
         try:
             stat = path.stat()
         except OSError as e:
             raise FileMissing("file not found") from e
-        key = (file_id, str(path), stat.st_size, stat.st_mtime_ns)
+        key = (file_id, str(path), stat.st_size, stat.st_mtime_ns, record.indexed_at)
         with self._documents_lock:
             doc = self._documents.get(key)
             if doc is not None:
@@ -404,6 +439,9 @@ class Core:
             raise FileMissing("file not found") from e
         except (ParseError, OSError) as e:  # damaged, or locked or denied by the system
             raise Unreadable(f"cannot read file: {e}", pdf=path.suffix.lower() == ".pdf") from e
+        scanned = self.store.ocr_pages(file_id)
+        if scanned:  # the index used OCR text for these pages, so the viewer must too
+            doc = with_ocr(doc, {p.page: p.text for p in scanned})
         if stat.st_size > DOCUMENT_CACHE_MAX_BYTES:
             return record, path, doc
         with self._documents_lock:
@@ -415,6 +453,8 @@ class Core:
     # --- projects ---
 
     def start(self) -> None:
+        if self._ocr_installed():  # a file read while the models arrived, or a crash before
+            self.store.requeue_ocr_files()  # the re-queue, would otherwise wait for a change
         self.indexer.start()
         collections = self.store.list_collections()
         for collection in collections:
@@ -544,8 +584,16 @@ class Core:
             "counts": self.store.status_counts(collection.id),
             "current": state.current,
             "error": state.error,
+            "reading": None
+            if state.reading is None
+            else {"page": state.reading[0], "pages": state.reading[1]},
             "problems": [
-                {"rel_path": f.rel_path, "status": f.status, "error": f.error}
+                {
+                    "rel_path": f.rel_path,
+                    "status": f.status,
+                    "error": f.error,
+                    "needs_ocr": f.needs_ocr,
+                }
                 for f in self.store.problem_files(collection.id)
             ],
         }
