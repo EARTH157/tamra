@@ -1,0 +1,10 @@
+Tamra
+Copyright 2026 the Tamra contributors
+
+This product includes code adapted from RapidOCR 3.10.0
+(https://github.com/RapidAI/RapidOCR), licensed under the Apache License, Version 2.0:
+the text detection post-processing and the text line crop in src/tamra/ocr/geometry.py.
+
+At the user's request, Tamra downloads the PP-OCRv5 mobile text detection and recognition
+models of PaddleOCR (https://github.com/PaddlePaddle/PaddleOCR), licensed under the Apache
+License, Version 2.0, in the ONNX form published by RapidAI.
