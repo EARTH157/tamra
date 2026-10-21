@@ -71,12 +71,17 @@ which is started on demand in local mode and stopped when the app exits.
 ## 4. Data model (SQLite)
 
 - `collections(id, name, folder_path, embedding_model_id, created_at)`
-- `files(id, collection_id, rel_path, size, mtime, content_hash, status, error, indexed_at)`
-  — `status ∈ {pending, indexing, indexed, failed, skipped}`
+- `files(id, collection_id, rel_path, size, mtime, content_hash, status, error, indexed_at, needs_ocr)`
+  — `status ∈ {pending, indexing, indexed, failed, skipped}`; `needs_ocr` marks a file whose last
+  parse left pages for OCR because the OCR models were not installed
 - `chunks(id, file_id, ord, text, location_json)` — `location_json` holds page range and
   character offsets (PDF), heading path and paragraph index (DOCX), or line range (TXT/MD).
 - `chunks_fts` — FTS5 table over `chunks.text`, `tokenize='trigram'`
 - `chunk_vectors` — `sqlite-vec` virtual table, 1024-dim float32, keyed by chunk id
+- `ocr_pages(file_id, page, text, boxes)` — one row per PDF page read by OCR (M5): the page text
+  (lines joined with `\n`) and its character boxes, a BLOB of little-endian float32, four per code
+  point of `text` (x0, y0, x1, y1 as fractions of the page, top-left origin; a newline has zeros).
+  Primary key (`file_id`, `page`); deleted with the file.
 - `chats(id, title, collection_id, created_at, updated_at, activity)` — `collection_id` is the
   chat's **home** project, which sets where the sidebar lists it (null only for a chat made
   before any project existed). `chat_collections(chat_id, collection_id)` is its **search
@@ -86,11 +91,12 @@ which is started on demand in local mode and stopped when the app exits.
 - `message_sources(message_id, n, chunk_id, file_id, text_snapshot, location_json, file_hash_at_answer)`
 - `settings(key, value)` — API keys are **not** stored here (see §9)
 
-Deleting a file's chunks and inserting the new ones happens in one transaction, so a crash
-never leaves a file half-indexed.
+Deleting a file's chunks and inserting the new ones, with its `ocr_pages` rows, happens in one
+transaction, so a crash never leaves a file half-indexed.
 
-No character boxes are stored. The viewer (§8) computes the highlight boxes of a PDF page on
-demand from the current file.
+No character boxes are stored for text-layer pages: the viewer (§8) computes them on demand from
+the current file. OCR is too slow to repeat when a page is viewed, so the boxes of OCR pages are
+stored in `ocr_pages`.
 
 ## 5. Ingestion and indexing
 
@@ -113,9 +119,17 @@ demand from the current file.
   worker for all projects: reconcile runs project by project, then the pending files are
   indexed oldest first across projects. Status is reported per project, and the UI shows
   per-file status and progress.
+  OCR pages are read one at a time on the same worker ("Reading page x of y" in the project
+  status); shutting down or deleting the project stops between pages. An OCR failure on one page
+  is noted on the file, and the rest of the file is still indexed.
 - **Parsers:**
-  - PDF: `pypdfium2`. Text per page; no character boxes are stored (see §4). A page with no
-    text layer is flagged `needs_ocr` (skipped until M5).
+  - PDF: `pypdfium2`. Text per page; no character boxes are stored for text-layer pages (see
+    §4). A page is read by OCR (§10) instead of its text layer when it has no text layer, when its
+    Thai text layer is garbled (Chromium/Skia browser prints repeat cluster fragments such as
+    `บอร์ดร์` or `สรุป\nรุ`), or when it has text that is not drawn (its render is almost blank).
+    Without the OCR models such pages keep their text layer, if any; a page with none is noted
+    ("needs OCR") and the file is marked `needs_ocr`. Installing the models re-queues every such
+    file, even though its content did not change.
   - DOCX: `python-docx`. Paragraphs with their heading path.
   - TXT/MD: encoding detected with `charset-normalizer` (Thai TIS-620/CP874 files are
     common), then line-tracked text.
@@ -198,7 +212,7 @@ A modal over the chat, opened by "Open file" in the source panel (§7).
 
 | Type | Display |
 |---|---|
-| PDF | The core renders the real page to PNG with `pypdfium2`. The highlight rectangles come from the same pdfium text page that indexing used, mapped from the matched window's character offsets, and are drawn over the image. |
+| PDF | The core renders the real page to PNG with `pypdfium2`. The highlight rectangles come from the same pdfium text page that indexing used, mapped from the matched window's character offsets, and are drawn over the image. For a page read by OCR, the text and the character boxes come from `ocr_pages`; the characters of the match are merged into one rectangle per line. The location reads "p. 4 · OCR", so the user knows the text was machine-read. |
 | DOCX / TXT / MD | Extracted text with line or paragraph numbers, scrolled to the location with the passage highlighted (not the original formatting). |
 
 Every type also has "Open with default app" (`os.startfile`) in the viewer.
@@ -206,8 +220,10 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 ## 9. Models and settings
 
 - **Catalog:** `models.json` shipped with the app. Each entry has `id`, `role`
-  (embedding|llm), `tier` (small|medium|large), `file_size`, `url` (Hugging Face),
-  `sha256`, `license`, `languages`, `context_length`. It updates with app releases.
+  (embedding|llm|ocr), `tier` (small|medium|large), `file_size`, `url` (Hugging Face),
+  `sha256`, `license`, `languages`, `context_length`. It updates with app releases. The OCR
+  entry's files come from ModelScope (RapidAI's ONNX conversion of PaddleOCR's Apache-2.0
+  models), pinned like the others.
 - **Hardware detection:** RAM, and GPU devices/VRAM via `llama-server --list-devices`.
   Tamra recommends a tier; the user can override.
   - Small: about 1–4B parameters, for low-spec or CPU-only machines.
@@ -231,11 +247,23 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 
 ## 10. OCR (M5)
 
-- PDF pages flagged `needs_ocr` are run through OCR. The viewer takes their word boxes in the
-  same form as the pdfium text boxes it uses today, so highlighting works unchanged.
-- **Engine:** decided by a spike at the start of M5. Compare Tesseract (tha/chi_sim/eng),
-  RapidOCR, and Windows built-in OCR on real Thai, Chinese, and English scans, scoring
-  accuracy, speed, bundle size, and license.
+- **Engine** (spike `docs/spikes/2026-10-m5-ocr-spike.md`): PaddleOCR PP-OCRv5 mobile as ONNX,
+  run on onnxruntime with Tamra's own numpy pre- and post-processing (`tamra.ocr`). The detection
+  post-processing and the rotated line crop are ported from RapidOCR (Apache-2.0); there is no
+  OpenCV, PIL or Tesseract. Windows OCR is out: Thai and Chinese need admin rights to install.
+- **Models:** catalog entry `pp-ocrv5-mobile` (role `ocr`, 29.4 MB): the detector
+  `ch_PP-OCRv5_det_mobile`, the Thai + Latin recogniser `th_PP-OCRv5_rec_mobile` (every line) and
+  the Chinese + Latin recogniser `ch_PP-OCRv5_rec_mobile` (only lines the Thai one scores below
+  0.9). Downloaded from Settings > AI model ("Text recognition (OCR)") into `models\ppocr-v5\`.
+- **Per page:** render at 300 dpi, scale to at most 2000 px, detect, crop each line, recognise,
+  drop lines scoring below 0.5. Every character gets a box from the CTC time steps. The page text
+  is the lines in reading order joined with `\n`.
+- **Viewer:** the OCR boxes are fractions of the rendered page, the form `pdf_rects` uses, so the
+  highlight works unchanged (§8).
+- **Quality gate** (`tests/test_ocr_quality.py`, needs the models): Thai at 300 dpi CER ≤ 0.06;
+  Chinese photocopy (noise and a 1° tilt) CER ≤ 0.03; English word hit ≥ 0.9.
+- **Not in M5:** image files and images in DOCX, vertical or Traditional Chinese, rotated pages,
+  a GPU path, an OCR language setting, re-OCR on demand.
 
 ## 11. Packaging and release
 
@@ -249,11 +277,14 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 
 - **pytest (core):**
   - Chunker with Thai, Chinese, English, and mixed fixtures.
-  - Each parser, including a TIS-620 TXT and a PDF with known character boxes.
+  - Each parser, including a TIS-620 TXT and a PDF with known character boxes, and the page
+    checks that send a broken text layer to OCR.
   - Reconcile and watcher logic.
   - Hybrid retrieval on a small fixture corpus.
   - Attribution matching.
   - `answer` with a fake `llm` provider.
+  - OCR geometry against known shapes, and the OCR quality gate on the committed Thai and
+    Chinese pages (`-m assets`).
 - **Retrieval eval:** `eval/questions.jsonl` holds TH/EN/ZH questions, each with the
   expected file and page. A script reports hit@k. Run it whenever chunking, retrieval, or
   embedding changes. It also tunes the §6 and §7 thresholds.
