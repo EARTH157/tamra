@@ -617,22 +617,21 @@ class Store:
             )
         return message_id
 
-    def last_exchange(self, chat_id: int) -> tuple[str | None, str | None]:
-        """The chat's latest question and the assistant reply that followed it, if any."""
+    def recent_exchanges(self, chat_id: int, limit: int) -> list[tuple[str, str | None]]:
+        """The chat's last `limit` questions, oldest first, each with the assistant reply that
+        followed it before the next question (None if there was none)."""
         with self._lock:
-            question = self._conn.execute(
-                "SELECT id, content FROM messages WHERE chat_id = ? AND role = 'user'"
-                " ORDER BY id DESC LIMIT 1",
-                (chat_id,),
-            ).fetchone()
-            if question is None:
-                return None, None
-            answer = self._conn.execute(
-                "SELECT content FROM messages WHERE chat_id = ? AND role = 'assistant' AND id > ?"
-                " ORDER BY id LIMIT 1",
-                (chat_id, question[0]),
-            ).fetchone()
-        return question[1], (answer[0] if answer else None)
+            rows = self._conn.execute(
+                "SELECT q.content, (SELECT a.content FROM messages a"
+                "  WHERE a.chat_id = q.chat_id AND a.role = 'assistant' AND a.id > q.id"
+                "  AND NOT EXISTS (SELECT 1 FROM messages n WHERE n.chat_id = q.chat_id"
+                "   AND n.role = 'user' AND n.id > q.id AND n.id < a.id)"
+                "  ORDER BY a.id LIMIT 1)"
+                " FROM messages q WHERE q.chat_id = ? AND q.role = 'user'"
+                " ORDER BY q.id DESC LIMIT ?",
+                (chat_id, limit),
+            ).fetchall()
+        return [(question, answer) for question, answer in reversed(rows)]
 
     def get_message(self, message_id: int) -> MessageRecord | None:
         """One message with its saved sources, or None if there is no such message."""

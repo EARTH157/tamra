@@ -817,7 +817,8 @@ svg.lucide {
   color: var(--warning-text);
 }
 
-.stale-note .link-button {
+.stale-note .link-button,
+.index-error .link-button {
   display: block;
   margin-top: 4px;
 }
@@ -1018,6 +1019,14 @@ svg.lucide {
 .para-break {
   display: block;
   height: var(--gap-para);
+}
+
+/* A formula is KaTeX's MathML, which the browser draws with its own math font. */
+.math-display {
+  display: block;
+  margin: 8px 0;
+  overflow-x: auto;
+  text-align: center;
 }
 
 .cite {
@@ -1730,7 +1739,15 @@ svg.lucide {
   flex: 1;
   min-height: 0;
   padding: 20px;
-  overflow-y: auto;
+  overflow: auto; /* a zoomed page scrolls here, not the window */
+}
+
+/* Outside .source-body, so the zoom stays in view while a zoomed page scrolls. */
+.source-zoom {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  padding: 12px 20px 0;
 }
 
 .source-state {
@@ -2280,7 +2297,8 @@ svg.lucide {
   gap: 8px;
 }
 
-.model-row {
+.model-row,
+.search-model {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -2293,6 +2311,19 @@ svg.lucide {
 
 .model-row.selected {
   border-color: var(--primary-ink);
+}
+
+.search-model {
+  padding-left: 16px;
+}
+
+.search-model .model-text {
+  flex: 1;
+  padding: 12px 0;
+}
+
+.search-model-hint {
+  margin: 8px 0 0;
 }
 
 .model-pick {

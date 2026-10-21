@@ -178,6 +178,8 @@ export const en = {
   "chat.error.quota": "The provider's usage limit was reached. Try again later.",
   "chat.error.modelMissing":
     "No model is ready to answer. Choose or download one in Settings.",
+  "error.embeddingMissing":
+    "The search model is not installed. Download it in Settings > AI model.",
   "chat.openModelSettings": "Open model settings",
   "chat.useLocal": "Use the local model",
 
@@ -256,6 +258,9 @@ export const en = {
   "settings.modeLocalText": "Runs on this computer. Nothing leaves it.",
   "settings.modeCloud": "Cloud API",
   "settings.modeCloudText": "Anthropic or any OpenAI-compatible server. Usually better answers.",
+  "settings.searchModel": "Search model",
+  "settings.searchModelHint":
+    "Needed to search your documents. It always runs on this computer.",
   "settings.localModel": "Local model",
   "settings.detected": "Detected {ram} GB RAM · {gpu}",
   "settings.gpu": "{name}, {vram} GB VRAM",

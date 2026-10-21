@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { LocalModel, ModelsInfo, Settings, UncataloguedModel } from "./types";
+import type { LocalModel, ModelsInfo, ModelStatus, Settings, UncataloguedModel } from "./types";
 
 export type ModelsApi = {
   /** The last answer of GET /api/models; null until the first one arrives (or when it failed). */
@@ -49,12 +49,12 @@ export function offeredLocal(models: ModelsInfo): LocalModel[] {
   );
 }
 
-export function isDownloading(model: LocalModel): boolean {
+export function isDownloading(model: ModelStatus): boolean {
   return model.state === "downloading" || model.state === "verifying";
 }
 
 /** Download progress in whole percent (0 while the size is not known yet). */
-export function percent(model: LocalModel): number {
+export function percent(model: ModelStatus): number {
   return model.total > 0 ? Math.min(100, Math.floor((model.done / model.total) * 100)) : 0;
 }
 

@@ -263,6 +263,8 @@ export default function ChatView({
       const savedId = state.messageId;
       if (thought && savedId !== null) setThoughts((all) => ({ ...all, [savedId]: thought }));
       setNotice(state.error);
+      // The core saves nothing for this question: give the text back so it can be asked again.
+      if (state.error?.reason === "embedding_missing") setQuestion((current) => current || text);
       setPending(null);
       setOpened((open) => (open?.owner === "pending" ? reopen(open.source, saved) : open));
       onBusyChange(false);
@@ -485,7 +487,7 @@ export default function ChatView({
           {notice && (
             <div className="chat-error" role="alert">
               <span>{noticeText(notice, t)}</span>
-              {notice.reason === "model_missing" && (
+              {(notice.reason === "model_missing" || notice.reason === "embedding_missing") && (
                 <button type="button" className="btn" onClick={() => onOpenSettings("model")}>
                   {t("chat.openModelSettings")}
                 </button>
@@ -588,6 +590,8 @@ function noticeText(notice: Notice, t: ReturnType<typeof useT>): string {
       return t("chat.error.quota");
     case "model_missing":
       return t("chat.error.modelMissing");
+    case "embedding_missing":
+      return t("error.embeddingMissing");
     default:
       return notice.message;
   }

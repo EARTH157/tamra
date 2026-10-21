@@ -4,17 +4,17 @@ import { api, ApiError } from "./api";
 import { errorText } from "./apiErrors";
 import ConfirmDialog from "./ConfirmDialog";
 import { type TranslationKey, useT } from "./i18n";
-import { isDownloading, percent, useModels } from "./models";
+import { isDownloading, type ModelsApi, percent } from "./models";
 import { useSettings } from "./settings";
 import { RadioMark, Section } from "./SettingsControls";
-import type { Gpu, ImportResult, LocalModel, ModelsInfo, UncataloguedModel } from "./types";
+import type { Gpu, ImportResult, LocalModel, ModelsInfo, ModelStatus, UncataloguedModel } from "./types";
 
 const POLL_MS = 1000;
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
 /** "2.5 GB", or "30 MB" for a smaller file. */
-function formatSize(bytes: number, t: Translate): string {
+export function formatSize(bytes: number, t: Translate): string {
   if (bytes >= 1e9) return t("settings.sizeGb", { size: (bytes / 1e9).toFixed(1) });
   return t("settings.sizeMb", { size: Math.max(1, Math.round(bytes / 1e6)) });
 }
@@ -48,10 +48,9 @@ function baseName(path: string): string {
 type ImportNote = { ok: boolean; text: string };
 
 /** The local model list: pick one, download or cancel, and import a file. */
-export default function SettingsLocal() {
+export default function SettingsLocal({ models, refresh }: ModelsApi) {
   const t = useT();
   const { settings, update } = useSettings();
-  const { models, refresh } = useModels(settings);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<LocalModel | null>(null);
   const [typing, setTyping] = useState(false); // no file picker here: ask for the path instead
@@ -240,8 +239,6 @@ function ModelRow({ model, selected, onSelect, onDownload, onCancel }: RowProps)
       : t("settings.forCpu"),
   );
   if (model.thinking) parts.push(t("model.canThink"));
-  const progress = percent(model);
-
   return (
     <div className={selected ? "model-row selected" : "model-row"}>
       <button
@@ -264,56 +261,73 @@ function ModelRow({ model, selected, onSelect, onDownload, onCancel }: RowProps)
           )}
         </span>
       </button>
-      <div className="model-action">
-        {model.installed ? (
-          <span className="installed">
-            <Check size={14} />
-            {t("settings.installed")}
-          </span>
-        ) : isDownloading(model) ? (
-          <div className="download">
-            <div className="download-text">
-              <span>
-                {model.state === "verifying"
-                  ? t("settings.verifying")
-                  : t("settings.downloadingPercent", { percent: progress })}
-              </span>
-              {model.state === "downloading" && (
-                <button
-                  type="button"
-                  className="link-button"
-                  aria-label={`${t("settings.cancelDownload")}: ${model.name}`}
-                  onClick={onCancel}
-                >
-                  {t("common.cancel")}
-                </button>
-              )}
-            </div>
-            <div
-              className="progress"
-              role="progressbar"
-              aria-label={model.name}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={model.state === "verifying" ? 100 : progress}
-            >
-              <div
-                className="progress-fill"
-                style={{ width: `${model.state === "verifying" ? 100 : progress}%` }}
-              />
-            </div>
+      <ModelAction model={model} onDownload={onDownload} onCancel={onCancel} />
+    </div>
+  );
+}
+
+/** What a catalog model offers: Installed, Download, or a progress bar with Cancel. */
+export function ModelAction({
+  model,
+  onDownload,
+  onCancel,
+}: {
+  model: ModelStatus;
+  onDownload: () => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const progress = percent(model);
+  return (
+    <div className="model-action">
+      {model.installed ? (
+        <span className="installed">
+          <Check size={14} />
+          {t("settings.installed")}
+        </span>
+      ) : isDownloading(model) ? (
+        <div className="download">
+          <div className="download-text">
+            <span>
+              {model.state === "verifying"
+                ? t("settings.verifying")
+                : t("settings.downloadingPercent", { percent: progress })}
+            </span>
+            {model.state === "downloading" && (
+              <button
+                type="button"
+                className="link-button"
+                aria-label={`${t("settings.cancelDownload")}: ${model.name}`}
+                onClick={onCancel}
+              >
+                {t("common.cancel")}
+              </button>
+            )}
           </div>
-        ) : (
-          <button
-            type="button"
-            className="btn"
-            aria-label={`${t("settings.download")} ${model.name}`}
-            onClick={onDownload}
+          <div
+            className="progress"
+            role="progressbar"
+            aria-label={model.name}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={model.state === "verifying" ? 100 : progress}
           >
-            {t("settings.download")}
-          </button>
-        )}
-      </div>
+            <div
+              className="progress-fill"
+              style={{ width: `${model.state === "verifying" ? 100 : progress}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="btn"
+          aria-label={`${t("settings.download")} ${model.name}`}
+          onClick={onDownload}
+        >
+          {t("settings.download")}
+        </button>
+      )}
     </div>
   );
 }

@@ -582,6 +582,32 @@ describe("model errors", () => {
     expect(onOpenSettings).toHaveBeenCalledWith("model");
   });
 
+  it("explains a missing search model, restores the question and opens the model settings", async () => {
+    const onOpenSettings = vi.fn();
+    await mountChat({
+      onOpenSettings,
+      routes: {
+        "POST /api/chats/5/messages": () =>
+          sse([
+            {
+              type: "error",
+              message: "Embedding model unavailable: model.onnx not found",
+              reason: "embedding_missing",
+            },
+          ]),
+      },
+    });
+    await ask();
+    const alert = view!.container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(
+      "The search model is not installed. Download it in Settings > AI model.",
+    );
+    expect(alert?.textContent).not.toContain("model.onnx");
+    expect(view!.container.querySelector("textarea")?.value).toBe("How long?");
+    await click(buttonByText(alert!, "Open model settings"));
+    expect(onOpenSettings).toHaveBeenCalledWith("model");
+  });
+
   it.each([
     ["offline", "Could not reach the model. Check your internet connection and try again."],
     ["auth", "The API key is missing or was refused. Check it in Settings."],

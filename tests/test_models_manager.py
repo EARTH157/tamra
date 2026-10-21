@@ -492,3 +492,22 @@ def test_a_finished_worker_leaves_a_retry_of_the_same_model_alone(tmp_path):
         manager.start_download("emb")  # and it still holds the slot
     gate.set()
     assert _wait_idle(manager, "tiny")["state"] == "idle"
+
+
+def test_a_finished_download_calls_the_hook_with_the_model_id(tmp_path):
+    installed = []
+    manager = ModelManager(
+        tmp_path, _catalog(), transport=_transport(), on_installed=installed.append
+    )
+    manager.start_download("emb")
+    _wait_idle(manager, "emb")
+    assert installed == ["emb"]
+
+
+def test_a_failed_hook_does_not_fail_the_download(tmp_path):
+    def boom(model_id):
+        raise RuntimeError("hook failed")
+
+    manager = ModelManager(tmp_path, _catalog(), transport=_transport(), on_installed=boom)
+    manager.start_download("tiny")
+    assert _wait_idle(manager, "tiny")["error"] is None

@@ -156,6 +156,34 @@ A DOCX file indexed before these fixes keeps its old table text and paragraph in
 project's index is rebuilt (**Project settings > Rebuild index**), because its content hash did not
 change.
 
+## Owner requests during M4
+
+These came from the owner's own use of the M4 exe and are on the same branch.
+
+1. **Search model in Settings** (`47eb32d`, `279d911`). With a chat model downloaded but no bge-m3,
+   every question failed. Settings > AI model now has a "Search model" row that downloads it. A
+   question that cannot be embedded is not saved to the chat; when the cause is the missing model
+   files (`EmbedderUnavailable`) the error carries `reason: "embedding_missing"` and the UI links to
+   Settings. After the download, every project is reconciled, so files skipped earlier get indexed.
+2. **Real PDF page in the source panel** (`f4a43f4`, `93e31d1`). For a PDF source the panel shows the
+   rendered page with the passage marked, instead of the text snapshot. Prev/next keeps the page
+   mounted and moves only the marks. If the file cannot be located, the panel falls back to the
+   snapshot. The page zooms in steps from 100% to 300% of the panel width; another file starts at
+   100%.
+3. **LaTeX in answers** (`6c1e5fc`, `93e31d1`). `$...$`, `$$...$$`, `\(...\)` and `\[...\]` render
+   with KaTeX 0.19.0 (MIT) as MathML: no fonts or CSS, `trust: false`, and errors shown as text. A
+   `$` follows pandoc's rule, so prices such as "$5 and $10" stay text. A selection that starts or
+   ends inside a formula takes the whole formula.
+4. **Conversation memory** (`6c53c0f`). The owner found that follow-ups lost the thread. Chats
+   were saved, but the model saw only the previous exchange, its answer cut to 600 characters. It
+   now sees the last 4 exchanges of the chat (`Store.recent_exchanges`), oldest first. Earlier
+   answers lose their `[n]` markers, since their sources are no longer in the prompt. Each earlier
+   question and answer is cut to 600 characters. A question without an answer (cancelled, failed,
+   or search mode) or with a not-found reply is left out. Retrieval still adds only the previous question to the query.
+
+The PDF page and the formulas are checked by unit tests only; their look in the WebView2 window is
+the owner's check.
+
 ## Deviations from the spec
 
 The spec (`docs/superpowers/specs/2026-10-02-tamra-design.md`) §4 to §6 now describe what was
@@ -218,3 +246,8 @@ built. The places where the first version differed:
   cases, and the rest) is unchanged, except that `Core.file_path` now resolves each file from its
   own project's folder.
 - **Anthropic and the real window** are still the owner's checks, as in M2 and M3.
+- **Zoom buttons and keyboard focus.** In the panel and in the document viewer, the zoom button
+  that reaches the end of the range is disabled and drops focus, and the percent is not announced.
+- **Citations in follow-ups are not measured.** Earlier answers reach the model without `[n]`
+  markers; whether a small local model then cites less often in the 2nd and later answers is
+  unchecked. The scroll to the first mark after a zoom has no unit test (jsdom loads no image).

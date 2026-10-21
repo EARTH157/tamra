@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS } from "./settings";
-import type { LocalModel, ModelsInfo, Settings } from "./types";
+import type { EmbeddingModel, LocalModel, ModelsInfo, Settings } from "./types";
 
 /** Fixtures for the tests that read GET /api/models and /api/settings. */
 
@@ -20,6 +20,20 @@ export function localModel(over: Partial<LocalModel>): LocalModel {
     context_length: 32768,
     thinking: true,
     min_vram_gb: 0,
+    ...over,
+  };
+}
+
+export function embeddingModel(over: Partial<EmbeddingModel>): EmbeddingModel {
+  return {
+    id: "bge-m3-int8",
+    name: "bge-m3 (int8)",
+    size: 585_000_000,
+    installed: true,
+    state: "idle",
+    done: 0,
+    total: 0,
+    error: null,
     ...over,
   };
 }
@@ -46,6 +60,7 @@ export function modelsInfo(over: Partial<ModelsInfo> = {}): ModelsInfo {
       localModel({ id: "qwen3-14b", name: "Qwen3-14B", tier: "large", installed: false }),
     ],
     uncatalogued: [{ id: "import:mine.gguf", name: "mine", file: "mine.gguf", size: 8 }],
+    embedding: embeddingModel({}),
     ...over,
   };
 }

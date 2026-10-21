@@ -1,15 +1,32 @@
-import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fitScale } from "./PdfPage";
 import SourcePanel, { type Check } from "./SourcePanel";
 import { buttonByText, click, json, type Mounted, mockFetch, mount, settle } from "./test-utils";
 import type { Match, Source } from "./types";
 
 let view: Mounted | undefined;
 
+let created = 0;
+let revoked: string[] = [];
+
+beforeEach(() => {
+  created = 0;
+  revoked = [];
+  URL.createObjectURL = vi.fn(() => `blob:page-${++created}`);
+  URL.revokeObjectURL = vi.fn((url: string) => {
+    revoked.push(url);
+  });
+});
+
 afterEach(async () => {
   await view?.unmount();
   view = undefined;
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(URL, "createObjectURL");
+  Reflect.deleteProperty(URL, "revokeObjectURL");
+  Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+  window.devicePixelRatio = 1;
 });
 
 const snapshot = "Staff get leave. The lease term is three years. Rent is due monthly.";
@@ -76,15 +93,19 @@ const locatePdf = {
   page: 14,
   start: 0,
   end: 10,
-  rects: [],
+  rects: [[0.1, 0.2, 0.6, 0.25]],
 };
 const locateUrl = (n: number, m: Match) =>
   `GET /api/sources/4/${n}/locate?start=${m.start}&end=${m.end}`;
+const notFound = { file_id: 7, kind: "pdf", changed: false, found: false, page_count: 32 };
+const png = () => new Response(new Blob(["png"], { type: "image/png" }));
+const pageRoute = (page: number, scale = 1) => `GET /api/files/7/pages/${page}?scale=${scale}`;
+const pageRoutes = { [pageRoute(14)]: png, [pageRoute(9)]: png };
 const subtitle = () => view?.container.querySelector("header .source-title span")?.textContent;
 
 describe("SourcePanel", () => {
   it("compares the answer with the document and highlights the passage in the snapshot", async () => {
-    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf) });
+    mockFetch({ [locateUrl(1, match)]: () => json(notFound) });
     view = await mount(<SourcePanel {...base} check={check()} />);
     const panel = view.container.querySelector(".source-panel")!;
     const rows = [...panel.querySelectorAll(".compare-row")].map((row) => row.textContent);
@@ -100,16 +121,288 @@ describe("SourcePanel", () => {
     expect(panel.querySelector(".source-warning")).toBeNull();
   });
 
+  it("shows a formula of the selected answer text as math", async () => {
+    mockFetch({ [locateUrl(1, match)]: () => json(notFound) });
+    view = await mount(<SourcePanel {...base} check={check({ selection: "Speed is $x^2$ rad/s" })} />);
+    const answer = view.container.querySelector(".compare-row .compare-text")!;
+    expect(answer.querySelector("math")).not.toBeNull();
+    expect(answer.querySelector("script")).toBeNull();
+  });
+
   it("shows the located page of a PDF", async () => {
-    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf) });
+    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf), ...pageRoutes });
     view = await mount(<SourcePanel {...base} check={check()} />);
     expect(subtitle()).toBe("page 14 of 32");
+  });
+
+  it("previews the real PDF page with the passage marked, instead of the snapshot", async () => {
+    const calls = mockFetch({ [locateUrl(1, match)]: () => json(locatePdf), ...pageRoutes });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    const panel = view.container.querySelector(".source-panel")!;
+    expect(calls.map((c) => c.key)).toEqual([locateUrl(1, match), pageRoute(14)]);
+    expect(panel.querySelector(".pdf-page img")?.getAttribute("src")).toBe("blob:page-1");
+    expect(panel.querySelector(".pdf-page img")?.getAttribute("alt")).toBe("Page 14 of lease.pdf");
+    const [box] = panel.querySelectorAll<HTMLElement>(".pdf-hit");
+    expect(panel.querySelectorAll(".pdf-hit")).toHaveLength(1);
+    expect(box.style.left).toBe("10%");
+    expect(box.style.top).toBe("20%");
+    expect(box.style.width).toBe("50%");
+    expect(panel.querySelector(".paper")).toBeNull();
+    expect(panel.querySelector(".snapshot-hit")).toBeNull();
+    expect(panel.querySelector(".source-body")?.textContent).not.toContain("Staff get leave");
+    await view.unmount();
+    expect(revoked).toEqual(["blob:page-1"]); // the object URL goes with the panel
+  });
+
+  it("fits the page to the panel width and asks for an image sharp at that width", async () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { value: 400, configurable: true });
+    window.devicePixelRatio = 2;
+    // 400 px at 2x is 800 device pixels over a 612 pt page: zoom 65 -> scale 1.31 -> up to 1.5
+    const calls = mockFetch({
+      [locateUrl(1, match)]: () => json(locatePdf),
+      [pageRoute(14, 1.5)]: png,
+    });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    expect(calls.map((c) => c.key)).toEqual([locateUrl(1, match), pageRoute(14, 1.5)]);
+    const page = view.container.querySelector<HTMLElement>(".pdf-page")!;
+    expect(page.style.width).toBe("100%");
+    // Once the image has loaded, its real page width gives about the same scale: no second image.
+    const img = page.querySelector("img")!;
+    Object.defineProperty(img, "naturalWidth", { value: 892, configurable: true });
+    img.dispatchEvent(new Event("load"));
+    await settle();
+    expect(calls).toHaveLength(2);
+  });
+
+  it("asks for a new image only when the panel width crosses a 50 px step", async () => {
+    let width = 400;
+    let observed: (() => void) | undefined;
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { get: () => width, configurable: true });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          observed = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    // 400 px over a 612 pt page is zoom 65 -> 0.75; 600 px is zoom 98 -> 1
+    const calls = mockFetch({
+      [locateUrl(1, match)]: () => json(locatePdf),
+      [pageRoute(14, 0.75)]: png,
+      [pageRoute(14, 1)]: png,
+    });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    expect(calls.map((c) => c.key)).toEqual([locateUrl(1, match), pageRoute(14, 0.75)]);
+    width = 380; // still the 400 step
+    await act(async () => observed?.());
+    await settle();
+    expect(calls).toHaveLength(2);
+    width = 600;
+    await act(async () => observed?.());
+    await settle();
+    expect(calls.map((c) => c.key)).toEqual([locateUrl(1, match), pageRoute(14, 0.75), pageRoute(14, 1)]);
+  });
+
+  it("keeps the page, and fetches nothing, while the next passage of the same file is located", async () => {
+    const third: Match = { ...match, start: 0, end: 10, text: "Staff get " };
+    const release: Array<() => void> = [];
+    const pages: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/pages/")) {
+          pages.push(url);
+          return png();
+        }
+        if (url.includes("/locate?start=0&end=10")) {
+          await new Promise<void>((resolve) => release.push(resolve)); // answers when released
+          return json({ ...locatePdf, rects: [[0.3, 0.4, 0.5, 0.45]] });
+        }
+        return json(locatePdf);
+      }),
+    );
+    function Host() {
+      const [index, setIndex] = useState(0);
+      return (
+        <SourcePanel
+          {...base}
+          check={check({ matches: [match, third], index })}
+          onIndexChange={setIndex}
+        />
+      );
+    }
+    view = await mount(<Host />);
+    const hit = () => view!.container.querySelector<HTMLElement>(".pdf-hit")?.style.left;
+    expect(hit()).toBe("10%");
+    expect(pages).toHaveLength(1);
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    // Still the page with the old marks; no snapshot flashes in, and no new image is asked for.
+    expect(view.container.querySelector(".pdf-page img")).not.toBeNull();
+    expect(view.container.querySelector(".paper")).toBeNull();
+    expect(view.container.querySelector(".snapshot-hit")).toBeNull();
+    expect(hit()).toBe("10%");
+    for (const resolve of release) resolve();
+    await settle();
+    expect(hit()).toBe("30%"); // the marks move once the new result arrives
+    expect(view.container.querySelector(".paper")).toBeNull();
+    expect(pages).toHaveLength(1);
+    expect(revoked).toEqual([]);
+  });
+
+  it("shows the snapshot when locating the next passage fails", async () => {
+    const third: Match = { ...match, start: 0, end: 10, text: "Staff get " };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/pages/")) return png();
+        if (url.includes("/locate?start=0&end=10")) return json({ detail: "File not found." }, 404);
+        return json(locatePdf);
+      }),
+    );
+    function Host() {
+      const [index, setIndex] = useState(0);
+      return (
+        <SourcePanel
+          {...base}
+          check={check({ matches: [match, third], index })}
+          onIndexChange={setIndex}
+        />
+      );
+    }
+    view = await mount(<Host />);
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    expect(view.container.querySelector(".pdf-page")).toBeNull();
+    expect(view.container.querySelector(".snapshot-hit")).not.toBeNull();
+  });
+
+  it("rounds the fitted scale up to a quarter, within the limits", () => {
+    expect(fitScale(0, 612, 2)).toBe(2); // no layout yet: the page at 100%
+    expect(fitScale(400, 612, 1)).toBe(0.75); // 0.65 -> 0.75
+    expect(fitScale(612, 612, 1)).toBe(1);
+    expect(fitScale(1000, 612, 2)).toBe(3);
+    expect(fitScale(50, 612, 1)).toBe(0.5);
+    expect(fitScale(400, 612, 1, 200)).toBe(1.5); // zoomed: twice the fitted width
+    expect(fitScale(0, 612, 1, 150)).toBe(1.5);
+  });
+
+  it("zooms the fitted page in steps, asking for one image per new scale", async () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { value: 400, configurable: true });
+    // 400 px over a 612 pt page: 100% -> 0.75, 125% and 150% -> 1, 200% -> 1.5, 300% -> 2
+    const calls = mockFetch({
+      [locateUrl(1, match)]: () => json(locatePdf),
+      [pageRoute(14, 0.75)]: png,
+      [pageRoute(14, 1)]: png,
+      [pageRoute(14, 1.5)]: png,
+      [pageRoute(14, 2)]: png,
+    });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    const zoomIn = () => view!.container.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')!;
+    const zoomOut = () => view!.container.querySelector<HTMLButtonElement>('button[aria-label="Zoom out"]')!;
+    const readout = () => view!.container.querySelector(".source-zoom .viewer-readout")?.textContent;
+    const width = () => view!.container.querySelector<HTMLElement>(".pdf-page")?.style.width;
+    expect(readout()).toBe("100%");
+    expect(width()).toBe("100%");
+    expect(zoomOut().disabled).toBe(true);
+    expect(zoomIn().disabled).toBe(false);
+    await click(zoomIn());
+    expect(readout()).toBe("125%");
+    expect(width()).toBe("125%");
+    await click(zoomIn());
+    expect(readout()).toBe("150%");
+    await click(zoomIn());
+    await click(zoomIn());
+    expect(readout()).toBe("300%");
+    expect(zoomIn().disabled).toBe(true);
+    expect(zoomOut().disabled).toBe(false);
+    const pages = calls.map((c) => c.key).filter((key) => key.includes("/pages/"));
+    expect(pages).toEqual([pageRoute(14, 0.75), pageRoute(14, 1), pageRoute(14, 1.5), pageRoute(14, 2)]);
+  });
+
+  it("keeps the zoom for the next passage of the same file and resets it for another file", async () => {
+    const third: Match = { ...match, start: 0, end: 10, text: "Staff get " };
+    const other: Match = { ...match, n: 2, file_id: 9, file: "other.pdf" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => (String(input).includes("/pages/") ? png() : json(locatePdf))),
+    );
+    function Host() {
+      const [index, setIndex] = useState(0);
+      return (
+        <SourcePanel
+          {...base}
+          check={check({ matches: [match, third, other], index })}
+          onIndexChange={setIndex}
+        />
+      );
+    }
+    view = await mount(<Host />);
+    const readout = () => view!.container.querySelector(".source-zoom .viewer-readout")?.textContent;
+    await click(view.container.querySelector('button[aria-label="Zoom in"]'));
+    expect(readout()).toBe("125%");
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    await settle();
+    expect(readout()).toBe("125%");
+    await click(view.container.querySelector('button[aria-label="Next match"]'));
+    await settle();
+    expect(view.container.querySelector(".pdf-page img")?.getAttribute("alt")).toBe("Page 14 of other.pdf");
+    expect(readout()).toBe("100%");
+  });
+
+  it("previews the page of a source opened as it is, locating the whole snapshot", async () => {
+    mockFetch({
+      "GET /api/sources/4/1/locate": () => json({ ...locatePdf, rects: [[0.1, 0.1, 0.9, 0.3]] }),
+      ...pageRoutes,
+    });
+    view = await mount(<SourcePanel {...base} source={sources[0]} />);
+    expect(view.container.querySelector(".pdf-page img")?.getAttribute("src")).toBe("blob:page-1");
+    expect(view.container.querySelectorAll(".pdf-hit")).toHaveLength(1);
+    expect(view.container.querySelector(".paper")).toBeNull();
+  });
+
+  it("shows the snapshot of a source opened as it is when the passage is not found", async () => {
+    mockFetch({ "GET /api/sources/4/1/locate": () => json(notFound) });
+    view = await mount(<SourcePanel {...base} source={sources[0]} />);
+    expect(view.container.querySelector(".paper")?.textContent).toBe(snapshot);
+    expect(view.container.querySelector(".pdf-page")).toBeNull();
+  });
+
+  it("keeps the snapshot of a text file, which is already its real text", async () => {
+    mockFetch({
+      [locateUrl(2, second)]: () =>
+        json({ file_id: 8, kind: "text", changed: false, found: true, start: 3, end: 5 }),
+    });
+    view = await mount(<SourcePanel {...base} check={check({ matches: [second] })} />);
+    expect(view.container.querySelector(".snapshot-hit")?.textContent).toBe("Notice is 30 days.");
+    expect(view.container.querySelector(".pdf-page")).toBeNull();
+  });
+
+  it("keeps the snapshot while the passage is being located", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    expect(view.container.querySelector(".snapshot-hit")?.textContent).toBe("The lease term is three years.");
+    expect(view.container.querySelector(".pdf-page")).toBeNull();
+  });
+
+  it("keeps the snapshot, with the warning, when the file changed", async () => {
+    mockFetch({ [locateUrl(1, match)]: () => json({ ...locatePdf, changed: true }) });
+    view = await mount(
+      <SourcePanel {...base} check={check({ matches: [{ ...match, changed: true }] })} />,
+    );
+    expect(view.container.querySelector(".source-warning")).not.toBeNull();
+    expect(view.container.querySelector(".snapshot-hit")).not.toBeNull();
+    expect(view.container.querySelector(".pdf-page")).toBeNull();
   });
 
   it("keeps the saved label when the passage cannot be located", async () => {
     mockFetch({ [locateUrl(1, match)]: () => json({ detail: "File not found." }, 404) });
     view = await mount(<SourcePanel {...base} check={check()} />);
     expect(subtitle()).toBe("p. 2");
+    expect(view.container.querySelector(".snapshot-hit")).not.toBeNull(); // a locate error: the snapshot
   });
 
   it("shows the lines of a located text file", async () => {
@@ -126,6 +419,7 @@ describe("SourcePanel", () => {
       [locateUrl(1, match)]: () => json(locatePdf),
       [locateUrl(2, second)]: () =>
         json({ file_id: 8, kind: "text", changed: false, found: false }),
+      ...pageRoutes,
     });
     const onIndexChange = vi.fn();
     view = await mount(
@@ -209,7 +503,7 @@ describe("SourcePanel", () => {
   });
 
   it("opens the viewer at the shown passage", async () => {
-    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf) });
+    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf), ...pageRoutes });
     const onOpenViewer = vi.fn();
     view = await mount(<SourcePanel {...base} check={check()} onOpenViewer={onOpenViewer} />);
     await click(buttonByText(view.container, "Open file"));
@@ -255,7 +549,7 @@ describe("SourcePanel", () => {
     const startCp = Array.from("😀😀 ").length; // 3 code points, 5 UTF-16 units
     const endCp = startCp + Array.from("Leave is six days.").length;
     const emoji: Match = { ...match, start: startCp, end: endCp, text: "Leave is six days." };
-    mockFetch({ [locateUrl(1, emoji)]: () => json(locatePdf) });
+    mockFetch({ [locateUrl(1, emoji)]: () => json(notFound) });
     view = await mount(
       <SourcePanel
         {...base}
@@ -268,7 +562,7 @@ describe("SourcePanel", () => {
   });
 
   it("shows no snapshot when the answer's sources are missing", async () => {
-    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf) });
+    mockFetch({ [locateUrl(1, match)]: () => json(notFound) });
     view = await mount(<SourcePanel {...base} sources={[]} check={check()} />);
     expect(view.container.querySelector(".paper")).toBeNull();
     expect(view.container.querySelector(".snapshot-hit")).toBeNull();

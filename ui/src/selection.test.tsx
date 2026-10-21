@@ -86,6 +86,40 @@ describe("selectionInside", () => {
     expect(selectionInside(a, content)).toEqual({ text: content, start: 0, end: content.length });
   });
 
+  it("takes a formula all or nothing, and sends its raw LaTeX", async () => {
+    const content = String.raw`Speed is $ \frac{\pi}{4} $ rad/s [1].`;
+    const { a } = await mountAnswers(content);
+    const inside = a.querySelector("span.math mn")!.firstChild!; // the 4 of the fraction
+    const rest = textOf(a, 2); // " rad/s " (index 1 is the formula)
+    // A start inside the formula, at any offset, snaps outward to the opening $.
+    for (const offset of [0, 1]) {
+      select([inside, offset], [rest, 6]);
+      expect(selectionInside(a, content)).toEqual({
+        text: String.raw`$ \frac{\pi}{4} $ rad/s`,
+        start: 9,
+        end: 32,
+      });
+    }
+  });
+
+  it("snaps an end inside a formula outward to its closing $", async () => {
+    const content = String.raw`Speed is $ \frac{\pi}{4} $ rad/s [1].`;
+    const { a } = await mountAnswers(content);
+    const inside = a.querySelector("span.math mn")!.firstChild!;
+    for (const offset of [0, 1]) {
+      select([textOf(a, 0), 6], [inside, offset]);
+      expect(selectionInside(a, content)?.text).toBe(String.raw`is $ \frac{\pi}{4} $`);
+    }
+  });
+
+  it("selects over a formula, then a chip right after it", async () => {
+    const content = String.raw`See $x^2$[1] now.`;
+    const { a } = await mountAnswers(content);
+    const chip = a.querySelector('button[data-cite="1"]')!;
+    select([textOf(a, 0), 0], [chip.firstChild!, 1]);
+    expect(selectionInside(a, content)).toEqual({ text: String.raw`See $x^2$[1]`, start: 0, end: 12 });
+  });
+
   it("trims the selection and drops one that is too short or too long", async () => {
     const content = "  Hello world  ";
     const { a } = await mountAnswers(content);

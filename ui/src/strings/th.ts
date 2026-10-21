@@ -176,6 +176,8 @@ export const th: Record<TranslationKey, string> = {
   "chat.error.auth": "ยังไม่ได้ตั้งค่าคีย์ API หรือผู้ให้บริการไม่รับคีย์นี้ ตรวจสอบได้ในการตั้งค่า",
   "chat.error.quota": "ถึงขีดจำกัดการใช้งานของผู้ให้บริการแล้ว ลองอีกครั้งภายหลัง",
   "chat.error.modelMissing": "ยังไม่มีโมเดลที่พร้อมตอบ เลือกหรือดาวน์โหลดโมเดลในการตั้งค่า",
+  "error.embeddingMissing":
+    "ยังไม่ได้ติดตั้งโมเดลค้นหา ดาวน์โหลดได้ที่การตั้งค่า > โมเดล AI",
   "chat.openModelSettings": "เปิดการตั้งค่าโมเดล",
   "chat.useLocal": "ใช้โมเดลในเครื่อง",
 
@@ -255,6 +257,9 @@ export const th: Record<TranslationKey, string> = {
   "settings.modeCloud": "API บนคลาวด์",
   "settings.modeCloudText":
     "Anthropic หรือเซิร์ฟเวอร์ที่เข้ากันได้กับ OpenAI มักให้คำตอบที่ดีกว่า",
+  "settings.searchModel": "โมเดลค้นหา",
+  "settings.searchModelHint":
+    "จำเป็นสำหรับการค้นหาในเอกสารของคุณ และทำงานบนเครื่องนี้เสมอ",
   "settings.localModel": "โมเดลในเครื่อง",
   "settings.detected": "ตรวจพบ RAM {ram} GB · {gpu}",
   "settings.gpu": "{name} VRAM {vram} GB",

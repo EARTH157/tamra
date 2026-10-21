@@ -17,15 +17,20 @@ function problemText(problem: ProblemFile, t: Translate): string {
   return error;
 }
 
+/** How the indexer words a pause for the missing search model (src/tamra/ingest/indexer.py). */
+const EMBEDDING_UNAVAILABLE = "Embedding model unavailable";
+
 type BodyProps = {
   index: IndexState | null;
   /** Shows a Rebuild link in the note about a stale index. */
   onRebuild?: () => void;
+  /** Shows a button to the AI model settings when indexing waits for the search model. */
+  onOpenModelSettings?: () => void;
   disabled?: boolean;
 };
 
 /** A project's index: progress or the file count, a stale or error note, and files that need attention. */
-export function IndexBody({ index, onRebuild, disabled }: BodyProps) {
+export function IndexBody({ index, onRebuild, onOpenModelSettings, disabled }: BodyProps) {
   const t = useT();
   const [showProblems, setShowProblems] = useState(false);
   const counts = index?.counts;
@@ -80,7 +85,19 @@ export function IndexBody({ index, onRebuild, disabled }: BodyProps) {
             : t("index.partial", { indexed: counts.indexed, total })}
         </div>
       )}
-      {index?.error && <p className="index-error">{index.error}</p>}
+      {index?.error &&
+        (index.error.startsWith(EMBEDDING_UNAVAILABLE) ? (
+          <p className="index-error">
+            {t("error.embeddingMissing")}
+            {onOpenModelSettings && (
+              <button type="button" className="link-button" onClick={onOpenModelSettings}>
+                {t("chat.openModelSettings")}
+              </button>
+            )}
+          </p>
+        ) : (
+          <p className="index-error">{index.error}</p>
+        ))}
       {problems.length > 0 && (
         <>
           <button
@@ -115,10 +132,17 @@ type Props = {
   disabled: boolean;
   onChangeFolder: () => void;
   onRebuild: () => void;
+  onOpenModelSettings?: () => void;
 };
 
 /** The sidebar card for the active project: its folder, indexing progress, and files that need attention. */
-export default function IndexStatus({ project, disabled, onChangeFolder, onRebuild }: Props) {
+export default function IndexStatus({
+  project,
+  disabled,
+  onChangeFolder,
+  onRebuild,
+  onOpenModelSettings,
+}: Props) {
   const t = useT();
   return (
     <section className="collection-card" aria-label={t("index.cardLabel")}>
@@ -129,7 +153,12 @@ export default function IndexStatus({ project, disabled, onChangeFolder, onRebui
       <div className="collection-path" title={project.folder_path}>
         {project.folder_path}
       </div>
-      <IndexBody index={project.index} onRebuild={onRebuild} disabled={disabled} />
+      <IndexBody
+        index={project.index}
+        onRebuild={onRebuild}
+        onOpenModelSettings={onOpenModelSettings}
+        disabled={disabled}
+      />
       <button type="button" className="link-button" onClick={onChangeFolder} disabled={disabled}>
         {t("index.changeFolder")}
       </button>
