@@ -1,6 +1,8 @@
 import codecs
 from pathlib import Path
 
+import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_c
 import pytest
 from docgen import CJK, LATIN_THAI, image_pdf, make_docx, make_pdf
 
@@ -215,6 +217,9 @@ def test_thai_echoes_count_the_fragments_a_skia_print_repeats():
     assert thai_echoes("สรุป\nรุ\nผลการทดลอง") == 1  # a short line that repeats the tail above
     assert thai_echoes("\u0e34abc") == 1  # a mark with no base letter
     assert thai_echoes("\n".join(CLEAN_THAI)) == 0 < ECHO_MIN == 3
+    # clean Thai that looks like an echo: a doubled word, and a repeated table cell
+    assert thai_echoes("สถานที่ที่จัด สถานที่ที่พัก สถานที่ที่จอด นี่นี่") == 0
+    assert thai_echoes("ชุด\nชุด\nชุด\nชุด") == 0
     for truth in sorted(FIXTURES.glob("th_*.txt")):
         assert thai_echoes(truth.read_text(encoding="utf-8")) == 0, truth.name
 
@@ -249,10 +254,31 @@ def test_text_that_is_not_drawn_is_sent_to_ocr(tmp_path):
     assert hidden.ocr_pages == (1,) and short.ocr_pages == ()
 
 
-def test_with_ocr_replaces_pages_and_drops_empty_ones(tmp_path):
+def test_a_searchable_scan_is_not_sent_to_ocr(tmp_path):
+    """An image with an invisible OCR layer: the layer is the scan's text, and the page is not
+    rendered to check it (a blank image here would otherwise flag it)."""
+    lines = ["Hidden text that the reader never sees on this page."] * 4
+    pdf = pdfium.PdfDocument(make_pdf(tmp_path / "h.pdf", [lines], invisible=True))
+    try:
+        page = pdf[0]
+        bitmap = pdfium.PdfBitmap.new_native(8, 8, pdfium_c.FPDFBitmap_Gray)
+        bitmap.to_numpy()[...] = 255  # a white scan
+        image = pdfium.PdfImage.new(pdf)
+        image.set_bitmap(bitmap)
+        image.set_matrix(pdfium.PdfMatrix().scale(*page.get_size()))
+        page.insert_obj(image)
+        page.gen_content()
+        pdf.save(tmp_path / "scan.pdf")
+    finally:
+        pdf.close()
+    assert parse_pdf(tmp_path / "scan.pdf").ocr_pages == ()
+
+
+def test_with_ocr_replaces_pages_and_keeps_text_ocr_did_not_find(tmp_path):
     doc = parse_pdf(make_pdf(tmp_path / "a.pdf", [["One."], ["Two."], []]))
     read = with_ocr(doc, {2: "Two, read again.", 3: "Three.", 1: ""})
-    assert [(u.page, u.text, u.ocr) for u in read.units] == [
+    assert [(u.page, u.text.strip(), u.ocr) for u in read.units] == [
+        (1, "One.", False),  # an empty OCR result keeps the text layer
         (2, "Two, read again.", True),
         (3, "Three.", True),
     ]

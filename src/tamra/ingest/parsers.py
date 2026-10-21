@@ -9,6 +9,7 @@ from pathlib import Path
 
 import docx
 import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_c
 from charset_normalizer import from_bytes
 from docx.oxml.ns import qn
 from docx.table import Table as DocxTable
@@ -34,7 +35,7 @@ INVISIBLE_INK_PER_CHAR = 0.1  # dark pixels per character: drawn pages have 0.35
 
 _THAI_LETTER = "\u0e01-\u0e2e"
 _THAI_MARK = "\u0e31\u0e34-\u0e3a\u0e47-\u0e4e"
-_ECHO = re.compile(rf"([{_THAI_LETTER}][{_THAI_MARK}]+)[{_THAI_LETTER}]?\1")
+_ECHO = re.compile(rf"([{_THAI_LETTER}][{_THAI_MARK}]+)[{_THAI_LETTER}]\1")
 _ORPHAN_MARK = re.compile(rf"(?<![\u0e01-\u0e5b])[{_THAI_MARK}]")
 
 
@@ -159,7 +160,9 @@ def thai_echoes(text: str) -> int:
     previous = ""
     for line in text.splitlines():
         line = line.strip()
-        if line and len(line) <= 3 and "\u0e01" <= line[0] <= "\u0e2e" and line in previous[-4:]:
+        short = line and len(line) <= 3 and "\u0e01" <= line[0] <= "\u0e2e"
+        # Skia repeats a tail fragment; a whole line again is a table's repeated cell
+        if short and line in previous[-4:] and line != previous:
             count += 1
         if line:
             previous = line
@@ -171,6 +174,9 @@ def _not_drawn(page, text: str) -> bool:
     chars = len(text.strip())
     if chars < INVISIBLE_MIN_CHARS:
         return False
+    # a searchable scan: the invisible text is the image's OCR layer, so skip the slow render
+    if any(o.type == pdfium_c.FPDF_PAGEOBJ_IMAGE for o in page.get_objects(max_depth=2)):
+        return False
     bitmap = page.render(scale=INK_SCALE, grayscale=True)
     try:
         dark = int((bitmap.to_numpy() < 224).sum())
@@ -180,8 +186,9 @@ def _not_drawn(page, text: str) -> bool:
 
 
 def with_ocr(doc: ParsedDoc, pages: dict[int, str]) -> ParsedDoc:
-    """doc with the text of these pages replaced by OCR text; an empty text drops the page."""
-    units = [u for u in doc.units if u.page not in pages]
+    """doc with the text of these pages replaced by OCR text; where OCR found no text, the
+    page keeps its text-layer unit, if it has one."""
+    units = [u for u in doc.units if not pages.get(u.page, "").strip()]
     units += [Unit(text=t, page=p, ocr=True) for p, t in pages.items() if t.strip()]
     return replace(doc, units=sorted(units, key=lambda u: u.page))
 

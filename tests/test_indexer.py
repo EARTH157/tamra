@@ -585,6 +585,17 @@ def test_the_state_says_which_page_is_being_read(env):
     assert indexer.state(project).reading is None
 
 
+def test_a_page_ocr_finds_no_text_on_keeps_its_text_layer(env):
+    docs, store, _, _ = env
+    lines = ["Hidden lease words that the reader never sees on this page."] * 4
+    make_pdf(docs / "hidden.pdf", [lines], invisible=True)
+    run(ocr_indexer(env, FakeOcr(text="")))
+    record = files(store)["hidden.pdf"]
+    assert record.status == "indexed" and store.ocr_pages(record.id) == []
+    hits = store.get_chunks(keyword(store, "lease"))
+    assert hits and not any(c.location.get("ocr") for c in hits)
+
+
 def test_a_garbled_thai_layer_is_replaced_by_ocr_text(env):
     docs, store, _, _ = env
     shutil.copy(FIXTURES / "th_0.pdf", docs / "th.pdf")
