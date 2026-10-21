@@ -267,6 +267,7 @@ def test_location_labels():
     pdf = {"kind": "pdf", "page_start": 3, "page_end": 3, "char_start": 0, "char_end": 5}
     assert location_label(pdf) == "p. 3"
     assert location_label({**pdf, "page_end": 4}) == "pp. 3-4"
+    assert location_label({**pdf, "ocr": True}) == "p. 3 · OCR"
     docx = {
         "kind": "docx",
         "heading_path": ["Leave", "Sick"],

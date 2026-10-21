@@ -4,7 +4,7 @@ import codecs
 import re
 import threading
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import docx
@@ -24,6 +24,18 @@ _P, _TBL = qn("w:p"), qn("w:tbl")
 _HEADING = re.compile(r"Heading (\d)")
 _THAI_CONSONANTS = range(0x0E01, 0x0E2F)
 _THAI_MARKS = frozenset([0x0E31, *range(0x0E34, 0x0E3B), *range(0x0E47, 0x0E4F)])
+
+# Pages that OCR reads although they have a text layer (spec §5). Measured on the owner's files
+# and the spike's Edge prints: see docs/spikes/2026-10-m5-results.md.
+ECHO_MIN = 3  # garbled Thai: Chromium/Skia prints have 5-44 echoes a page, clean Thai 0
+INK_SCALE = 0.25  # an 18 dpi render tells a drawn page from an empty one
+INVISIBLE_MIN_CHARS = 100
+INVISIBLE_INK_PER_CHAR = 0.1  # dark pixels per character: drawn pages have 0.35-8, hidden 0
+
+_THAI_LETTER = "\u0e01-\u0e2e"
+_THAI_MARK = "\u0e31\u0e34-\u0e3a\u0e47-\u0e4e"
+_ECHO = re.compile(rf"([{_THAI_LETTER}][{_THAI_MARK}]+)[{_THAI_LETTER}]?\1")
+_ORPHAN_MARK = re.compile(rf"(?<![\u0e01-\u0e5b])[{_THAI_MARK}]")
 
 
 class ParseError(Exception):
@@ -47,6 +59,7 @@ class Unit:
     heading_path: tuple[str, ...] = ()
     line: int = 0
     heading_level: int = 0  # docx: 1-9 when the paragraph is itself a heading or title
+    ocr: bool = False  # pdf: the text was read by OCR, not taken from the text layer
 
 
 @dataclass(frozen=True)
@@ -54,18 +67,22 @@ class ParsedDoc:
     kind: str  # "pdf" | "docx" | "text"
     units: list[Unit]
     note: str | None = None  # shown next to the file, e.g. pages without a text layer
+    ocr_pages: tuple[int, ...] = ()  # pdf: pages OCR should read (1-based)
 
 
 def location(kind: str, first: Unit, first_offset: int, last: Unit, last_offset: int) -> dict:
     """Where the text from first.text[first_offset] to last.text[last_offset - 1] sits."""
     if kind == "pdf":
-        return {
+        where = {
             "kind": "pdf",
             "page_start": first.page,
             "char_start": first.char + first_offset,
             "page_end": last.page,
             "char_end": last.char + last_offset,
         }
+        if first.ocr or last.ocr:
+            where["ocr"] = True  # the viewer takes this page's boxes from the OCR store
+        return where
     if kind == "docx":
         return {
             "kind": "docx",
@@ -92,7 +109,8 @@ def parse_file(path: Path) -> ParsedDoc:
 
 
 def parse_pdf(path: Path) -> ParsedDoc:
-    """One unit per page with a text layer; pages without one are listed in the note."""
+    """One unit per page with a text layer; pages without one are listed in the note. Pages
+    without a text layer, or with one that is garbled or not drawn, are listed in ocr_pages."""
     with PDFIUM_LOCK:
         return _parse_pdf(path)
 
@@ -104,6 +122,7 @@ def _parse_pdf(path: Path) -> ParsedDoc:
         raise ParseError(f"cannot open PDF: {e}") from e
     units: list[Unit] = []
     empty: list[int] = []
+    broken: list[int] = []
     try:
         for index in range(len(pdf)):
             page = pdf[index]
@@ -113,18 +132,58 @@ def _parse_pdf(path: Path) -> ParsedDoc:
                     text = textpage.get_text_range()
                 finally:
                     textpage.close()
+                unreadable = bool(text.strip()) and (
+                    thai_echoes(text) >= ECHO_MIN or _not_drawn(page, text)
+                )
             finally:
                 page.close()
             if text.strip():
                 units.append(Unit(text=text, page=index + 1))
             else:
                 empty.append(index + 1)
+            if unreadable:
+                broken.append(index + 1)
     finally:
         pdf.close()
     note = None
     if empty:
         note = "no text layer on page(s) " + ", ".join(map(str, empty)) + " (needs OCR)"
-    return ParsedDoc("pdf", units, note)
+    return ParsedDoc("pdf", units, note, ocr_pages=tuple(sorted(empty + broken)))
+
+
+def thai_echoes(text: str) -> int:
+    """Signs of a Chromium/Skia-printed Thai text layer: a cluster repeated after its word
+    ("บอร์ดร์"), a short line repeating the tail of the line above ("สรุป\\nรุ"), and marks with
+    no base letter."""
+    count = len(_ECHO.findall(text)) + len(_ORPHAN_MARK.findall(text))
+    previous = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line and len(line) <= 3 and "\u0e01" <= line[0] <= "\u0e2e" and line in previous[-4:]:
+            count += 1
+        if line:
+            previous = line
+    return count
+
+
+def _not_drawn(page, text: str) -> bool:
+    """A page with plenty of text whose render is almost blank: its text is invisible."""
+    chars = len(text.strip())
+    if chars < INVISIBLE_MIN_CHARS:
+        return False
+    bitmap = page.render(scale=INK_SCALE, grayscale=True)
+    try:
+        dark = int((bitmap.to_numpy() < 224).sum())
+    finally:
+        bitmap.close()
+    return dark / chars < INVISIBLE_INK_PER_CHAR
+
+
+def with_ocr(doc: ParsedDoc, pages: dict[int, str]) -> ParsedDoc:
+    """doc with the text of these pages replaced by OCR text; an empty text drops the page."""
+    units = [u for u in doc.units if u.page not in pages]
+    units += [Unit(text=t, page=p, ocr=True) for p, t in pages.items() if t.strip()]
+    return replace(doc, units=sorted(units, key=lambda u: u.page))
 
 
 def _table_rows(table: DocxTable) -> Iterator[str]:

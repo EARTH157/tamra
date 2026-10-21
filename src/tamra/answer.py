@@ -117,7 +117,8 @@ def location_label(location: dict) -> str:
     kind = location.get("kind")
     if kind == "pdf":
         start, end = location["page_start"], location["page_end"]
-        return f"p. {start}" if start == end else f"pp. {start}-{end}"
+        pages = f"p. {start}" if start == end else f"pp. {start}-{end}"
+        return f"{pages} · OCR" if location.get("ocr") else pages
     if kind == "docx":
         start, end = location["paragraph_start"] + 1, location["paragraph_end"] + 1
         paragraphs = f"para. {start}" if start == end else f"paras. {start}-{end}"
