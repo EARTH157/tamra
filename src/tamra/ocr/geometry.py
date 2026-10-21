@@ -2,7 +2,7 @@
 
 The detection post-processing and the line crop follow RapidOCR 3.10.0
 (https://github.com/RapidAI/RapidOCR, Apache-2.0): ch_ppocr_det/utils.py (DBPostProcess,
-get_mini_boxes, box_score_fast, unclip, order_points_clockwise), ch_ppocr_det/main.py
+get_mini_boxes, box_score_slow, unclip, order_points_clockwise), ch_ppocr_det/main.py
 (sorted_boxes) and utils/process_img.py (get_rotate_crop_image). OpenCV, pyclipper and
 shapely calls are replaced by the numpy equivalents below.
 """
@@ -136,29 +136,35 @@ def min_area_rect(points: np.ndarray) -> tuple[Box, float]:
     return box, float(min(u1 - u0, v1 - v0))
 
 
-def _inside(box: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
-    """Which (xs, ys) points lie in the convex quadrilateral `box`, its edges included."""
-    signs = []
-    for i in range(4):
-        (ax, ay), (bx, by) = box[i], box[(i + 1) % 4]
-        signs.append((bx - ax) * (ys - ay) - (by - ay) * (xs - ax))
-    s = np.stack(signs)
-    return np.all(s >= -1e-9, axis=0) | np.all(s <= 1e-9, axis=0)
+def run_score(prob: np.ndarray, runs: np.ndarray) -> float:
+    """DBPostProcess score_mode="slow": the mean probability over the component's own pixels,
+    not its minimum-area rectangle, so an irregular component (a Thai line with its marks) is
+    not marked down for the empty corners of its rectangle."""
+    return float(np.concatenate([prob[y, a:b] for y, a, b in runs.tolist()]).mean())
 
 
-def box_score(prob: np.ndarray, box: Box) -> float:
-    """box_score_fast: the mean probability inside the box (corners truncated to integers)."""
-    h, w = prob.shape
-    xmin = int(np.clip(np.floor(box[:, 0].min()), 0, w - 1))
-    xmax = int(np.clip(np.ceil(box[:, 0].max()), 0, w - 1))
-    ymin = int(np.clip(np.floor(box[:, 1].min()), 0, h - 1))
-    ymax = int(np.clip(np.ceil(box[:, 1].max()), 0, h - 1))
-    quad = box.astype(np.int32).astype(np.float64)
-    ys, xs = np.mgrid[ymin : ymax + 1, xmin : xmax + 1]
-    inside = _inside(quad, xs.astype(np.float64), ys.astype(np.float64))
-    if not inside.any():
-        return 0.0
-    return float(prob[ymin : ymax + 1, xmin : xmax + 1][inside].mean())
+def merge_nested(boxes: list[Box], limit: float) -> list[Box]:
+    """Merge every box whose axis-aligned bounds lie at least `limit` inside a larger box's into
+    that box (the minimum-area rectangle around both). Not from RapidOCR: Thai vowel and tone
+    marks found apart from their line are junk lines when read alone, and the line's own box
+    can stop below them."""
+    if not boxes:
+        return []
+    b = np.array([np.concatenate([x.min(0), x.max(0)]) for x in boxes])  # x0, y0, x1, y1
+    area = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
+    ix = np.minimum(b[:, None, 2], b[None, :, 2]) - np.maximum(b[:, None, 0], b[None, :, 0])
+    iy = np.minimum(b[:, None, 3], b[None, :, 3]) - np.maximum(b[:, None, 1], b[None, :, 1])
+    share = np.clip(ix, 0, None) * np.clip(iy, 0, None) / np.maximum(area[:, None], 1e-9)
+    share[area[None, :] <= area[:, None]] = 0.0  # only a larger box can hold this one
+    nested = share.max(1) >= limit
+    parts = [[box] for box in boxes]
+    for i in np.flatnonzero(nested):  # shortcut: a host that is itself nested loses its parts
+        parts[int(share[i].argmax())].append(boxes[i])
+    return [
+        order_clockwise(min_area_rect(np.concatenate(p))[0]) if len(p) > 1 else p[0]
+        for p, n in zip(parts, nested, strict=True)
+        if not n
+    ]
 
 
 def unclip(box: Box, ratio: float) -> np.ndarray:
@@ -198,16 +204,18 @@ def order_clockwise(box: np.ndarray) -> Box:
 
 
 def sort_boxes(boxes: list[Box], y_gap: float = 10.0) -> list[Box]:
-    """Reading order: by the top-left corner's y, then x within lines closer than y_gap."""
+    """Reading order: by the box's mean y, then x within lines closer than y_gap. RapidOCR
+    keys on the top-left corner; the mean keeps a table row together when only some of its
+    cells carry Thai marks above them."""
     if not boxes:
         return []
-    order = sorted(range(len(boxes)), key=lambda i: boxes[i][0, 1])
+    ys = [float(b[:, 1].mean()) for b in boxes]
+    order = sorted(range(len(boxes)), key=lambda i: ys[i])
     line, last, keyed = 0, None, []
     for i in order:
-        y = boxes[i][0, 1]
-        if last is not None and y - last >= y_gap:
+        if last is not None and ys[i] - last >= y_gap:
             line += 1
-        last = y
+        last = ys[i]
         keyed.append((line, boxes[i][0, 0], i))
     return [boxes[i] for _, _, i in sorted(keyed)]
 

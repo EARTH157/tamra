@@ -3,13 +3,14 @@ import math
 import numpy as np
 
 from tamra.ocr.geometry import (
-    box_score,
     components,
     crop_quad,
+    merge_nested,
     min_area_rect,
     order_clockwise,
     resize_bilinear,
     run_points,
+    run_score,
     slice_box,
     sort_boxes,
     unclip,
@@ -46,13 +47,27 @@ def test_min_area_rect_follows_a_tilted_line():
     assert 5.5 < short < 6.5
 
 
-def test_box_score_is_the_mean_inside_the_box():
+def test_run_score_is_the_mean_over_the_component_pixels():
     prob = np.zeros((10, 10), np.float32)
-    prob[2:5, 2:7] = 1.0
-    box = np.array([[2, 2], [6, 2], [6, 4], [2, 4]], np.float64)
-    assert box_score(prob, box) == 1.0
-    wide = np.array([[0, 2], [9, 2], [9, 4], [0, 4]], np.float64)
-    assert box_score(prob, wide) == 0.5
+    mask = np.zeros((10, 10), bool)
+    mask[2, 1:9] = mask[3:6, 1:3] = True  # an L: its rectangle would be mostly empty
+    prob[mask] = 0.8
+    (runs,) = components(mask)
+    assert abs(run_score(prob, runs) - 0.8) < 1e-6
+
+
+def _rect(x0, y0, x1, y1):
+    return np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], np.float64)
+
+
+def test_merge_nested_folds_a_mark_into_its_line_and_keeps_neighbours():
+    line, below = _rect(0, 10, 200, 50), _rect(0, 45, 120, 85)  # neighbours overlap 5 of 40 px
+    mark = _rect(50, 2, 60, 18)  # a tone mark: mostly inside the line, sticking out above it
+    merged = merge_nested([line, mark, below], 0.4)
+    assert len(merged) == 2
+    assert np.allclose(merged[0], _rect(0, 2, 200, 50))
+    assert merged[1] is below
+    assert merge_nested([], 0.4) == []
 
 
 def test_unclip_grows_every_side_by_area_ratio_over_perimeter():
@@ -69,6 +84,9 @@ def test_order_clockwise_and_reading_order():
     b = order_clockwise(np.array([[0, 0], [40, 0], [40, 8], [0, 8]], np.float64))
     c = order_clockwise(np.array([[0, 30], [40, 30], [40, 38], [0, 38]], np.float64))
     assert [x[0, 0] for x in sort_boxes([c, a, b])] == [0, 50, 0]
+    marked = _rect(100, 18, 160, 38)  # a table cell whose marks raise its top by 12 px
+    plain = _rect(0, 30, 60, 38)
+    assert [x[0, 0] for x in sort_boxes([marked, plain])] == [0, 100]
 
 
 def test_crop_quad_takes_an_upright_rectangle_exactly():

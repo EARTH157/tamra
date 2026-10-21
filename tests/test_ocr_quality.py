@@ -7,10 +7,11 @@ from pathlib import Path
 import numpy as np
 import pypdfium2 as pdfium
 import pytest
-from docgen import make_pdf
-from ocr_eval import cer, photocopy, word_hit
+from docgen import image_pdf, make_pdf
+from ocr_eval import cer, line_recall, photocopy, word_hit
 
 from tamra.ocr import OcrEngine
+from tamra.ocr.engine import render_page
 
 pytestmark = pytest.mark.assets
 
@@ -65,6 +66,20 @@ def test_thai_at_300_dpi(engine):
     print("thai 300 dpi CER", [round(s, 3) for s in scores], round(statistics.mean(scores), 3))
     assert len(scores) == 6
     assert statistics.mean(scores) <= 0.06
+
+
+def test_thai_scan(engine, tmp_path):
+    """A 200 dpi grayscale image-only PDF, read the way indexing reads it. On a softer scan the
+    upper vowel and tone marks join their line: the line must still be detected."""
+    pages = [(image_pdf(p, tmp_path / p.name), truth) for p, truth in _pages("th")]
+    texts = [engine.read(render_page(p, 1)).text for p, _ in pages]
+    scores = [cer(truth, text, "th") for (_, truth), text in zip(pages, texts, strict=True)]
+    recall = [line_recall(truth, text, "th") for (_, truth), text in zip(pages, texts, strict=True)]
+    print("thai scan CER", [round(s, 3) for s in scores], round(statistics.mean(scores), 3))
+    print("thai scan line recall", [round(r, 3) for r in recall])
+    assert len(scores) == 6
+    assert min(recall) == 1.0
+    assert statistics.mean(scores) <= 0.02  # 0.0065 measured; 0.044 when line 2 was lost
 
 
 def test_chinese_photocopy(engine):

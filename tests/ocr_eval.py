@@ -13,19 +13,29 @@ def normalise(text: str, lang: str) -> str:
     return re.sub(r"\s+", " ", text).strip() if lang == "en" else re.sub(r"\s+", "", text)
 
 
-def levenshtein(a: str, b: str) -> int:
-    previous = list(range(len(b) + 1))
+def levenshtein(a: str, b: str, anywhere: bool = False) -> int:
+    """Edit distance from a to b; with anywhere=True, to the closest substring of b."""
+    previous = [0] * (len(b) + 1) if anywhere else list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
         current = [i]
         for j, cb in enumerate(b, 1):
             current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
         previous = current
-    return previous[-1]
+    return min(previous) if anywhere else previous[-1]
 
 
 def cer(truth: str, ocr: str, lang: str) -> float:
     t, o = normalise(truth, lang), normalise(ocr, lang)
     return levenshtein(t, o) / max(len(t), 1)
+
+
+def line_recall(truth: str, ocr: str, lang: str, head: int = 10, edits: int = 2) -> float:
+    """The share of truth lines whose first `head` characters (normalised) appear in the OCR
+    text with at most `edits` edits: a dropped line fails it, a lost tone mark does not (CER
+    counts those)."""
+    o = normalise(ocr, lang)
+    heads = [normalise(t, lang)[:head] for t in truth.splitlines() if t.strip()]
+    return sum(levenshtein(h, o, anywhere=True) <= edits for h in heads) / max(len(heads), 1)
 
 
 def word_hit(truth: str, ocr: str) -> float:

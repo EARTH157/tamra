@@ -258,12 +258,15 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
   the Chinese + Latin recogniser `ch_PP-OCRv5_rec_mobile` (only lines the Thai one scores below
   0.9). Downloaded from Settings > AI model ("Text recognition (OCR)") into `models\ppocr-v5\`.
 - **Per page:** render at 300 dpi, scale to at most 2000 px, detect, crop each line, recognise,
-  drop lines scoring below 0.5. Every character gets a box from the CTC time steps. The page text
-  is the lines in reading order joined with `\n`.
+  drop lines scoring below 0.5. Detection scores each region over its own pixels (DB "slow"
+  mode, threshold 0.5), merges a box at least 0.4 inside a larger one into it (Thai marks found
+  apart from their line) and reads boxes in order of their mean y. Every character gets a box
+  from the CTC time steps. The page text is the lines in reading order joined with `\n`.
 - **Viewer:** the OCR boxes are fractions of the rendered page, the form `pdf_rects` uses, so the
   highlight works unchanged (§8).
 - **Quality gate** (`tests/test_ocr_quality.py`, needs the models): Thai at 300 dpi CER ≤ 0.06;
-  Chinese photocopy (noise and a 1° tilt) CER ≤ 0.03; English word hit ≥ 0.9.
+  Thai 200 dpi image-only scan CER ≤ 0.02 with every line found; Chinese photocopy (noise and a
+  1° tilt) CER ≤ 0.03; English word hit ≥ 0.9.
 - **Not in M5:** image files and images in DOCX, vertical or Traditional Chinese, rotated pages,
   a GPU path, an OCR language setting, re-OCR on demand.
 

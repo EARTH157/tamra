@@ -4,6 +4,11 @@ Detection pre/post-processing and recognition pre-processing and CTC decoding fo
 3.10.0 (https://github.com/RapidAI/RapidOCR, Apache-2.0): ch_ppocr_det (DetPreProcess,
 DBPostProcess), ch_ppocr_rec (resize_norm_img, CTCLabelDecode), utils/process_img.py
 (reduce_max_side); OpenCV calls replaced by numpy.
+
+Detection departs from RapidOCR's defaults in three ways, all for Thai: a component is scored
+over its own pixels (DB's score_mode="slow"), so a line whose upper marks join it on a scan is
+kept; a box mostly inside a larger one (marks found apart from their line) is merged into it;
+and reading order keys on each box's mean y, not its top edge.
 """
 
 import math
@@ -16,13 +21,14 @@ import pypdfium2 as pdfium
 
 from tamra.ingest.parsers import PDFIUM_LOCK
 from tamra.ocr.geometry import (
-    box_score,
     components,
     crop_quad,
+    merge_nested,
     min_area_rect,
     order_clockwise,
     resize_bilinear,
     run_points,
+    run_score,
     slice_box,
     sort_boxes,
     unclip,
@@ -40,6 +46,7 @@ OCR_THREADS = 4  # onnxruntime intra-op threads: leaves cores for the UI and the
 MAX_SIDE = 2000  # the page is scaled to at most this many pixels on its long side
 DET_MIN_SIDE = 736
 DET_THRESH, BOX_THRESH, UNCLIP_RATIO, MAX_CANDIDATES = 0.3, 0.5, 1.6, 1000
+NESTED = 0.4  # a box this much inside a larger one is merged into it (real lines: <= 0.31)
 CASCADE = 0.9  # a line the Thai recogniser scores below this is also read as Chinese
 MIN_SCORE = 0.5  # lines scoring lower are dropped
 REC_HEIGHT, REC_MIN_WIDTH, REC_BATCH = 48, 320, 6
@@ -183,7 +190,7 @@ class OcrEngine:
         out = []
         for runs in components(mask)[:MAX_CANDIDATES]:
             box, short = min_area_rect(run_points(runs))
-            if short < 3 or box_score(prob, box) < BOX_THRESH:
+            if short < 3 or run_score(prob, runs) < BOX_THRESH:
                 continue
             box, short = min_area_rect(unclip(box, UNCLIP_RATIO))
             if short < 5:
@@ -196,7 +203,7 @@ class OcrEngine:
             if int(np.hypot(*(box[0] - box[1]))) <= 3 or int(np.hypot(*(box[0] - box[3]))) <= 3:
                 continue
             out.append(box)
-        return sort_boxes(out)
+        return sort_boxes(merge_nested(out, NESTED))
 
     def _recognise(self, crops: list[np.ndarray]) -> list[tuple[str, float, list]]:
         if not crops:
