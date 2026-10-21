@@ -246,3 +246,8 @@ built. The places where the first version differed:
   cases, and the rest) is unchanged, except that `Core.file_path` now resolves each file from its
   own project's folder.
 - **Anthropic and the real window** are still the owner's checks, as in M2 and M3.
+- **Zoom buttons and keyboard focus.** In the panel and in the document viewer, the zoom button
+  that reaches the end of the range is disabled and drops focus, and the percent is not announced.
+- **Citations in follow-ups are not measured.** Earlier answers reach the model without `[n]`
+  markers; whether a small local model then cites less often in the 2nd and later answers is
+  unchecked. The scroll to the first mark after a zoom has no unit test (jsdom loads no image).
