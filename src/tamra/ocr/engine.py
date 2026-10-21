@@ -1,4 +1,10 @@
-"""PP-OCRv5 mobile on onnxruntime: detection, a Thai-first recogniser cascade, character boxes."""
+"""PP-OCRv5 mobile on onnxruntime: detection, a Thai-first recogniser cascade, character boxes.
+
+Detection pre/post-processing and recognition pre-processing and CTC decoding follow RapidOCR
+3.10.0 (https://github.com/RapidAI/RapidOCR, Apache-2.0): ch_ppocr_det (DetPreProcess,
+DBPostProcess), ch_ppocr_rec (resize_norm_img, CTCLabelDecode), utils/process_img.py
+(reduce_max_side); OpenCV calls replaced by numpy.
+"""
 
 import math
 from dataclasses import dataclass
@@ -29,6 +35,7 @@ REC_ZH_FILE = "ch_PP-OCRv5_rec_mobile.onnx"  # Chinese + Latin: only where the T
 MODEL_FILES = (DET_FILE, REC_TH_FILE, REC_ZH_FILE)
 
 OCR_DPI = 300  # page render resolution for OCR
+MAX_RENDER_SIDE = 4000  # px: a huge page renders below OCR_DPI; A4 and Letter stay at 300 dpi
 OCR_THREADS = 4  # onnxruntime intra-op threads: leaves cores for the UI and the embedder
 MAX_SIDE = 2000  # the page is scaled to at most this many pixels on its long side
 DET_MIN_SIDE = 736
@@ -45,14 +52,17 @@ class OcrPageResult:
 
 
 def render_page(path: Path, page: int, dpi: int = OCR_DPI) -> np.ndarray:
-    """The 1-based page drawn at `dpi` as an (h, w, 3 or 4) BGR(x) array. PDFium is held only
-    while drawing: recognition runs without the lock."""
+    """The 1-based page drawn at `dpi` (capped at MAX_RENDER_SIDE pixels) as an (h, w, 3 or 4)
+    BGR(x) array. PDFium is held only while drawing: recognition runs without the lock."""
+    if page < 1:
+        raise IndexError(page)  # pdf[-1] would quietly draw the last page
     with PDFIUM_LOCK:
         pdf = pdfium.PdfDocument(path)
         try:
             pdf_page = pdf[page - 1]
             try:
-                bitmap = pdf_page.render(scale=dpi / 72)
+                scale = min(dpi / 72, MAX_RENDER_SIDE / max(pdf_page.get_size()))
+                bitmap = pdf_page.render(scale=scale)
                 try:
                     return bitmap.to_numpy().copy()  # a copy: the bitmap is freed below
                 finally:
