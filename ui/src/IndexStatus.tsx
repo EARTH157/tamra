@@ -124,7 +124,12 @@ export function IndexBody({ index, onRebuild, onOpenModelSettings, disabled }: B
                     {problemText(problem, t)}
                   </span>
                   {problem.needs_ocr && onOpenModelSettings && (
-                    <button type="button" className="link-button" onClick={onOpenModelSettings}>
+                    <button
+                      type="button"
+                      className="link-button"
+                      aria-label={`${t("chat.openModelSettings")}: ${problem.rel_path}`}
+                      onClick={onOpenModelSettings}
+                    >
                       {t("chat.openModelSettings")}
                     </button>
                   )}

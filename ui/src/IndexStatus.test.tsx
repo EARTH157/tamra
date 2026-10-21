@@ -111,7 +111,7 @@ describe("IndexStatus", () => {
       />,
     );
     expect(view.container.textContent).toContain("Indexing scan.pdf");
-    expect(view.container.textContent).toContain("Reading page 3 of 40");
+    expect(view.container.textContent).toContain("Reading scanned page 3 of 40");
   });
 
   it("explains a scan that waits for the OCR model and links to the AI model settings", async () => {
@@ -136,7 +136,9 @@ describe("IndexStatus", () => {
     await click(buttonByText(view.container, "1 file needs attention"));
     const item = view.container.querySelector<HTMLElement>(".problems li")!;
     expect(item.textContent).toContain("Scanned pages need the text recognition (OCR) model.");
-    await click(buttonByText(item, "Open model settings"));
+    const open = buttonByText(item, "Open model settings")!;
+    expect(open.getAttribute("aria-label")).toBe("Open model settings: scan.pdf");
+    await click(open);
     expect(onOpenModelSettings).toHaveBeenCalled();
   });
 

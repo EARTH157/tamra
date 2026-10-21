@@ -212,7 +212,7 @@ export const th: Record<TranslationKey, string> = {
   "index.filesIndexed": "สร้างดัชนีแล้ว {count} ไฟล์",
   "index.filesIndexed.one": "สร้างดัชนีแล้ว 1 ไฟล์",
   "index.current": "กำลังสร้างดัชนี {file}",
-  "index.reading": "กำลังอ่านหน้า {page} จาก {pages}",
+  "index.reading": "กำลังอ่านหน้าที่สแกน {page} จาก {pages}",
   "index.needsOcr":
     "หน้าที่สแกนมาต้องใช้โมเดลอ่านข้อความจากภาพ (OCR) ดาวน์โหลดได้ในหน้าตั้งค่า",
   "index.needAttention": "{count} ไฟล์ต้องตรวจสอบ",

@@ -214,7 +214,7 @@ export const en = {
   "index.filesIndexed": "{count} files indexed",
   "index.filesIndexed.one": "1 file indexed",
   "index.current": "Indexing {file}",
-  "index.reading": "Reading page {page} of {pages}",
+  "index.reading": "Reading scanned page {page} of {pages}",
   "index.needsOcr":
     "Scanned pages need the text recognition (OCR) model. Download it in Settings.",
   "index.needAttention": "{count} files need attention",
