@@ -46,6 +46,7 @@ MARKER_GROUP = r"\[\d{1,3}(?:\s*,\s*\d{1,3})*\]"
 _MARKER = re.compile(MARKER_GROUP)
 # A marker with the spaces before it, so "years [1]." becomes "years." without a double space.
 _SPACED_MARKER = re.compile(r"[ \t]*" + MARKER_GROUP)
+_NOT_FOUND_REPLIES = frozenset(NOT_FOUND.values())
 HISTORY_TURNS = 4  # earlier exchanges sent to the model: fits beside the 4-source local budget
 _DIGITS = re.compile(r"\d+")
 
@@ -177,8 +178,10 @@ def build_messages(
     ]
     for earlier_question, earlier_answer in history:
         answer = _SPACED_MARKER.sub("", earlier_answer or "").strip()[:600]
-        if answer:  # cancelled, failed and search-mode questions have no answer
-            messages.append({"role": "user", "content": earlier_question})
+        # Cancelled, failed and search-mode questions have no answer; a not-found reply would only
+        # teach the model to say "not found" again.
+        if answer and answer not in _NOT_FOUND_REPLIES:
+            messages.append({"role": "user", "content": earlier_question[:600]})
             messages.append({"role": "assistant", "content": answer})
     messages.append({"role": "user", "content": question})
     return messages

@@ -2,6 +2,7 @@ import pytest
 from fakes import FakeEmbedder, FakeLLM
 
 from tamra.answer import (
+    NOT_FOUND,
     AnswerService,
     AnswerSettings,
     Route,
@@ -135,9 +136,16 @@ def test_build_messages_adds_answered_exchanges_without_their_markers():
     ]
 
 
-def test_build_messages_cuts_each_earlier_answer_to_600_characters():
-    messages = build_messages("q2", [("q1", "x" * 700 + " [1]")], [_record(1)], "en")
+def test_build_messages_cuts_each_earlier_question_and_answer_to_600_characters():
+    messages = build_messages("q2", [("q" * 700, "x" * 700 + " [1]")], [_record(1)], "en")
+    assert messages[1]["content"] == "q" * 600
     assert messages[2]["content"] == "x" * 600
+
+
+def test_build_messages_skips_not_found_replies():
+    history = [("q1", NOT_FOUND["en"]), ("q2", NOT_FOUND["th"]), ("q3", "Rent is due [1].")]
+    messages = build_messages("q4", history, [_record(1)], "en")
+    assert [m["content"] for m in messages[1:]] == ["q3", "Rent is due.", "q4"]
 
 
 def test_the_system_prompt_lets_earlier_messages_say_what_a_question_means():

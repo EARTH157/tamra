@@ -177,9 +177,9 @@ These came from the owner's own use of the M4 exe and are on the same branch.
 4. **Conversation memory** (`6c53c0f`). The owner found that follow-ups lost the thread. Chats
    were saved, but the model saw only the previous exchange, its answer cut to 600 characters. It
    now sees the last 4 exchanges of the chat (`Store.recent_exchanges`), oldest first. Earlier
-   answers lose their `[n]` markers, since their sources are no longer in the prompt, and are cut
-   to 600 characters; a question without an answer (cancelled, failed, or search mode) is left
-   out. Retrieval still adds only the previous question to the query.
+   answers lose their `[n]` markers, since their sources are no longer in the prompt. Each earlier
+   question and answer is cut to 600 characters. A question without an answer (cancelled, failed,
+   or search mode) or with a not-found reply is left out. Retrieval still adds only the previous question to the query.
 
 The PDF page and the formulas are checked by unit tests only; their look in the WebView2 window is
 the owner's check.
