@@ -360,6 +360,32 @@ def pdf_rects(
             pdf.close()
 
 
+def ocr_rects(
+    text: str, boxes: bytes, start: int, end: int
+) -> list[tuple[float, float, float, float]]:
+    """Boxes covering OCR page text [start, end): the characters of each line run merged into one
+    rectangle, as (x0, y0, x1, y1) page fractions with a top-left origin, like pdf_rects."""
+    grid = np.frombuffer(boxes, dtype="<f4").reshape(-1, 4)
+    start, end = max(start, 0), min(end, len(text), len(grid))
+    rects = []
+    run = start
+    for i in range(start, end + 1):
+        if i == end or text[i] == "\n":
+            cells = grid[run:i]
+            cells = cells[(cells[:, 2] > cells[:, 0]) & (cells[:, 3] > cells[:, 1])]
+            if len(cells):
+                rects.append(
+                    (
+                        float(cells[:, 0].min()),
+                        float(cells[:, 1].min()),
+                        float(cells[:, 2].max()),
+                        float(cells[:, 3].max()),
+                    )
+                )
+            run = i + 1
+    return rects
+
+
 def _page_rects(pdf_page, start: int, end: int) -> list[tuple[float, float, float, float]]:
     width, height = pdf_page.get_size()  # as rendered: rotation and crop box applied
     if width <= 0 or height <= 0:

@@ -3,6 +3,7 @@
 import time
 
 import pytest
+from docgen import make_pdf
 from fakes import FakeEmbedder, FakeLLM, FakeLocalLLM, fake_spans
 from fastapi.testclient import TestClient
 
@@ -12,7 +13,7 @@ from tamra.server import create_app
 
 TOKEN = "secret"
 AUTH = {"X-Tamra-Token": TOKEN}
-INDEX_KEYS = {"counts", "stale", "current", "error", "problems"}
+INDEX_KEYS = {"counts", "stale", "current", "error", "reading", "problems"}
 
 
 def make_api(tmp_path, llm=None):
@@ -92,6 +93,25 @@ def test_create_a_project_returns_it_with_its_index_status(api):
     listed = client.get("/api/projects", headers=AUTH).json()
     assert [p["id"] for p in listed["projects"]] == [body["id"]]
     assert set(listed["projects"][0]["index"]["counts"]) >= {"indexed", "pending", "failed"}
+    assert listed["projects"][0]["index"]["reading"] is None
+
+
+def test_a_scan_waiting_for_ocr_is_a_problem_that_says_so(api):
+    client, tmp_path = api  # the temp models folder has no OCR models
+    docs = tmp_path / "scans"
+    make_pdf(docs / "scan.pdf", [["Cover."], []])
+    created = add_project(client, "Scans", docs)
+    wait_for(lambda: project(client, created["id"])["index"]["counts"]["indexed"] == 1)
+    index = project(client, created["id"])["index"]
+    assert index["reading"] is None
+    assert index["problems"] == [
+        {
+            "rel_path": "scan.pdf",
+            "status": "indexed",
+            "error": "no text layer on page(s) 2 (needs OCR)",
+            "needs_ocr": True,
+        }
+    ]
 
 
 def test_a_project_without_a_name_is_named_after_its_folder(api):

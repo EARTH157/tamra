@@ -45,6 +45,7 @@ from tamra.viewer import (
     Unreadable,
     ViewerError,
     locate,
+    ocr_rects,
     pdf_page_count,
     pdf_rects,
     render_pdf_page,
@@ -264,7 +265,9 @@ def _project_payload(view: dict) -> dict:
         "id": view["id"],
         "name": view["name"],
         "folder_path": view["folder_path"],
-        "index": {key: view[key] for key in ("counts", "stale", "current", "error", "problems")},
+        "index": {
+            key: view[key] for key in ("counts", "stale", "current", "error", "reading", "problems")
+        },
     }
 
 
@@ -560,8 +563,15 @@ def _add_viewer_routes(
                 return reply
             reply.update(found=True, start=found.start, end=found.end)
             if found.kind == "pdf" and found.page is not None:
-                rects = pdf_rects(path, found.page, found.start, found.end)
-                reply.update(page=found.page, rects=[list(r) for r in rects])
+                scanned = core.store.ocr_page(record.id, found.page)
+                rects = (
+                    ocr_rects(scanned.text, scanned.boxes, found.start, found.end)
+                    if scanned is not None
+                    else pdf_rects(path, found.page, found.start, found.end)
+                )
+                reply.update(
+                    page=found.page, rects=[list(r) for r in rects], ocr=scanned is not None
+                )
             return reply
         except ViewerError as e:
             raise _viewer_error(e) from e
@@ -738,6 +748,7 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
                 {"id": f"import:{path.name}", "name": path.stem, "file": path.name, "size": size}
             )
         embedding = catalog.embedding()
+        ocr = catalog.ocr()
         settings = core.settings
         # The local model that local mode would serve now; the same resolution LocalLLM uses.
         try:
@@ -761,6 +772,9 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
             "local": local,
             "uncatalogued": uncatalogued,
             "embedding": _entry_payload(embedding, embedding.id in installed, status[embedding.id]),
+            "ocr": None
+            if ocr is None
+            else _entry_payload(ocr, ocr.id in installed, status[ocr.id]),
         }
 
     @app.post("/api/models/import")
