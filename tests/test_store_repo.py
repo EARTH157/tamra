@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from tamra.store import ChunkInput, Store
+from tamra.store.schema import SCHEMA_VERSION
 
 MODEL = "test-model"
 
@@ -44,7 +45,7 @@ def test_schema_is_created_once_and_versioned(tmp_path):
     assert again.list_collections() == []
     again.close()
     conn = sqlite3.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
 

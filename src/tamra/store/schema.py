@@ -1,6 +1,6 @@
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _V1 = """
 CREATE TABLE collections (
@@ -105,6 +105,20 @@ INSERT INTO chat_collections (chat_id, collection_id)
     SELECT id, collection_id FROM chats WHERE collection_id IS NOT NULL;
 """
 
+# v4: OCR (M5). The text and character boxes of each page read by OCR, and the files whose last
+# parse left pages for OCR because the models were missing (M4 noted those as "(needs OCR)").
+_V4 = """
+CREATE TABLE ocr_pages (
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    page INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    boxes BLOB NOT NULL,
+    PRIMARY KEY (file_id, page)
+);
+ALTER TABLE files ADD COLUMN needs_ocr INTEGER NOT NULL DEFAULT 0;
+UPDATE files SET needs_ocr = 1 WHERE error LIKE '%(needs OCR)%';
+"""
+
 
 def _run_in_transaction(conn: sqlite3.Connection, script: str, version: int) -> None:
     try:
@@ -123,6 +137,6 @@ def migrate(conn: sqlite3.Connection) -> None:
         raise RuntimeError(
             f"database schema {version} is newer than this version of Tamra ({SCHEMA_VERSION})"
         )
-    steps = [_V1, _V2, _V3]  # steps[n] upgrades schema n to n + 1
+    steps = [_V1, _V2, _V3, _V4]  # steps[n] upgrades schema n to n + 1
     if version < SCHEMA_VERSION:
         _run_in_transaction(conn, "\n".join(steps[version:]), SCHEMA_VERSION)

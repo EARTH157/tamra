@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from tamra.store import ChunkInput, Store, connect
-from tamra.store.schema import _V1, _V2
+from tamra.store.schema import _V1, _V2, SCHEMA_VERSION
 
 MODEL = "test-model"
 NOW = "2026-01-01T00:00:00+00:00"
@@ -85,7 +85,7 @@ def test_a_v2_database_upgrades_to_v3_giving_every_chat_the_one_project(tmp_path
     finally:
         store.close()
     conn = sqlite3.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
 
