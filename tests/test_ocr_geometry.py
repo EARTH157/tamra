@@ -107,3 +107,20 @@ def test_resize_bilinear_keeps_constant_images():
     img = np.full((7, 9, 3), 77, np.uint8)
     assert np.allclose(resize_bilinear(img, 3, 4), 77)
     assert resize_bilinear(img[:, :, 0], 14, 18).shape == (14, 18)
+
+
+def test_unclip_rounds_halves_away_from_zero_like_clipper():
+    box = np.array([[10, 10], [15, 10], [15, 13], [10, 13]], np.float64)
+    grown, _ = min_area_rect(unclip(box, 1.6))  # d = 1.5: every side lands on a .5
+    assert np.allclose(grown, [[9, 9], [17, 9], [17, 15], [9, 15]])  # pyclipper's result
+
+
+def test_crop_quad_survives_a_degenerate_box():
+    img = np.full((20, 20), 128, np.uint8)
+    crop, turned = crop_quad(img, np.array([[0, 0], [10, 0], [10, 0], [0, 8]], np.float64))
+    assert crop.shape == (8, 12) and not turned
+
+
+def test_resize_bilinear_interpolates_like_opencv():
+    out = resize_bilinear(np.array([[0, 100]], np.uint8), 1, 4)
+    assert np.allclose(out, [[0, 25, 75, 100]])

@@ -57,6 +57,7 @@ pywebview window (WebView2)
                                                  ├─ answer      prompt, stream, record sources
                                                  ├─ attribution selection → source passage
                                                  ├─ viewer      render PDF pages, find highlight boxes, show text
+                                                 ├─ ocr         PP-OCRv5 on onnxruntime: scanned page → text + character boxes
                                                  ├─ models      hardware detect, download, import, verify
                                                  └─ store       SQLite (+ FTS5, sqlite-vec)
 ```
@@ -75,7 +76,8 @@ which is started on demand in local mode and stopped when the app exits.
   — `status ∈ {pending, indexing, indexed, failed, skipped}`; `needs_ocr` marks a file whose last
   parse left pages for OCR because the OCR models were not installed
 - `chunks(id, file_id, ord, text, location_json)` — `location_json` holds page range and
-  character offsets (PDF), heading path and paragraph index (DOCX), or line range (TXT/MD).
+  character offsets (PDF), heading path and paragraph index (DOCX), or line range (TXT/MD); an
+  OCR page's location also has `"ocr": true`.
 - `chunks_fts` — FTS5 table over `chunks.text`, `tokenize='trigram'`
 - `chunk_vectors` — `sqlite-vec` virtual table, 1024-dim float32, keyed by chunk id
 - `ocr_pages(file_id, page, text, boxes)` — one row per PDF page read by OCR (M5): the page text
@@ -128,8 +130,8 @@ stored in `ocr_pages`.
     Thai text layer is garbled (Chromium/Skia browser prints repeat cluster fragments such as
     `บอร์ดร์` or `สรุป\nรุ`), or when it has text that is not drawn (its render is almost blank).
     Without the OCR models such pages keep their text layer, if any; a page with none is noted
-    ("needs OCR") and the file is marked `needs_ocr`. Installing the models re-queues every such
-    file, even though its content did not change.
+    ("needs OCR"). Either way the file is marked `needs_ocr`, and installing the models re-queues
+    it, even though its content did not change.
   - DOCX: `python-docx`. Paragraphs with their heading path.
   - TXT/MD: encoding detected with `charset-normalizer` (Thai TIS-620/CP874 files are
     common), then line-tracked text.
@@ -219,11 +221,11 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 
 ## 9. Models and settings
 
-- **Catalog:** `models.json` shipped with the app. Each entry has `id`, `role`
-  (embedding|llm|ocr), `tier` (small|medium|large), `file_size`, `url` (Hugging Face),
-  `sha256`, `license`, `languages`, `context_length`. It updates with app releases. The OCR
-  entry's files come from ModelScope (RapidAI's ONNX conversion of PaddleOCR's Apache-2.0
-  models), pinned like the others.
+- **Catalog:** `catalog.json` shipped with the app. Each entry has `id`, `role`
+  (embedding|llm|ocr), `tier` (small|medium|large), `file_size`, `url` (Hugging Face or
+  ModelScope), `sha256`, `license`, `languages`, `context_length`. It updates with app releases.
+  The OCR entry's files come from ModelScope (RapidAI's ONNX conversion of PaddleOCR's
+  Apache-2.0 models), pinned like the others.
 - **Hardware detection:** RAM, and GPU devices/VRAM via `llama-server --list-devices`.
   Tamra recommends a tier; the user can override.
   - Small: about 1–4B parameters, for low-spec or CPU-only machines.

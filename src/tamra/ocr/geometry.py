@@ -2,9 +2,9 @@
 
 The detection post-processing and the line crop follow RapidOCR 3.10.0
 (https://github.com/RapidAI/RapidOCR, Apache-2.0): ch_ppocr_det/utils.py (DBPostProcess,
-get_mini_boxes, box_score_fast, unclip, order_points_clockwise) and
-utils/process_img.py (get_rotate_crop_image). OpenCV, pyclipper and shapely calls are
-replaced by the numpy equivalents below.
+get_mini_boxes, box_score_fast, unclip, order_points_clockwise), ch_ppocr_det/main.py
+(sorted_boxes) and utils/process_img.py (get_rotate_crop_image). OpenCV, pyclipper and
+shapely calls are replaced by the numpy equivalents below.
 """
 
 import math
@@ -35,7 +35,9 @@ def resize_bilinear(img: np.ndarray, h: int, w: int) -> np.ndarray:
 
 def components(mask: np.ndarray) -> list[np.ndarray]:
     """4-connected components of a bool mask, each as an (n, 3) int array of row runs
-    (y, x_start, x_end) with x_end exclusive. Row runs plus union-find: no per-pixel loop."""
+    (y, x_start, x_end) with x_end exclusive. Row runs plus union-find: no per-pixel loop.
+    The engine's 2x2 dilation before this is load-bearing: it makes 4-connectivity match the
+    components of OpenCV's 8-connected contours."""
     parent: list[int] = []
 
     def find(a: int) -> int:
@@ -163,8 +165,9 @@ def unclip(box: Box, ratio: float) -> np.ndarray:
     """DB unclip: pyclipper's round-join offset of the box by area * ratio / perimeter.
 
     pyclipper works on integer coordinates: the corners are truncated and the result is
-    rounded. Only the straight offset edges are returned (8 points); the rounded corners lie
-    inside their minimum-area rectangle, which is all the caller takes from them.
+    rounded half away from zero, as Clipper does. Only the straight offset edges are returned
+    (8 points); the rounded corners lie inside their minimum-area rectangle, which is all the
+    caller takes from them.
     """
     u, v = box[1] - box[0], box[3] - box[0]
     w, h = float(np.hypot(*u)), float(np.hypot(*v))
@@ -181,7 +184,8 @@ def unclip(box: Box, ratio: float) -> np.ndarray:
         if np.dot(normal, (a + b) / 2 - centre) < 0:
             normal = -normal
         out += [a + d * normal, b + d * normal]
-    return np.rint(np.asarray(out))
+    out = np.asarray(out)
+    return np.sign(out) * np.floor(np.abs(out) + 0.5)  # np.rint would round half to even
 
 
 def order_clockwise(box: np.ndarray) -> Box:
@@ -240,15 +244,19 @@ def crop_quad(img: np.ndarray, box: Box) -> tuple[np.ndarray, bool]:
     h = int(max(np.hypot(*(box[0] - box[3])), np.hypot(*(box[1] - box[2]))))
     w, h = max(w, 1), max(h, 1)
     target = np.array([[0, 0], [w, 0], [w, h], [0, h]], np.float64)
-    inverse = np.linalg.inv(_homography(box, target))
+    try:
+        to_source = _homography(target, box)  # output pixel -> page point, no inversion
+    except np.linalg.LinAlgError:  # corners coincide: no homography exists, map 3 corners
+        (x0, y0), (x1, y1), (x3, y3) = box[0], box[1], box[3]
+        to_source = np.array(
+            [[(x1 - x0) / w, (x3 - x0) / h, x0], [(y1 - y0) / w, (y3 - y0) / h, y0], [0, 0, 1]]
+        )
     gy, gx = np.mgrid[0:h, 0:w].astype(np.float64)
-    q = inverse @ np.stack([gx.ravel(), gy.ravel(), np.ones(gx.size)])
+    q = to_source @ np.stack([gx.ravel(), gy.ravel(), np.ones(gx.size)])
     sx, sy = (q[0] / q[2]).reshape(h, w), (q[1] / q[2]).reshape(h, w)
     x0, y0 = np.floor(sx).astype(int), np.floor(sy).astype(int)
     wx, wy = _cubic(sx - x0), _cubic(sy - y0)
-    f = img.astype(np.float32)
-    if f.ndim == 2:
-        f = f[:, :, None]
+    f = img if img.ndim == 3 else img[:, :, None]  # stays uint8: only gathered pixels are cast
     H, W = f.shape[:2]
     out = np.zeros((h, w, f.shape[2]), np.float32)
     for j in range(4):
@@ -256,7 +264,7 @@ def crop_quad(img: np.ndarray, box: Box) -> tuple[np.ndarray, bool]:
         row = np.zeros_like(out)
         for i in range(4):
             xx = np.clip(x0 + i - 1, 0, W - 1)
-            row += f[yy, xx] * wx[i][:, :, None]
+            row += f[yy, xx].astype(np.float32) * wx[i][:, :, None]
         out += row * wy[j][:, :, None]
     crop = np.clip(np.rint(out), 0, 255).astype(np.uint8)
     if img.ndim == 2:
