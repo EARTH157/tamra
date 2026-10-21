@@ -163,6 +163,7 @@ class Core:
         )
         self._ocr_factory = ocr_factory or self._load_ocr
         self._ocr: OcrLike | None = None
+        self._ocr_failed = False  # the load raised: not tried again until the models are installed
         self._ocr_lock = threading.Lock()
         self.indexer = Indexer(
             self.store, self.embedder, spans_factory, MODEL_ID, ocr=self.ocr_engine
@@ -314,13 +315,15 @@ class Core:
 
     def ocr_engine(self) -> OcrLike | None:
         """The OCR models, loaded on first use and kept. None while they are not installed or
-        cannot be loaded; scanned pages then wait, and the next file tries again."""
+        cannot be loaded; scanned pages then wait. Models that failed to load are not tried
+        again until they are installed again or the app restarts."""
         with self._ocr_lock:
-            if self._ocr is None:
+            if self._ocr is None and not self._ocr_failed:
                 try:
                     self._ocr = self._ocr_factory()
                 except Exception as e:  # damaged or unreadable model files
                     log.warning("the OCR models cannot be loaded: %s", e)
+                    self._ocr_failed = True
             return self._ocr
 
     def _ocr_installed(self) -> bool:
@@ -337,6 +340,8 @@ class Core:
         models arrived: every file with pages left for OCR is read again, in every project."""
         ocr = self._catalog.ocr()
         if ocr is not None and model_id == ocr.id:
+            with self._ocr_lock:
+                self._ocr_failed = False  # new files: load them on the next scanned page
             self.store.requeue_ocr_files()
             self.indexer.request_reconcile()
         elif model_id == self._catalog.embedding().id:
@@ -453,8 +458,10 @@ class Core:
     # --- projects ---
 
     def start(self) -> None:
-        if self._ocr_installed():  # a file read while the models arrived, or a crash before
-            self.store.requeue_ocr_files()  # the re-queue, would otherwise wait for a change
+        # A file read while the models arrived, or a crash before the re-queue, would otherwise
+        # wait for a change. The flag starts unset on each launch, so a restart retries once.
+        if self._ocr_installed() and not self._ocr_failed:
+            self.store.requeue_ocr_files()
         self.indexer.start()
         collections = self.store.list_collections()
         for collection in collections:

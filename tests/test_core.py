@@ -807,7 +807,7 @@ def test_installing_the_ocr_models_reads_the_waiting_scans_again(tmp_path):
         c.shutdown()
 
 
-def test_the_ocr_engine_is_loaded_once_and_a_failed_load_is_retried(tmp_path):
+def test_a_broken_ocr_model_is_not_reloaded_until_it_is_installed_again(tmp_path):
     attempts = []
 
     def factory():
@@ -819,6 +819,8 @@ def test_the_ocr_engine_is_loaded_once_and_a_failed_load_is_retried(tmp_path):
     c = make_core(tmp_path, ocr_factory=factory)
     try:
         assert c.ocr_engine() is None
+        assert c.ocr_engine() is None and len(attempts) == 1  # not loaded again for every file
+        c._model_installed("pp-ocrv5-mobile")  # downloaded again from Settings
         first = c.ocr_engine()
         assert first is not None and c.ocr_engine() is first and len(attempts) == 2
     finally:
