@@ -54,9 +54,10 @@ def test_ocr_pages_are_written_with_the_chunks_and_replaced_with_them(store):
 
 def test_box_bytes_must_match_the_text(store):
     _, file_id = add(store)
+    index(store, file_id, [OcrPage(1, "old", boxes("old"))])
     with pytest.raises(ValueError):
-        index(store, file_id, [OcrPage(1, "abc", boxes("ab"))])
-    assert store.ocr_pages(file_id) == []
+        index(store, file_id, [OcrPage(1, "abc", boxes("ab"))], text="new")
+    assert store.ocr_pages(file_id) == [OcrPage(1, "old", boxes("old"))]
 
 
 def test_ocr_pages_go_with_the_file_a_failure_and_a_rebuild(store):
@@ -69,6 +70,10 @@ def test_ocr_pages_go_with_the_file_a_failure_and_a_rebuild(store):
     assert store.ocr_pages(file_id) == [] and not store.get_file(file_id).needs_ocr
     index(store, file_id, [OcrPage(1, "x", boxes("x"))])
     store.delete_file(file_id)
+    assert store.ocr_pages(file_id) == []
+    _, file_id = add(store, "moved.pdf")
+    index(store, file_id, [OcrPage(1, "x", boxes("x"))])
+    store.set_collection_folder(collection.id, "C:/other", "m")
     assert store.ocr_pages(file_id) == []
 
 
