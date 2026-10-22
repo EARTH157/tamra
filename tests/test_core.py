@@ -1,7 +1,8 @@
 import time
 
 import pytest
-from fakes import FakeEmbedder, FakeLLM, FakeLocalLLM, fake_spans
+from docgen import make_pdf
+from fakes import FakeEmbedder, FakeLLM, FakeLocalLLM, FakeOcr, fake_spans
 
 from tamra.answer import AnswerSettings
 from tamra.core import (
@@ -112,6 +113,7 @@ def test_projects_report_their_status_and_rebuild_fixes_a_stale_index(core, tmp_
         "stale",
         "current",
         "error",
+        "reading",
         "problems",
     }
     assert (status["id"], status["name"]) == (project.id, "Docs")
@@ -769,3 +771,84 @@ def test_indexing_resumes_when_the_search_model_download_finishes(tmp_path):
         assert c.projects()[0]["error"] is None
     finally:
         c.shutdown()
+
+
+# --- OCR ---
+
+
+def test_installing_the_ocr_models_reads_the_waiting_scans_again(tmp_path):
+    installed: list = []
+    ocr = FakeOcr()
+    c = make_core(tmp_path, ocr_factory=lambda: installed[0] if installed else None)
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    make_pdf(folder / "scan.pdf", [["Cover page words."], []])
+    c.start()
+    try:
+        project = c.create_project("Docs", str(folder))
+
+        def record():
+            found = c.store.list_files(project.id)
+            return found[0] if found else None
+
+        wait_until(lambda: record() is not None and record().status == "indexed")
+        assert record().needs_ocr
+        view = c.project(project.id)
+        assert view["reading"] is None and view["problems"][0]["needs_ocr"] is True
+        installed.append(ocr)
+        c._model_installed("pp-ocrv5-mobile")  # what ModelManager calls after the download
+        wait_until(lambda: c.store.ocr_pages(record().id) != [])
+        wait_until(lambda: record().status == "indexed" and not record().needs_ocr)
+        assert ocr.calls == 1
+        _, _, doc = c.document(record().id)
+        assert [(u.page, u.ocr) for u in doc.units] == [(1, False), (2, True)]
+        assert c.project(project.id)["problems"] == []
+    finally:
+        c.shutdown()
+
+
+def test_a_broken_ocr_model_is_not_reloaded_until_it_is_installed_again(tmp_path):
+    attempts = []
+
+    def factory():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("damaged model file")
+        return FakeOcr()
+
+    c = make_core(tmp_path, ocr_factory=factory)
+    try:
+        assert c.ocr_engine() is None
+        assert c.ocr_engine() is None and len(attempts) == 1  # not loaded again for every file
+        c._model_installed("pp-ocrv5-mobile")  # downloaded again from Settings
+        first = c.ocr_engine()
+        assert first is not None and c.ocr_engine() is first and len(attempts) == 2
+    finally:
+        c.shutdown()
+
+
+def test_start_reads_the_waiting_scans_again_when_the_ocr_models_are_installed(tmp_path):
+    """A file mid-index when the models arrived, or a crash between the download and the
+    re-queue, would otherwise wait for OCR until the file changes."""
+    ocr_file = ModelFile("ppocr-v5/det.onnx", 5, "0" * 64, "http://example.invalid")
+    catalog = Catalog([ModelEntry("ocr", "ocr", "OCR", (ocr_file,))])
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    make_pdf(folder / "scan.pdf", [["Cover page words."], []])
+    first = make_core(tmp_path, catalog=catalog, ocr_factory=lambda: None)
+    first.start()
+    try:
+        project = first.create_project("Docs", str(folder))
+        wait_until(lambda: [f.needs_ocr for f in first.store.list_files(project.id)] == [True])
+    finally:
+        first.shutdown()
+    (tmp_path / "models" / "ppocr-v5").mkdir(parents=True, exist_ok=True)
+    install(tmp_path / "models" / "ppocr-v5", "det.onnx")
+    ocr = FakeOcr()
+    second = make_core(tmp_path, catalog=catalog, ocr_factory=lambda: ocr)
+    second.start()
+    try:
+        wait_until(lambda: second.store.ocr_pages(second.store.list_files(project.id)[0].id))
+        assert ocr.calls == 1
+    finally:
+        second.shutdown()

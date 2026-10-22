@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tamra.models.catalog import Catalog, ModelEntry, ModelFile, load_catalog
+from tamra.ocr import MODEL_DIR, MODEL_FILES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -156,3 +157,19 @@ def test_verify_multi_file_entry_picks_the_file_by_name(tmp_path):
     stranger.write_bytes(b"tok")
     with pytest.raises(KeyError):
         catalog.verify("emb", stranger)
+
+
+def test_the_ocr_entry_pins_the_three_ppocr_files():
+    entry = load_catalog().ocr()
+    assert entry is not None and entry.id == "pp-ocrv5-mobile" and entry.role == "ocr"
+    assert [f.path for f in entry.files] == [f"{MODEL_DIR}/{name}" for name in MODEL_FILES]
+    assert sum(f.size for f in entry.files) == 29_366_176
+    assert all(
+        f.url.startswith("https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/")
+        for f in entry.files
+    )
+    assert entry not in load_catalog().llms()
+
+
+def test_a_catalog_without_ocr_says_so():
+    assert Catalog([]).ocr() is None

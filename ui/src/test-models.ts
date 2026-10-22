@@ -61,6 +61,7 @@ export function modelsInfo(over: Partial<ModelsInfo> = {}): ModelsInfo {
     ],
     uncatalogued: [{ id: "import:mine.gguf", name: "mine", file: "mine.gguf", size: 8 }],
     embedding: embeddingModel({}),
+    ocr: embeddingModel({ id: "pp-ocrv5-mobile", name: "PP-OCRv5 mobile", size: 29_366_176 }),
     ...over,
   };
 }

@@ -5,7 +5,7 @@ import os
 import stat
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -13,8 +13,9 @@ import numpy as np
 
 from tamra.download import sha256_file
 from tamra.ingest.chunker import TokenSpans, chunk_document
-from tamra.ingest.parsers import SUPPORTED, ParseError, parse_file
-from tamra.store import Store
+from tamra.ingest.parsers import SUPPORTED, ParseError, parse_file, with_ocr
+from tamra.ocr import OcrPageResult, render_page
+from tamra.store import OcrPage, Store
 
 log = logging.getLogger(__name__)
 
@@ -26,10 +27,15 @@ class EmbedderLike(Protocol):
     def embed(self, texts: list[str], batch_size: int = 16) -> np.ndarray: ...
 
 
+class OcrLike(Protocol):
+    def read(self, image: np.ndarray) -> OcrPageResult: ...
+
+
 @dataclass(frozen=True)
 class IndexerState:
     current: str | None  # file of this project being indexed right now
     error: str | None  # what stops indexing it (missing folder, unavailable model)
+    reading: tuple[int, int] | None = None  # (n, of): OCR is reading the n-th of `of` pages
 
 
 class _Pause(Exception):
@@ -107,8 +113,12 @@ class Indexer:
         embedder: Callable[[], EmbedderLike],
         token_spans: Callable[[], TokenSpans],
         model_id: str,
+        *,
+        ocr: Callable[[], OcrLike | None] = lambda: None,
     ):
         self._store = store
+        self._ocr = ocr
+        self._reading: tuple[int, int] | None = None
         self._embedder = embedder
         self._token_spans_factory = token_spans
         self._spans: TokenSpans | None = None
@@ -162,7 +172,9 @@ class Indexer:
         with self._lock:
             working = self._current is not None and self._current[0] == collection_id
             return IndexerState(
-                self._current[1] if working else None, self._errors.get(collection_id)
+                self._current[1] if working else None,
+                self._errors.get(collection_id),
+                self._reading if working else None,
             )
 
     def process(self) -> None:
@@ -295,9 +307,26 @@ class Indexer:
                 raise _Pause(f"Embedding model unavailable: {e}") from e
             content_hash = sha256_file(path)
             doc = parse_file(path)
+            pages: list[OcrPage] = []
+            needs_ocr = False
+            if doc.ocr_pages:
+                engine = self._ocr()
+                if engine is None:  # not installed: the pages wait, the rest is indexed
+                    needs_ocr = True
+                else:
+                    read = self._read_pages(file_id, path, doc.ocr_pages, engine)
+                    if read is None:
+                        return
+                    texts, pages, failed = read
+                    note = (
+                        "OCR failed on page(s) " + ", ".join(map(str, failed)) if failed else None
+                    )
+                    doc = replace(with_ocr(doc, texts), note=note)
             chunks = chunk_document(doc, spans)
             if not chunks:
-                self._store.set_file_status(file_id, "skipped", doc.note or "no text found")
+                self._store.set_file_status(
+                    file_id, "skipped", doc.note or "no text found", needs_ocr=needs_ocr
+                )
                 return
             texts = [chunk.text for chunk in chunks]
             batches = []
@@ -309,7 +338,13 @@ class Indexer:
             vectors = np.concatenate(batches)
             try:
                 self._store.replace_file_chunks(
-                    file_id, chunks, vectors, content_hash=content_hash, note=doc.note
+                    file_id,
+                    chunks,
+                    vectors,
+                    content_hash=content_hash,
+                    note=doc.note,
+                    ocr_pages=pages,
+                    needs_ocr=needs_ocr,
                 )
             except LookupError:
                 return  # the file left the project while it was being indexed
@@ -323,6 +358,39 @@ class Indexer:
         finally:
             with self._lock:
                 self._current = None
+
+    def _read_pages(
+        self, file_id: int, path: Path, pages: tuple[int, ...], engine: OcrLike
+    ) -> tuple[dict[int, str], list[OcrPage], list[int]] | None:
+        """OCR the pages one at a time: (page -> text, rows to store, pages that failed). None
+        when indexing must stop between pages: on shutdown (the file goes back to pending) or
+        when the file left the index (its project was deleted, or the file was removed)."""
+        texts: dict[int, str] = {}
+        rows: list[OcrPage] = []
+        failed: list[int] = []
+        try:
+            for n, page in enumerate(pages, start=1):
+                if self._stopping.is_set():
+                    self._store.set_file_status(file_id, "pending")
+                    return None
+                if self._store.get_file(file_id) is None:
+                    return None
+                with self._lock:
+                    self._reading = (n, len(pages))
+                try:
+                    result = engine.read(render_page(path, page))  # PDFium is held only to draw
+                except Exception:  # one unreadable page must not lose the file
+                    log.warning("OCR of page %s of %s failed", page, path.name, exc_info=True)
+                    failed.append(page)
+                    continue
+                texts[page] = result.text
+                if result.text:
+                    boxes = np.asarray(result.boxes, dtype="<f4").tobytes()
+                    rows.append(OcrPage(page, result.text, boxes))
+        finally:
+            with self._lock:
+                self._reading = None
+        return texts, rows, failed
 
 
 def _hash_or_none(path: Path) -> str | None:

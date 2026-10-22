@@ -13,6 +13,8 @@ a = Analysis(
         (str(ROOT / "ui" / "dist"), "ui/dist"),
         (str(ROOT / "vendor" / "llama"), "vendor/llama"),
         (str(ROOT / "src" / "tamra" / "models" / "catalog.json"), "tamra/models"),
+        (str(ROOT / "LICENSE"), "."),
+        (str(ROOT / "NOTICE"), "."),
     ],
     hiddenimports=collect_submodules("uvicorn")
     # PyInstaller's hook-keyring already covers this; kept as belt-and-braces for the

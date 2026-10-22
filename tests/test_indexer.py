@@ -7,13 +7,14 @@ from pathlib import Path
 
 import pytest
 from docgen import LATIN_THAI, make_docx, make_pdf
-from fakes import FakeEmbedder, fake_spans
+from fakes import FakeEmbedder, FakeOcr, fake_spans
 
 from tamra.ingest import indexer as indexer_module
 from tamra.ingest.indexer import Indexer, IndexerState, scan_folder
 from tamra.store import Store
 
 MODEL = "model-1"
+FIXTURES = Path(__file__).parent / "fixtures" / "ocr"
 
 
 @pytest.fixture
@@ -504,3 +505,102 @@ def test_a_file_over_the_size_cap_is_skipped(env, monkeypatch):
     )
     assert state["ok.md"].status == "indexed"
     assert embedder.calls == 1
+
+
+def ocr_indexer(env, ocr):
+    _, store, embedder, _ = env
+    return Indexer(store, lambda: embedder, lambda: fake_spans, MODEL, ocr=lambda: ocr)
+
+
+def test_a_scanned_page_is_read_by_ocr(env):
+    docs, store, _, _ = env
+    make_pdf(docs / "scan.pdf", [["Cover page words."], []])
+    ocr = FakeOcr()
+    run(ocr_indexer(env, ocr))
+    record = files(store)["scan.pdf"]
+    assert (record.status, record.error, record.needs_ocr) == ("indexed", None, False)
+    assert ocr.calls == 1
+    (page,) = store.ocr_pages(record.id)
+    assert page.page == 2 and page.text == ocr.text and len(page.boxes) == 16 * len(ocr.text)
+    hits = store.get_chunks(keyword(store, "boiler"))
+    assert hits and all(c.location.get("ocr") for c in hits)
+
+
+def test_without_the_models_the_page_waits_for_ocr(env):
+    docs, store, _, indexer = env
+    make_pdf(docs / "scan.pdf", [["Cover page words."], []])
+    run(indexer)
+    record = files(store)["scan.pdf"]
+    assert record.status == "indexed" and record.needs_ocr
+    assert record.error == "no text layer on page(s) 2 (needs OCR)"
+    assert store.ocr_pages(record.id) == []
+
+
+def test_a_fully_scanned_file_without_the_models_is_skipped_and_waits(env):
+    docs, store, _, indexer = env
+    make_pdf(docs / "scan.pdf", [[], []])
+    run(indexer)
+    record = files(store)["scan.pdf"]
+    assert record.status == "skipped" and record.needs_ocr
+
+
+def test_a_page_that_fails_is_noted_and_the_rest_is_indexed(env):
+    docs, store, _, _ = env
+    make_pdf(docs / "scan.pdf", [["Intro words here."], [], []])
+    run(ocr_indexer(env, FakeOcr(fail_calls={1})))
+    record = files(store)["scan.pdf"]
+    assert record.status == "indexed" and record.error == "OCR failed on page(s) 2"
+    assert [p.page for p in store.ocr_pages(record.id)] == [3]
+
+
+def test_stopping_between_pages_leaves_the_file_pending(env):
+    docs, store, _, _ = env
+    make_pdf(docs / "scan.pdf", [[], [], []])
+    indexer = None
+    ocr = FakeOcr(on_read=lambda call: indexer.stop())
+    indexer = ocr_indexer(env, ocr)
+    run(indexer)
+    assert ocr.calls == 1
+    assert files(store)["scan.pdf"].status == "pending"
+
+
+def test_a_file_removed_while_it_is_read_stops_its_ocr(env):
+    docs, store, _, _ = env
+    make_pdf(docs / "scan.pdf", [[], [], []])
+    ocr = FakeOcr(on_read=lambda call: store.delete_file(files(store)["scan.pdf"].id))
+    run(ocr_indexer(env, ocr))
+    assert ocr.calls == 1 and "scan.pdf" not in files(store)
+
+
+def test_the_state_says_which_page_is_being_read(env):
+    docs, store, _, _ = env
+    make_pdf(docs / "scan.pdf", [[], []])
+    project = store.list_collections()[0].id
+    seen = []
+    indexer = None
+    ocr = FakeOcr(on_read=lambda call: seen.append(indexer.state(project).reading))
+    indexer = ocr_indexer(env, ocr)
+    run(indexer)
+    assert seen == [(1, 2), (2, 2)]
+    assert indexer.state(project).reading is None
+
+
+def test_a_page_ocr_finds_no_text_on_keeps_its_text_layer(env):
+    docs, store, _, _ = env
+    lines = ["Hidden lease words that the reader never sees on this page."] * 4
+    make_pdf(docs / "hidden.pdf", [lines], invisible=True)
+    run(ocr_indexer(env, FakeOcr(text="")))
+    record = files(store)["hidden.pdf"]
+    assert record.status == "indexed" and store.ocr_pages(record.id) == []
+    hits = store.get_chunks(keyword(store, "lease"))
+    assert hits and not any(c.location.get("ocr") for c in hits)
+
+
+def test_a_garbled_thai_layer_is_replaced_by_ocr_text(env):
+    docs, store, _, _ = env
+    shutil.copy(FIXTURES / "th_0.pdf", docs / "th.pdf")
+    run(ocr_indexer(env, FakeOcr(text="ระเบียบการใช้ห้องปฏิบัติการ")))
+    record = files(store)["th.pdf"]
+    assert [p.page for p in store.ocr_pages(record.id)] == [1]
+    texts = [c.text for c in store.get_chunks(keyword(store, "ระเบียบ"))]
+    assert texts == ["ระเบียบการใช้ห้องปฏิบัติการ"]

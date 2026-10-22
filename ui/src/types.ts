@@ -8,13 +8,21 @@ export type FileCounts = {
   skipped: number;
 };
 
-export type ProblemFile = { rel_path: string; status: string; error: string | null };
+export type ProblemFile = {
+  rel_path: string;
+  status: string;
+  error: string | null;
+  /** Scanned pages wait for the OCR model. */
+  needs_ocr?: boolean;
+};
 
 export type IndexStatus = {
   stale: boolean;
   counts: FileCounts;
   current: string | null;
   error: string | null;
+  /** The page OCR is reading in the current file. */
+  reading?: { page: number; pages: number } | null;
   problems: ProblemFile[];
 };
 
@@ -75,6 +83,8 @@ export type Locate = {
   /** Text: 1-based lines; DOCX: paragraph indices. The end is exclusive. For a PDF, offsets in the page text. */
   start?: number;
   end?: number;
+  /** PDF only: the page was read by OCR. */
+  ocr?: boolean;
 };
 
 /** What the viewer needs to open a file at a source passage (the Task 5 hand-off). */
@@ -169,6 +179,8 @@ export type ModelsInfo = {
   local: LocalModel[];
   uncatalogued: UncataloguedModel[];
   embedding: EmbeddingModel;
+  /** The OCR model; null when the catalog has none. */
+  ocr: ModelStatus | null;
 };
 
 /** The tabs of the Settings page. */

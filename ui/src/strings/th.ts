@@ -212,6 +212,9 @@ export const th: Record<TranslationKey, string> = {
   "index.filesIndexed": "สร้างดัชนีแล้ว {count} ไฟล์",
   "index.filesIndexed.one": "สร้างดัชนีแล้ว 1 ไฟล์",
   "index.current": "กำลังสร้างดัชนี {file}",
+  "index.reading": "กำลังอ่านหน้าที่สแกน {page} จาก {pages}",
+  "index.needsOcr":
+    "หน้าที่สแกนมาต้องใช้โมเดลอ่านข้อความจากภาพ (OCR) ดาวน์โหลดได้ในหน้าตั้งค่า",
   "index.needAttention": "{count} ไฟล์ต้องตรวจสอบ",
   "index.needAttention.one": "1 ไฟล์ต้องตรวจสอบ",
   "index.failed": "ล้มเหลว: {error}",
@@ -260,6 +263,8 @@ export const th: Record<TranslationKey, string> = {
   "settings.searchModel": "โมเดลค้นหา",
   "settings.searchModelHint":
     "จำเป็นสำหรับการค้นหาในเอกสารของคุณ และทำงานบนเครื่องนี้เสมอ",
+  "settings.ocrModel": "อ่านข้อความจากภาพ (OCR)",
+  "settings.ocrModelHint": "อ่านหน้า PDF ที่สแกนมาและไม่มีข้อความ ทำงานบนเครื่องนี้เสมอ",
   "settings.localModel": "โมเดลในเครื่อง",
   "settings.detected": "ตรวจพบ RAM {ram} GB · {gpu}",
   "settings.gpu": "{name} VRAM {vram} GB",

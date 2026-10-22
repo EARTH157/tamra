@@ -20,7 +20,7 @@ class ModelFile:
 @dataclass(frozen=True)
 class ModelEntry:
     id: str
-    role: str  # "llm" | "embedding"
+    role: str  # "llm" | "embedding" | "ocr"
     name: str
     files: tuple[ModelFile, ...]
     tier: str | None = None  # llm only: "small" | "medium" | "large"
@@ -47,6 +47,10 @@ class Catalog:
             if m.role == "embedding":
                 return m
         raise KeyError("embedding")
+
+    def ocr(self) -> ModelEntry | None:
+        """The OCR models' entry; None for a catalog without one."""
+        return next((m for m in self.models if m.role == "ocr"), None)
 
     def get(self, model_id: str) -> ModelEntry:
         for m in self.models:

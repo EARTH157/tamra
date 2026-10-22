@@ -1,9 +1,24 @@
 import codecs
+from pathlib import Path
 
+import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_c
 import pytest
-from docgen import CJK, LATIN_THAI, make_docx, make_pdf
+from docgen import CJK, LATIN_THAI, image_pdf, make_docx, make_pdf
 
-from tamra.ingest.parsers import ParseError, Unit, decode_text, location, parse_file
+from tamra.ingest.parsers import (
+    ECHO_MIN,
+    ParseError,
+    Unit,
+    decode_text,
+    location,
+    parse_file,
+    parse_pdf,
+    thai_echoes,
+    with_ocr,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures" / "ocr"
 
 
 @pytest.fixture(autouse=True)
@@ -188,3 +203,99 @@ def test_docx_merged_cells_are_read_once_and_nested_tables_follow_their_row(tmp_
         ("Outer", 3),
         ("nested | row", 4),
     ]
+
+
+CLEAN_THAI = [
+    "ระเบียบการใช้ห้องปฏิบัติการ",
+    "ผู้ใช้ห้องปฏิบัติการทุกคนต้องผ่านการอบรมความปลอดภัยก่อนเริ่มใช้งานเครื่องมือ",
+    "ห้ามนำอาหารและเครื่องดื่มเข้ามาในห้องปฏิบัติการ",
+]
+
+
+def test_thai_echoes_count_the_fragments_a_skia_print_repeats():
+    assert thai_echoes("บอร์ดร์ พัฒพั") == 2  # inline: a cluster again after its word
+    assert thai_echoes("สรุป\nรุ\nผลการทดลอง") == 1  # a short line that repeats the tail above
+    assert thai_echoes("\u0e34abc") == 1  # a mark with no base letter
+    assert thai_echoes("\n".join(CLEAN_THAI)) == 0 < ECHO_MIN == 3
+    # clean Thai that looks like an echo: a doubled word, and a repeated table cell
+    assert thai_echoes("สถานที่ที่จัด สถานที่ที่พัก สถานที่ที่จอด นี่นี่") == 0
+    assert thai_echoes("ชุด\nชุด\nชุด\nชุด") == 0
+    for truth in sorted(FIXTURES.glob("th_*.txt")):
+        assert thai_echoes(truth.read_text(encoding="utf-8")) == 0, truth.name
+
+
+def test_a_page_without_text_is_left_for_ocr(tmp_path):
+    doc = parse_pdf(make_pdf(tmp_path / "a.pdf", [["Page one text here."], []]))
+    assert [u.page for u in doc.units] == [1]
+    assert doc.ocr_pages == (2,)
+    assert doc.note == "no text layer on page(s) 2 (needs OCR)"
+
+
+@pytest.mark.parametrize("name", [f"th_{i}.pdf" for i in range(6)])
+def test_a_browser_printed_thai_layer_is_sent_to_ocr_but_kept(name):
+    doc = parse_pdf(FIXTURES / name)
+    assert doc.ocr_pages == (1,)
+    assert [u.page for u in doc.units] == [1] and doc.note is None
+
+
+def test_clean_text_layers_are_not_sent_to_ocr(tmp_path):
+    thai = parse_pdf(make_pdf(tmp_path / "th.pdf", [CLEAN_THAI * 3]))
+    english = parse_pdf(make_pdf(tmp_path / "en.pdf", [["The lease term is three years."] * 20]))
+    chinese = parse_pdf(
+        make_pdf(tmp_path / "zh.pdf", [["租期为三年，押金为两个月租金。"] * 10], CJK)
+    )
+    assert thai.ocr_pages == english.ocr_pages == chinese.ocr_pages == ()
+
+
+def test_text_that_is_not_drawn_is_sent_to_ocr(tmp_path):
+    lines = ["Hidden text that the reader never sees on this page."] * 4  # over 100 characters
+    hidden = parse_pdf(make_pdf(tmp_path / "h.pdf", [lines], invisible=True))
+    short = parse_pdf(make_pdf(tmp_path / "s.pdf", [["Hidden footer."]], invisible=True))
+    assert hidden.ocr_pages == (1,) and short.ocr_pages == ()
+
+
+def hidden_text_with_image(tmp_path, width: float, height: float) -> Path:
+    """A page of invisible text with a white image of width x height points on it."""
+    lines = ["Hidden text that the reader never sees on this page."] * 4
+    pdf = pdfium.PdfDocument(make_pdf(tmp_path / "h.pdf", [lines], invisible=True))
+    try:
+        page = pdf[0]
+        bitmap = pdfium.PdfBitmap.new_native(8, 8, pdfium_c.FPDFBitmap_Gray)
+        bitmap.to_numpy()[...] = 255  # blank: a render alone would flag the page
+        image = pdfium.PdfImage.new(pdf)
+        image.set_bitmap(bitmap)
+        image.set_matrix(pdfium.PdfMatrix().scale(width, height))
+        page.insert_obj(image)
+        page.gen_content()
+        pdf.save(tmp_path / "out.pdf")
+    finally:
+        pdf.close()
+    return tmp_path / "out.pdf"
+
+
+def test_a_searchable_scan_is_not_sent_to_ocr(tmp_path):
+    """A full-page image with an invisible OCR layer: the layer is the scan's text, and the
+    page is not rendered to check it."""
+    assert parse_pdf(hidden_text_with_image(tmp_path, 595, 842)).ocr_pages == ()
+
+
+def test_invisible_text_beside_a_small_image_is_sent_to_ocr(tmp_path):
+    """A logo is not a scan: the page's invisible text is still checked."""
+    assert parse_pdf(hidden_text_with_image(tmp_path, 60, 60)).ocr_pages == (1,)
+
+
+def test_with_ocr_replaces_pages_and_keeps_text_ocr_did_not_find(tmp_path):
+    doc = parse_pdf(make_pdf(tmp_path / "a.pdf", [["One."], ["Two."], []]))
+    read = with_ocr(doc, {2: "Two, read again.", 3: "Three.", 1: ""})
+    assert [(u.page, u.text.strip(), u.ocr) for u in read.units] == [
+        (1, "One.", False),  # an empty OCR result keeps the text layer
+        (2, "Two, read again.", True),
+        (3, "Three.", True),
+    ]
+    assert read.kind == "pdf" and read.note == doc.note
+
+
+def test_image_pdf_has_no_text_layer(tmp_path):
+    scan = image_pdf(make_pdf(tmp_path / "a.pdf", [["Visible words."]]), tmp_path / "scan.pdf")
+    doc = parse_pdf(scan)
+    assert doc.units == [] and doc.ocr_pages == (1,)

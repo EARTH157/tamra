@@ -19,6 +19,18 @@ def bge_dir() -> Path:
 
 
 @pytest.fixture(scope="session")
+def ocr_dir() -> Path:
+    model_dir = ROOT / ".models" / "ppocr-v5"
+    for name in (
+        "ch_PP-OCRv5_det_mobile.onnx",
+        "th_PP-OCRv5_rec_mobile.onnx",
+        "ch_PP-OCRv5_rec_mobile.onnx",
+    ):
+        _require(model_dir / name)
+    return model_dir
+
+
+@pytest.fixture(scope="session")
 def qwen_gguf() -> Path:
     return _require(ROOT / ".models" / "qwen2.5-0.5b-instruct-q4_k_m.gguf")
 

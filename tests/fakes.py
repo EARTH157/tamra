@@ -9,6 +9,29 @@ from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
 
 from tamra.llm.base import Chunk
+from tamra.ocr import OcrPageResult
+
+
+class FakeOcr:
+    """Reads every page as the same text with one box per code point. `fail_calls` are the call
+    numbers (1-based) that raise; `on_read(call)` runs at the start of each call."""
+
+    BOX = (0.1, 0.2, 0.3, 0.25)
+
+    def __init__(self, text="Scanned page about the boiler warranty.", fail_calls=(), on_read=None):
+        self.text = text
+        self.fail_calls = set(fail_calls)
+        self.on_read = on_read
+        self.calls = 0
+
+    def read(self, image: np.ndarray) -> OcrPageResult:
+        self.calls += 1
+        if self.on_read is not None:
+            self.on_read(self.calls)
+        if self.calls in self.fail_calls:
+            raise RuntimeError("OCR broke")
+        boxes = np.tile(np.array(self.BOX, np.float32), (len(self.text), 1))
+        return OcrPageResult(self.text, boxes)
 
 
 class FakeEmbedder:

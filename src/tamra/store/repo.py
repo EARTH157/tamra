@@ -17,12 +17,15 @@ from tamra.store.models import (
     Collection,
     FileRecord,
     MessageRecord,
+    OcrPage,
     SourceRecord,
 )
 from tamra.store.schema import migrate
 
 FILE_STATUSES = ("pending", "indexing", "indexed", "failed", "skipped")
-_FILE_COLUMNS = "id, collection_id, rel_path, size, mtime, content_hash, status, error, indexed_at"
+_FILE_COLUMNS = (
+    "id, collection_id, rel_path, size, mtime, content_hash, status, error, indexed_at, needs_ocr"
+)
 _COLLECTION_COLUMNS = "id, name, folder_path, embedding_model_id, created_at"
 
 
@@ -32,6 +35,10 @@ def _now() -> str:
 
 def _blob(vector: np.ndarray) -> bytes:
     return np.asarray(vector, dtype=np.float32).tobytes()
+
+
+def _file(row: Sequence) -> FileRecord:
+    return FileRecord(*row[:-1], needs_ocr=bool(row[-1]))
 
 
 def _source(row: Sequence) -> SourceRecord:
@@ -174,8 +181,13 @@ class Store:
                 (collection_id,),
             )
             self._conn.execute(
+                "DELETE FROM ocr_pages"
+                " WHERE file_id IN (SELECT id FROM files WHERE collection_id = ?)",
+                (collection_id,),
+            )
+            self._conn.execute(
                 "UPDATE files SET status = 'pending', error = NULL, content_hash = NULL,"
-                " indexed_at = NULL WHERE collection_id = ?",
+                " indexed_at = NULL, needs_ocr = 0 WHERE collection_id = ?",
                 (collection_id,),
             )
             self._conn.execute(
@@ -191,14 +203,14 @@ class Store:
                 f"SELECT {_FILE_COLUMNS} FROM files WHERE collection_id = ? ORDER BY rel_path",
                 (collection_id,),
             ).fetchall()
-        return [FileRecord(*row) for row in rows]
+        return [_file(row) for row in rows]
 
     def get_file(self, file_id: int) -> FileRecord | None:
         with self._lock:
             row = self._conn.execute(
                 f"SELECT {_FILE_COLUMNS} FROM files WHERE id = ?", (file_id,)
             ).fetchone()
-        return FileRecord(*row) if row else None
+        return _file(row) if row else None
 
     def next_pending_file(self, collection_id: int) -> FileRecord | None:
         with self._lock:
@@ -207,7 +219,7 @@ class Store:
                 " WHERE collection_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
                 (collection_id,),
             ).fetchone()
-        return FileRecord(*row) if row else None
+        return _file(row) if row else None
 
     def next_pending_file_any(
         self, model_id: str, exclude: Sequence[int] = ()
@@ -225,7 +237,7 @@ class Store:
                 " ORDER BY f.id LIMIT 1",
                 (model_id, *exclude),
             ).fetchone()
-        return FileRecord(*row) if row else None
+        return _file(row) if row else None
 
     def add_file(self, collection_id: int, rel_path: str, size: int, mtime: float) -> int:
         with self._lock, self._conn:
@@ -250,17 +262,22 @@ class Store:
                     "UPDATE files SET size = ?, mtime = ? WHERE id = ?", (size, mtime, file_id)
                 )
 
-    def set_file_status(self, file_id: int, status: str, error: str | None = None) -> None:
-        """Set a file's status. A failed or skipped file leaves the index: its old chunks no
-        longer match the file on disk. A pending or indexing file keeps them until replaced."""
+    def set_file_status(
+        self, file_id: int, status: str, error: str | None = None, *, needs_ocr: bool = False
+    ) -> None:
+        """Set a file's status. A failed or skipped file leaves the index: its old chunks and
+        OCR pages no longer match the file on disk, and needs_ocr is recorded for it. A pending
+        or indexing file keeps them until replaced."""
         if status not in FILE_STATUSES:
             raise ValueError(f"unknown file status: {status}")
         with self._lock, self._conn:
             if status in ("failed", "skipped"):
                 self._conn.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
+                self._conn.execute("DELETE FROM ocr_pages WHERE file_id = ?", (file_id,))
                 self._conn.execute(
-                    "UPDATE files SET content_hash = NULL, indexed_at = NULL WHERE id = ?",
-                    (file_id,),
+                    "UPDATE files SET content_hash = NULL, indexed_at = NULL, needs_ocr = ?"
+                    " WHERE id = ?",
+                    (int(needs_ocr), file_id),
                 )
             self._conn.execute(
                 "UPDATE files SET status = ?, error = ? WHERE id = ?", (status, error, file_id)
@@ -270,6 +287,32 @@ class Store:
         """Remove a file; its chunks, keyword entries, and vectors go with it."""
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
+
+    def requeue_ocr_files(self) -> int:
+        """Queue every file whose last parse left pages for OCR again, in every project (the
+        OCR models were just installed); returns how many."""
+        with self._lock, self._conn:
+            return self._conn.execute(
+                "UPDATE files SET status = 'pending'"
+                " WHERE needs_ocr = 1 AND status IN ('indexed', 'skipped')"
+            ).rowcount
+
+    def ocr_pages(self, file_id: int) -> list[OcrPage]:
+        """A file's OCR pages, by page number."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT page, text, boxes FROM ocr_pages WHERE file_id = ? ORDER BY page",
+                (file_id,),
+            ).fetchall()
+        return [OcrPage(*row) for row in rows]
+
+    def ocr_page(self, file_id: int, page: int) -> OcrPage | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT page, text, boxes FROM ocr_pages WHERE file_id = ? AND page = ?",
+                (file_id, page),
+            ).fetchone()
+        return OcrPage(*row) if row else None
 
     def status_counts(self, collection_id: int) -> dict[str, int]:
         with self._lock:
@@ -289,7 +332,7 @@ class Store:
                 " WHERE collection_id = ? AND error IS NOT NULL ORDER BY rel_path LIMIT ?",
                 (collection_id, limit),
             ).fetchall()
-        return [FileRecord(*row) for row in rows]
+        return [_file(row) for row in rows]
 
     # Chunks ---------------------------------------------------------------------------------
 
@@ -301,13 +344,19 @@ class Store:
         *,
         content_hash: str,
         note: str | None,
+        ocr_pages: Sequence[OcrPage] = (),
+        needs_ocr: bool = False,
     ) -> None:
-        """Swap a file's chunks and vectors and mark it indexed, in one transaction.
+        """Swap a file's chunks, vectors and OCR pages and mark it indexed, in one transaction.
 
-        Raises LookupError when the file row no longer exists (removed while being indexed).
+        Raises LookupError when the file row no longer exists (removed while being indexed),
+        and ValueError when a page's box bytes do not match its text (nothing is changed).
         """
         if len(chunks) != len(vectors):
             raise ValueError(f"{len(chunks)} chunks but {len(vectors)} vectors")
+        for page in ocr_pages:
+            if len(page.boxes) != 16 * len(page.text):
+                raise ValueError(f"page {page.page}: box bytes do not match its text")
         with self._lock, self._conn:
             row = self._conn.execute(
                 "SELECT collection_id FROM files WHERE id = ?", (file_id,)
@@ -324,10 +373,15 @@ class Store:
                     "INSERT INTO chunk_vectors (rowid, collection_id, embedding) VALUES (?, ?, ?)",
                     (cursor.lastrowid, row[0], _blob(vector)),
                 )
+            self._conn.execute("DELETE FROM ocr_pages WHERE file_id = ?", (file_id,))
+            self._conn.executemany(
+                "INSERT INTO ocr_pages (file_id, page, text, boxes) VALUES (?, ?, ?, ?)",
+                [(file_id, p.page, p.text, p.boxes) for p in ocr_pages],
+            )
             self._conn.execute(
-                "UPDATE files SET status = 'indexed', error = ?, content_hash = ?, indexed_at = ?"
-                " WHERE id = ?",
-                (note, content_hash, _now(), file_id),
+                "UPDATE files SET status = 'indexed', error = ?, content_hash = ?, indexed_at = ?,"
+                " needs_ocr = ? WHERE id = ?",
+                (note, content_hash, _now(), int(needs_ocr), file_id),
             )
 
     def get_chunks(self, ids: Sequence[int]) -> list[ChunkRecord]:

@@ -121,3 +121,11 @@ def test_real_tokenizer_keeps_thai_chunks_near_the_limit(bge_dir):
     chunks = chunk_document(ParsedDoc("text", [Unit(text, line=1)]), spans)
     assert len(chunks) > 1
     assert all(len(spans(c.text)) <= CHUNK_TOKENS + 8 for c in chunks)
+
+
+def test_a_chunk_on_an_ocr_page_says_so_in_its_location():
+    doc = ParsedDoc(
+        "pdf", [Unit("Text page.", page=1), Unit("Scanned words here.", page=2, ocr=True)]
+    )
+    chunks = chunk_document(doc, words, max_tokens=3, overlap=0)
+    assert [c.location.get("ocr") for c in chunks] == [None, True]

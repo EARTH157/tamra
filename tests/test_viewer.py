@@ -16,6 +16,7 @@ from tamra.viewer import (
     ViewerError,
     _encode_png,
     locate,
+    ocr_rects,
     pdf_page_count,
     pdf_rects,
     render_pdf_page,
@@ -676,3 +677,24 @@ def test_a_docx_table_row_is_located_and_shown_at_its_index(tmp_path):
     for c in chunk_document(doc, fake_spans, max_tokens=12, overlap=2):
         found = locate(doc, c.text, c.location)
         assert found.start == c.location["paragraph_start"], c.text
+
+
+def _boxes(*rows):
+    return np.array(rows, "<f4").tobytes()
+
+
+def test_ocr_rects_merge_the_characters_of_each_line():
+    text = "ab\ncd"
+    boxes = _boxes(
+        [0.1, 0.1, 0.2, 0.2],
+        [0.2, 0.1, 0.3, 0.21],
+        [0, 0, 0, 0],
+        [0.1, 0.3, 0.15, 0.4],
+        [0.15, 0.3, 0.2, 0.41],
+    )
+    both = [(0.1, 0.1, 0.3, 0.21), (0.1, 0.3, 0.2, 0.41)]
+    assert np.allclose(ocr_rects(text, boxes, 1, 5), [(0.2, 0.1, 0.3, 0.21), both[1]])
+    assert np.allclose(ocr_rects(text, boxes, 0, 2), [both[0]])
+    assert ocr_rects(text, boxes, 2, 3) == []  # only the newline
+    assert ocr_rects(text, boxes, 3, 3) == []
+    assert np.allclose(ocr_rects(text, boxes, -5, 99), both)

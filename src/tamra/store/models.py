@@ -24,6 +24,18 @@ class FileRecord:
     status: str
     error: str | None
     indexed_at: str | None
+    needs_ocr: bool = False  # the last parse left pages for OCR: the OCR models were missing
+
+
+@dataclass(frozen=True)
+class OcrPage:
+    """A PDF page read by OCR: its text, and its character boxes as 4 little-endian float32
+    per code point of `text` (x0, y0, x1, y1 as page fractions, top-left origin; a newline's
+    box is zeros)."""
+
+    page: int
+    text: str
+    boxes: bytes
 
 
 @dataclass(frozen=True)

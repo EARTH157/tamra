@@ -4,6 +4,7 @@ import ctypes
 from pathlib import Path
 
 import docx
+import numpy as np
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
 
@@ -12,8 +13,11 @@ LATIN_THAI = FONTS / "tahoma.ttf"
 CJK = FONTS / "msyh.ttc"
 
 
-def make_pdf(path: Path, pages: list[list[str]], font: Path = LATIN_THAI) -> Path:
-    """Write a PDF: one inner list per page, one text line per item (empty list = no text)."""
+def make_pdf(
+    path: Path, pages: list[list[str]], font: Path = LATIN_THAI, invisible: bool = False
+) -> Path:
+    """Write a PDF: one inner list per page, one text line per item (empty list = no text).
+    With invisible=True the text is in the text layer but never drawn."""
     pdf = pdfium.PdfDocument.new()
     data = font.read_bytes()
     buffer = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
@@ -31,6 +35,10 @@ def make_pdf(path: Path, pages: list[list[str]], font: Path = LATIN_THAI) -> Pat
                 pdfium_c.FPDFText_SetText(
                     obj, ctypes.cast(text, ctypes.POINTER(pdfium_c.FPDF_WCHAR))
                 )
+                if invisible:  # text in the text layer that is never drawn
+                    pdfium_c.FPDFTextObj_SetTextRenderMode(
+                        obj, pdfium_c.FPDF_TEXTRENDERMODE_INVISIBLE
+                    )
                 pdfium_c.FPDFPageObj_Transform(obj, 1, 0, 0, 1, 50, y)
                 pdfium_c.FPDFPage_InsertObject(page, obj)
                 y -= 20
@@ -42,6 +50,35 @@ def make_pdf(path: Path, pages: list[list[str]], font: Path = LATIN_THAI) -> Pat
         pdfium_c.FPDFFont_Close(handle)
         pdf.close()
     return path
+
+
+def image_pdf(src: Path, dest: Path, dpi: int = 200) -> Path:
+    """A scan of src: every page drawn as a grayscale image at `dpi`, with no text layer."""
+    doc = pdfium.PdfDocument(src)
+    out = pdfium.PdfDocument.new()
+    try:
+        for index in range(len(doc)):
+            page = doc[index]
+            width, height = page.get_size()
+            gray = np.ascontiguousarray(page.render(scale=dpi / 72, grayscale=True).to_numpy())
+            if gray.ndim == 3:
+                gray = gray[:, :, 0]
+            bitmap = pdfium.PdfBitmap.new_native(
+                gray.shape[1], gray.shape[0], pdfium_c.FPDFBitmap_Gray
+            )
+            bitmap.to_numpy()[...] = gray
+            target = out.new_page(width, height)
+            image = pdfium.PdfImage.new(out)
+            image.set_bitmap(bitmap)
+            image.set_matrix(pdfium.PdfMatrix().scale(width, height))
+            target.insert_obj(image)
+            target.gen_content()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        out.save(dest)
+    finally:
+        out.close()
+        doc.close()
+    return dest
 
 
 def make_docx(path: Path, blocks: list[tuple[int, str] | tuple[int, list[list[str]]]]) -> Path:

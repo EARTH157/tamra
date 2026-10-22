@@ -19,5 +19,20 @@
     "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf",
     "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
     "dest": ".models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+  },
+  "ppocr-det": {
+    "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/det/ch_PP-OCRv5_det_mobile.onnx",
+    "sha256": "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae",
+    "dest": ".models/ppocr-v5/ch_PP-OCRv5_det_mobile.onnx"
+  },
+  "ppocr-rec-th": {
+    "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/th_PP-OCRv5_rec_mobile.onnx",
+    "sha256": "de541dd83161c241ff426f7ecfd602a0ba77d686cf3ab9a6c255ea82fd08006e",
+    "dest": ".models/ppocr-v5/th_PP-OCRv5_rec_mobile.onnx"
+  },
+  "ppocr-rec-zh": {
+    "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile.onnx",
+    "sha256": "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5",
+    "dest": ".models/ppocr-v5/ch_PP-OCRv5_rec_mobile.onnx"
   }
 }

@@ -16,7 +16,7 @@ from tamra.answer import AnswerSettings
 from tamra.core import Core
 from tamra.embedder import MODEL_ID
 from tamra.server import create_app
-from tamra.store import ChunkInput, SourceRecord
+from tamra.store import ChunkInput, OcrPage, SourceRecord
 
 TOKEN = "secret"
 AUTH = {"X-Tamra-Token": TOKEN}
@@ -373,11 +373,42 @@ def test_locate_a_pdf_passage_with_rects(env, client):
     )
     body = locate(client, message_id, 1).json()
     assert (body["kind"], body["found"], body["page"], body["page_count"]) == ("pdf", True, 2, 2)
+    assert body["ocr"] is False
     assert body["rects"]
     for rect in body["rects"]:
         assert len(rect) == 4 and all(0.0 <= v <= 1.0 for v in rect)
         assert rect[0] < rect[2] and rect[1] < rect[3]
     assert body["start"] < body["end"]
+
+
+SCANNED = "The boiler warranty lasts ten years from purchase."
+
+
+def test_locate_on_an_ocr_page_uses_its_stored_boxes(env, client):
+    make_pdf(env.folder / "scan.pdf", [["Cover page."], []])
+    file_id = env.add_file("scan.pdf")
+    boxes = np.tile(np.array([0.1, 0.2, 0.3, 0.25], "<f4"), (len(SCANNED), 1)).tobytes()
+    location = {
+        "kind": "pdf",
+        "page_start": 2,
+        "page_end": 2,
+        "char_start": 0,
+        "char_end": len(SCANNED),
+        "ocr": True,
+    }
+    env.store.replace_file_chunks(
+        file_id,
+        [ChunkInput(SCANNED, location)],
+        FakeEmbedder().embed([SCANNED]),
+        content_hash="h1",
+        note=None,
+        ocr_pages=[OcrPage(2, SCANNED, boxes)],
+    )
+    message_id = env.answer("Ten years [1].", [source(1, file_id, "scan.pdf", SCANNED, location)])
+    body = locate(client, message_id, 1).json()
+    assert body["found"] and body["page"] == 2 and body["ocr"] is True
+    assert np.allclose(body["rects"], [[0.1, 0.2, 0.3, 0.25]])
+    assert (body["start"], body["end"]) == (0, len(SCANNED))
 
 
 def test_locate_is_not_found_when_the_passage_left_the_file(env, client, txt):

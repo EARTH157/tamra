@@ -29,6 +29,7 @@ SMALL = b"GGUF" + b"s" * 60
 MEDIUM = b"GGUF" + b"m" * 80
 EMB = b"emb-bytes" * 10
 TOK = b"tok-bytes" * 5
+OCR = b"ocr detector bytes"  # distinct, so an import by hash still finds the embedding entry
 
 
 def _sha(data: bytes) -> str:
@@ -46,6 +47,12 @@ def make_catalog() -> Catalog:
                     ModelFile("emb/model.onnx", len(EMB), _sha(EMB), "https://x/m.onnx"),
                     ModelFile("emb/tokenizer.json", len(TOK), _sha(TOK), "https://x/t.json"),
                 ),
+            ),
+            ModelEntry(
+                "ocr",
+                "ocr",
+                "OCR",
+                (ModelFile("ppocr-v5/det.onnx", len(OCR), _sha(OCR), "https://x/det.onnx"),),
             ),
             ModelEntry(
                 "small",
@@ -532,10 +539,18 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
             "installed": False,
             **idle,
         },
+        "ocr": {"id": "ocr", "name": "OCR", "size": len(OCR), "installed": False, **idle},
     }
     core.apply_settings({"mode": "api", "api_model": "claude-x"})
     active = client.get("/api/models", headers=AUTH).json()["active"]
     assert active == {"mode": "api", "label": "claude-x", "id": "small"}  # local mode's model
+
+
+def test_get_models_reports_the_ocr_models_when_installed(env):
+    client, _, _ = env
+    (client.models_dir / "ppocr-v5").mkdir()
+    (client.models_dir / "ppocr-v5" / "det.onnx").write_bytes(OCR)
+    assert client.get("/api/models", headers=AUTH).json()["ocr"]["installed"] is True
 
 
 def test_get_models_marks_integrated_gpus(env):
