@@ -7,7 +7,7 @@ app for Windows. Point it at a folder of documents and ask questions in Thai, En
 Chinese. Answers cite the passages they came from, and you can select any part of an
 answer to see the exact source text that supports it.
 
-> **Status: pre-alpha.** Milestone M5 works: keep several projects, each a folder of documents with its own index and chats, choose which of them a question searches, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, check any sentence against its source and open the PDF at the highlighted passage, with a Settings page and an English or Thai interface, and scanned PDF pages are read by OCR (download the text recognition model in Settings > AI model). There is no installer yet (M6). See the [roadmap](#roadmap).
+> **Status: pre-alpha.** Milestone M5 works: keep several projects, each a folder of documents with its own index and chats, choose which of them a question searches, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, check any sentence against its source and open the PDF at the highlighted passage, with a Settings page and an English or Thai interface, and scanned PDF pages are read by OCR (download the text recognition model in Settings > AI model). M6 adds a per-user Windows installer, attached to each tagged release (see [Install](#install)). See the [roadmap](#roadmap).
 
 ## Planned features
 
@@ -25,6 +25,33 @@ answer to see the exact source text that supports it.
   Tamra watches the folders and keeps the indexes up to date. It never modifies your files.
 - PDF, Word (.docx), TXT, and Markdown, including scanned PDFs (OCR in Thai, English and Chinese).
 
+## Install
+
+You need Windows 10 (version 1809 or later) or Windows 11, 64-bit.
+
+1. Download `Tamra-Setup-<version>.exe` from the
+   [Releases page](https://github.com/EARTH157/tamra/releases). Each release also has a
+   `.sha256` file to check the download against.
+2. Run it. The installer is not code-signed yet, so Windows SmartScreen may say "Windows
+   protected your PC". Press **More info**, then **Run anyway**.
+3. Tamra installs for your Windows user only, without administrator rights, in
+   `%LOCALAPPDATA%\Programs\Tamra`. It adds a Start menu shortcut and, if you tick the box, a
+   desktop icon.
+
+Then download a model in **Settings > AI model** (see [Models](#models)).
+
+- **WebView2.** Tamra's window needs the Microsoft Edge WebView2 Runtime. Windows 11 and
+  up-to-date Windows 10 already have it. If the installer does not find it, it offers to open
+  the [download page](https://developer.microsoft.com/microsoft-edge/webview2/) and installs
+  Tamra anyway.
+- **Upgrade.** Run the newer installer. It closes a running Tamra and replaces the old version;
+  your data stays.
+- **Uninstall.** Use **Settings > Apps > Installed apps > Tamra > Uninstall**. This removes the
+  program folder only. Your projects' indexes, chats, settings, and downloaded models stay in
+  `%LOCALAPPDATA%\Tamra`, so a later install picks them up again. To remove them too, delete
+  that folder by hand after uninstalling. Your document folders are never touched. API keys
+  are kept in Windows Credential Manager (see [Cloud API](#cloud-api)).
+
 ## Try it from source
 
 You need Windows 10 or 11, [uv](https://docs.astral.sh/uv/), and Node.js 24.
@@ -36,7 +63,9 @@ You need Windows 10 or 11, [uv](https://docs.astral.sh/uv/), and Node.js 24.
     uv run tamra
 
 Create a project from a folder of PDF, Word, text, or Markdown files, wait for indexing, and ask a question.
-`./scripts/build.ps1` packages the same app as `dist\Tamra\Tamra.exe`. The packaged
+`./scripts/build.ps1` packages the same app as `dist\Tamra\Tamra.exe`, and
+`./scripts/build.ps1 -Installer` also builds `dist\Tamra-Setup-<version>.exe` with
+[Inno Setup 6](https://jrsoftware.org/isinfo.php). The packaged
 `Tamra.exe` looks for models in `%LOCALAPPDATA%\Tamra\models` or in the folder named by
 `TAMRA_MODELS_DIR`; see [Models](#models). The Qwen2.5-0.5B test model that `fetch_assets.py`
 downloads is very small, so expect rough answers from it, especially in Thai and Chinese.
@@ -171,8 +200,14 @@ Tamra คือแอปบน Windows สำหรับถามคำถา�
 ใช้งานแบบ offline ได้ และทุกคำตอบอ้างอิงแหล่งที่มา คลุมข้อความในคำตอบเพื่อดูต้นฉบับที่ใช้ตอบได้ทันที
 ตอนนี้ (M5) ใช้งานจากซอร์สโค้ดได้แล้ว: สร้างโปรเจกต์จากโฟลเดอร์เอกสารได้หลายโปรเจกต์ เลือกว่าจะค้นในโปรเจกต์ไหน ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n]
 จากโมเดลในเครื่องหรือ API บนคลาวด์ มีหน้าตั้งค่าและเปลี่ยนภาษาของแอปเป็นไทยได้
-และอ่านไฟล์ PDF ที่สแกนมาได้ด้วย OCR หลังดาวน์โหลดโมเดล "อ่านข้อความจากภาพ (OCR)" ในหน้าตั้งค่า ยังไม่มีตัวติดตั้ง
+และอ่านไฟล์ PDF ที่สแกนมาได้ด้วย OCR หลังดาวน์โหลดโมเดล "อ่านข้อความจากภาพ (OCR)" ในหน้าตั้งค่า
 
+- **ติดตั้ง:** ดาวน์โหลด `Tamra-Setup-<version>.exe` จากหน้า [Releases](https://github.com/EARTH157/tamra/releases)
+  ตัวติดตั้งยังไม่ได้เซ็นรับรอง ถ้า Windows SmartScreen เตือน ให้กด "More info" แล้ว "Run anyway"
+  Tamra ติดตั้งให้ผู้ใช้คนเดียว ไม่ต้องใช้สิทธิ์ผู้ดูแลระบบ ที่ `%LOCALAPPDATA%\Programs\Tamra`
+  และต้องมี Microsoft Edge WebView2 Runtime (Windows 11 มีอยู่แล้ว)
+- **ถอนการติดตั้ง:** ลบเฉพาะโฟลเดอร์โปรแกรม ข้อมูล ดัชนี แชต การตั้งค่า และโมเดลยังอยู่ที่
+  `%LOCALAPPDATA%\Tamra` ถ้าต้องการลบด้วย ให้ลบโฟลเดอร์นั้นเองหลังถอนการติดตั้ง
 - **โมเดล:** ที่ ตั้งค่า > โมเดล AI ดาวน์โหลดโมเดลที่แนะนำตามเครื่องของคุณ หรือกด "นำเข้าไฟล์โมเดล"
   เพื่อใช้ไฟล์ .gguf ที่มีอยู่แล้วโดยไม่ต้องต่ออินเทอร์เน็ต
 - **API บนคลาวด์:** รองรับ Anthropic และเซิร์ฟเวอร์ที่เข้ากันได้กับ OpenAI เมื่อใช้โหมดนี้

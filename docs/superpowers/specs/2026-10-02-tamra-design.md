@@ -273,10 +273,26 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 
 ## 11. Packaging and release
 
-- PyInstaller (one-folder) bundles the Python core and the built UI. Inno Setup produces
-  `Tamra-Setup-<version>.exe`.
-- GitHub Actions builds the installer on a version tag and attaches it to the GitHub
-  release.
+- PyInstaller (one-folder) bundles the Python core and the built UI. Inno Setup 6
+  (`packaging/tamra.iss`, built by `scripts/build.ps1 -Installer`) produces
+  `Tamra-Setup-<version>.exe`. The version is `tamra.__version__`, which a test keeps equal to
+  `pyproject.toml`'s.
+- **Per-user install (M6):** no administrator rights, into `%LOCALAPPDATA%\Programs\Tamra`,
+  x64 only, Windows 10 1809 or later. A Start menu shortcut, an optional desktop icon, and
+  "Launch Tamra" at the end. A fixed `AppId` makes a newer installer replace the same install;
+  the Restart Manager closes a running Tamra (and its `llama-server.exe`) first.
+- **Uninstall keeps the data:** it removes only the install folder. Documents, indexes, chats,
+  settings and models stay in `%LOCALAPPDATA%\Tamra\`; the README says how to remove them by
+  hand. There is no "delete my data" option in v1.
+- **WebView2:** the installer looks for the Evergreen WebView2 Runtime (per machine and per
+  user). If it is missing, it offers to open Microsoft's download page and installs anyway; a
+  silent install only logs it. Nothing is downloaded or bundled.
+- **Release workflow** (`.github/workflows/release.yml`): on a pull request that touches
+  packaging, on a manual run, and on a `v*` tag, GitHub Actions builds the installer, installs
+  it silently, runs the installed exe's `selfcheck`, uninstalls it silently and checks the
+  program is gone, then writes the installer's sha256. PR and manual runs keep both as an
+  artifact. A tag run first checks that the tag is `v<tamra.__version__>`, then creates the
+  GitHub release with the installer and its sha256.
 - v1 has no code signing (SmartScreen warns on first run) and no auto-update.
 
 ## 12. Testing
