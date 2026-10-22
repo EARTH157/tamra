@@ -70,6 +70,30 @@ def test_merge_nested_folds_a_mark_into_its_line_and_keeps_neighbours():
     assert merge_nested([], 0.4) == []
 
 
+def _turn(box, degrees, centre=(1000.0, 500.0)):
+    t = math.radians(degrees)
+    r = np.array([[math.cos(t), -math.sin(t)], [math.sin(t), math.cos(t)]])
+    return order_clockwise((box - centre) @ r.T + centre)
+
+
+def test_merge_nested_works_in_the_line_frame_on_a_tilted_page():
+    long_line = _turn(_rect(100, 100, 1700, 140), 3)  # its axis-aligned bounds are ~120 px tall
+    short_next = _turn(_rect(100, 160, 700, 200), 3)
+    assert len(merge_nested([long_line, short_next], 0.4)) == 2
+    mark = _turn(_rect(900, 92, 912, 110), 3)  # a tone mark above the tilted line
+    (merged,) = merge_nested([long_line, mark], 0.4)
+    top = merged[1] - merged[0]
+    assert abs(math.degrees(math.atan2(top[1], top[0])) - 3) < 1e-6  # the line keeps its tilt
+    assert np.allclose(np.hypot(*(merged[3] - merged[0])), 48)  # grown 8 px to hold the mark
+
+
+def test_merge_nested_follows_a_chain_to_the_outermost_box():
+    big, line = _rect(0, 0, 2000, 400), _rect(100, 380, 900, 420)  # the line is half in big
+    mark = _rect(300, 410, 310, 430)  # half in the line, not in big at all
+    (merged,) = merge_nested([big, line, mark], 0.4)
+    assert np.allclose(merged, _rect(0, 0, 2000, 430))
+
+
 def test_unclip_grows_every_side_by_area_ratio_over_perimeter():
     box = np.array([[0, 0], [100, 0], [100, 20], [0, 20]], np.float64)
     grown, short = min_area_rect(unclip(box, 1.6))  # d = 100 * 20 * 1.6 / 240 = 13.33 -> 13

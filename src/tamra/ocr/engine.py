@@ -7,8 +7,9 @@ DBPostProcess), ch_ppocr_rec (resize_norm_img, CTCLabelDecode), utils/process_im
 
 Detection departs from RapidOCR's defaults in three ways, all for Thai: a component is scored
 over its own pixels (DB's score_mode="slow"), so a line whose upper marks join it on a scan is
-kept; a box mostly inside a larger one (marks found apart from their line) is merged into it;
-and reading order keys on each box's mean y, not its top edge.
+kept; a box mostly inside a larger one, measured in that box's own frame (marks found apart
+from their line), is merged into it; and reading order keys on each box's mean y, not its top
+edge.
 """
 
 import math

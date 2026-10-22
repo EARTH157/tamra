@@ -16,6 +16,7 @@ from tamra.ocr.engine import render_page
 pytestmark = pytest.mark.assets
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ocr"
+TILT_TH, TILT_ZH = 0.10, 0.01  # measured 0.073 and 0.0025; merging lines gave 0.29 and 0.39
 
 ENGLISH = [
     [
@@ -90,6 +91,17 @@ def test_chinese_photocopy(engine):
     print("chinese photocopy CER", [round(s, 3) for s in scores], round(statistics.mean(scores), 3))
     assert len(scores) == 6
     assert statistics.mean(scores) <= 0.03
+
+
+@pytest.mark.parametrize(("lang", "limit"), [("th", TILT_TH), ("zh", TILT_ZH)])
+def test_tilted_page(engine, lang, limit):
+    """Pages turned 3 degrees (no noise): long tilted lines must not swallow their neighbours."""
+    scores = [
+        cer(truth, engine.read(photocopy(_render(p, True), seed, 3.0, 0.0)).text, lang)
+        for seed, (p, truth) in enumerate(_pages(lang))
+    ]
+    print(f"{lang} 3 degree CER", [round(s, 3) for s in scores], round(statistics.mean(scores), 4))
+    assert statistics.mean(scores) <= limit
 
 
 def test_english_word_hit(engine, tmp_path):

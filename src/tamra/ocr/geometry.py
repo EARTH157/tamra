@@ -137,17 +137,26 @@ def min_area_rect(points: np.ndarray) -> tuple[Box, float]:
 
 
 def run_score(prob: np.ndarray, runs: np.ndarray) -> float:
-    """DBPostProcess score_mode="slow": the mean probability over the component's own pixels,
-    not its minimum-area rectangle, so an irregular component (a Thai line with its marks) is
-    not marked down for the empty corners of its rectangle."""
+    """PaddleOCR's slow mode, without the holes: the mean probability over the component's own
+    pixels, not its minimum-area rectangle, so an irregular component (a Thai line with its
+    marks) is not marked down for the empty corners of its rectangle."""
     return float(np.concatenate([prob[y, a:b] for y, a, b in runs.tolist()]).mean())
 
 
+def _frame(host: Box) -> tuple[np.ndarray, float, float]:
+    """The host's top edge and down direction as unit rows, with its width and height."""
+    u = host[1] - host[0]
+    width = float(np.hypot(*u))
+    u = u / max(width, 1e-9)
+    return np.array([u, [-u[1], u[0]]]), width, float(np.hypot(*(host[3] - host[0])))
+
+
 def merge_nested(boxes: list[Box], limit: float) -> list[Box]:
-    """Merge every box whose axis-aligned bounds lie at least `limit` inside a larger box's into
-    that box (the minimum-area rectangle around both). Not from RapidOCR: Thai vowel and tone
-    marks found apart from their line are junk lines when read alone, and the line's own box
-    can stop below them."""
+    """Merge every box that lies at least `limit` inside a larger box into it, measured in the
+    larger box's own frame so a tilted page does not nest neighbouring lines. The merged box
+    keeps the host's orientation and grows to hold the parts. Not from RapidOCR: Thai vowel and
+    tone marks found apart from their line are junk lines when read alone, and the line's own
+    box can stop below them."""
     if not boxes:
         return []
     b = np.array([np.concatenate([x.min(0), x.max(0)]) for x in boxes])  # x0, y0, x1, y1
@@ -156,15 +165,31 @@ def merge_nested(boxes: list[Box], limit: float) -> list[Box]:
     iy = np.minimum(b[:, None, 3], b[None, :, 3]) - np.maximum(b[:, None, 1], b[None, :, 1])
     share = np.clip(ix, 0, None) * np.clip(iy, 0, None) / np.maximum(area[:, None], 1e-9)
     share[area[None, :] <= area[:, None]] = 0.0  # only a larger box can hold this one
-    nested = share.max(1) >= limit
-    parts = [[box] for box in boxes]
-    for i in np.flatnonzero(nested):  # shortcut: a host that is itself nested loses its parts
-        parts[int(share[i].argmax())].append(boxes[i])
-    return [
-        order_clockwise(min_area_rect(np.concatenate(p))[0]) if len(p) > 1 else p[0]
-        for p, n in zip(parts, nested, strict=True)
-        if not n
-    ]
+    for i, j in zip(*np.nonzero(share >= limit), strict=True):  # axis-aligned: a prefilter
+        axes, width, height = _frame(boxes[j])
+        q = (boxes[i] - boxes[j][0]) @ axes.T
+        lo, hi = q.min(0), q.max(0)
+        inside = np.clip(np.minimum(hi, [width, height]) - np.maximum(lo, 0), 0, None).prod()
+        share[i, j] = inside / max(float((hi - lo).prod()), 1e-9)
+    share[share < limit] = 0.0
+    nested = share.max(1) > 0
+    parts: list[list[Box]] = [[box] for box in boxes]
+    for i in np.flatnonzero(nested):
+        h = int(share[i].argmax())
+        while nested[h]:  # hosts are strictly larger, so this ends at the outermost one
+            h = int(share[h].argmax())
+        parts[h].append(boxes[i])
+    out = []
+    for host, p, n in zip(boxes, parts, nested, strict=True):
+        if n:
+            continue
+        if len(p) > 1:
+            axes, _, _ = _frame(host)
+            q = (np.concatenate(p) - host[0]) @ axes.T
+            (x0, y0), (x1, y1) = q.min(0), q.max(0)
+            host = host[0] + np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) @ axes
+        out.append(host)
+    return out
 
 
 def unclip(box: Box, ratio: float) -> np.ndarray:
