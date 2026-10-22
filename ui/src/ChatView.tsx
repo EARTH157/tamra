@@ -486,7 +486,9 @@ export default function ChatView({
           {notice && (
             <div className="chat-error" role="alert">
               <span>{noticeText(notice, t)}</span>
-              {(notice.reason === "model_missing" || notice.reason === "embedding_missing") && (
+              {(notice.reason === "model_missing" ||
+                notice.reason === "model_unsupported" ||
+                notice.reason === "embedding_missing") && (
                 <button type="button" className="btn" onClick={() => onOpenSettings("model")}>
                   {t("chat.openModelSettings")}
                 </button>
@@ -589,6 +591,8 @@ function noticeText(notice: Notice, t: ReturnType<typeof useT>): string {
       return t("chat.error.quota");
     case "model_missing":
       return t("chat.error.modelMissing");
+    case "model_unsupported":
+      return t("chat.error.modelUnsupported");
     case "embedding_missing":
       return t("error.embeddingMissing");
     default:
