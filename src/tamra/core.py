@@ -17,6 +17,7 @@ import numpy as np
 from tamra import secrets
 from tamra.answer import AnswerService, AnswerSettings, Route
 from tamra.attribution import Attributor, Match
+from tamra.drives import is_removable
 from tamra.embedder import MODEL_ID, Embedder, EmbedderUnavailable
 from tamra.ingest.chunker import TokenSpans, bge_token_spans
 from tamra.ingest.indexer import EmbedderLike, Indexer, OcrLike
@@ -30,7 +31,7 @@ from tamra.models.catalog import Catalog, load_catalog
 from tamra.models.external import ExternalModel
 from tamra.models.external import scan as scan_external
 from tamra.models.hardware import Hardware, detect
-from tamra.models.manager import ModelManager
+from tamra.models.manager import ImportResult, ModelManager
 from tamra.ocr import MODEL_DIR as OCR_MODEL_DIR
 from tamra.ocr import OcrEngine
 from tamra.settings import LinkedModel, Settings, load_settings, save_settings
@@ -370,6 +371,37 @@ class Core:
                 offered.add(_path_key(m.path))
                 choices.append(LocalChoice(f"file:{m.path}", m.path, m.name, m.source, False))
         return choices
+
+    def import_model(self, path: Path) -> ImportResult:
+        """Import a model file. An LLM file is used where it is (linked) and selected, unless it
+        is on a removable drive, which may be gone next time: it is then copied in. Embedding and
+        OCR files are always copied. Raises ImportRefused, and OSError when a copy fails."""
+        result = self.models.import_file(path, link_llm=not is_removable(path))
+        if result.linked:
+            link: LinkedModel = {
+                "path": str(result.path),
+                "size": result.size,
+                "sha256": result.sha256,
+            }
+            with self._links_lock:
+                kept = [
+                    old
+                    for old in self._settings.linked_models
+                    if _path_key(old["path"]) != _path_key(link["path"])
+                ]
+                self.apply_settings({"linked_models": [*kept, link], "local_model_id": result.id})
+        self._forget_scan()
+        return result
+
+    def unlink_model(self, path: str) -> None:
+        """Stop using a linked file; the file itself is left alone. KeyError if it is not linked."""
+        with self._links_lock:
+            links = self._settings.linked_models
+            kept = [link for link in links if _path_key(link["path"]) != _path_key(path)]
+            if len(kept) == len(links):
+                raise KeyError(path)
+            self.apply_settings({"linked_models": kept})
+        self._forget_scan()
 
     def resolve_local_model(self) -> tuple[str, Path, str]:
         """The local model to serve, as (id, file, label): the selected one if it is available,

@@ -1000,3 +1000,63 @@ def test_the_scan_is_cached_and_a_failing_scan_lists_nothing(tmp_path, monkeypat
         assert c.local_choices() == []
     finally:
         c.shutdown()
+
+
+def test_a_file_on_a_fixed_drive_is_linked_and_selected(tmp_path, monkeypatch):
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: False)
+    source = gguf_file(tmp_path / "elsewhere" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        result = c.import_model(source)
+        assert (result.id, result.linked) == (f"file:{source}", True)
+        assert c.settings.linked_models == (
+            {"path": str(source), "size": source.stat().st_size, "sha256": result.sha256},
+        )
+        assert c.settings.local_model_id == result.id
+        assert c.resolve_local_model() == (result.id, source, "Mine")
+        assert not (tmp_path / "models" / "Mine.gguf").exists()
+    finally:
+        c.shutdown()
+
+
+def test_a_file_on_a_removable_drive_is_copied_and_not_linked(tmp_path, monkeypatch):
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: True)
+    source = gguf_file(tmp_path / "usb" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        result = c.import_model(source)
+        assert (result.id, result.linked) == ("import:Mine.gguf", False)
+        assert (tmp_path / "models" / "Mine.gguf").read_bytes() == source.read_bytes()
+        assert c.settings.linked_models == ()
+    finally:
+        c.shutdown()
+
+
+def test_importing_a_linked_path_again_refreshes_its_entry(tmp_path, monkeypatch):
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: False)
+    source = gguf_file(tmp_path / "elsewhere" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        c.import_model(source)
+        source.write_bytes(b"GGUF-a-newer-and-longer-build")
+        again = c.import_model(source)
+        assert len(c.settings.linked_models) == 1
+        assert c.settings.linked_models[0]["size"] == source.stat().st_size
+        assert c.settings.linked_models[0]["sha256"] == again.sha256
+    finally:
+        c.shutdown()
+
+
+def test_unlinking_forgets_the_file_but_leaves_it_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: False)
+    source = gguf_file(tmp_path / "elsewhere" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        c.import_model(source)
+        c.unlink_model(str(source).upper())  # Windows paths ignore case
+        assert c.settings.linked_models == ()
+        assert source.exists()
+        with pytest.raises(KeyError):
+            c.unlink_model(str(source))
+    finally:
+        c.shutdown()
