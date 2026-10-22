@@ -43,18 +43,18 @@ The dev machine has no Inno Setup, so the installer itself is checked only by th
 
 ## Workflow run on the PR
 
-To be filled in from the PR's run of `release.yml`:
+The PR's run of `release.yml` (pull request #9, 2026-10-22) passed every step:
 
 | | Result |
 |---|---|
-| Run | _link_ |
-| Inno Setup on the runner | _preinstalled, or installed by choco 6.4.3_ |
-| Build (UI, PyInstaller, ISCC) | _time_ |
-| Silent install | _exit code_ |
-| Installed exe's selfcheck | _exit code, `ok`_ |
-| Silent uninstall, `Tamra.exe` gone | _exit code_ |
-| Installer size | _bytes_ |
-| Installer sha256 | _hash_ |
+| Run | https://github.com/EARTH157/tamra/actions/runs/39709592395 |
+| Inno Setup on the runner | preinstalled, 6.7.1 (`C:/ProgramData/Chocolatey/bin\ISCC.exe`); choco not needed |
+| Build (UI, PyInstaller, ISCC) | 111 s, of which ISCC 48 s |
+| Silent install | exit 0, 8 s |
+| Installed exe's selfcheck | exit 0, `ok: true` |
+| Silent uninstall, `Tamra.exe` gone | exit 0, gone within 1 s |
+| Installer size | 66,770,487 bytes (63.7 MB) |
+| Installer sha256 | `bec22c936d5d0f50b09c3f6072e58a9164ed8de04ec4fa27de40591d38615cd3` |
 
 ## Not done in M6
 
