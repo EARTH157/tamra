@@ -636,8 +636,10 @@ def _settings_payload(core: Core) -> dict:
     characters (only for a key longer than 8, so a short key is never nearly revealed)."""
     settings = core.settings
     key = _stored_key(settings.api_provider)
+    payload = dataclasses.asdict(settings)
+    del payload["linked_models"]  # server-owned: changed by importing or unlinking a model
     return {
-        **dataclasses.asdict(settings),
+        **payload,
         "data_dir": str(core.data_dir),  # read-only: shown in Settings, never a setting
         "api_key_set": key is not None,
         "api_key_hint": key[-4:] if key is not None and len(key) > 8 else None,

@@ -4,10 +4,12 @@ import hashlib
 import logging
 import os
 import threading
+import time
 import unicodedata
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -25,11 +27,13 @@ from tamra.llm.base import Provider, ProviderError
 from tamra.llm.openai_compat import OpenAICompatibleLLM
 from tamra.llm.runtime import LocalLLM
 from tamra.models.catalog import Catalog, load_catalog
+from tamra.models.external import ExternalModel
+from tamra.models.external import scan as scan_external
 from tamra.models.hardware import Hardware, detect
 from tamra.models.manager import ModelManager
 from tamra.ocr import MODEL_DIR as OCR_MODEL_DIR
 from tamra.ocr import OcrEngine
-from tamra.settings import Settings, load_settings, save_settings
+from tamra.settings import LinkedModel, Settings, load_settings, save_settings
 from tamra.store import Collection, FileRecord, MessageRecord, SourceRecord, Store
 from tamra.viewer import FileMissing, Unreadable, ViewerError, resolve_file
 
@@ -41,6 +45,9 @@ OPENAI_BASE_URL = "https://api.openai.com"
 _PROVIDER_FIELDS = frozenset({"mode", "api_provider", "api_model", "api_base_url"})
 DOCUMENT_CACHE_SIZE = 8  # parsed documents kept for the viewer, so paging a PDF parses it once
 DOCUMENT_CACHE_MAX_BYTES = 16 * 1024 * 1024  # a larger file is parsed per request, not kept
+# shortcut: a model added in another tool shows up within this many seconds; a filesystem watch
+# on the stores would make it instant if that ever matters.
+EXTERNAL_TTL = 10.0
 
 
 class AnswerBusy(RuntimeError):
@@ -92,6 +99,37 @@ def _overlaps(first: Path, second: Path) -> bool:
     return a == b or a.is_relative_to(b) or b.is_relative_to(a)
 
 
+@dataclass(frozen=True)
+class LocalChoice:
+    """A local model Tamra can run: its `local_model_id`, file, label, and where the file is."""
+
+    id: str
+    path: Path
+    label: str
+    source: str  # "tamra" | "linked" | "ollama" | "lmstudio" | "huggingface"
+    catalogued: bool
+
+
+def _path_key(path: Path | str) -> str:
+    return os.path.normcase(str(path))
+
+
+def _same_id(a: str, b: str) -> bool:
+    """Ids naming files compare as Windows paths do (case-insensitively); catalog ids exactly."""
+    if a.startswith(("import:", "file:")):
+        return _path_key(a) == _path_key(b)
+    return a == b
+
+
+def _intact(link: LinkedModel) -> bool:
+    """A linked file is used while it is still there with the size it had when it was linked."""
+    try:
+        path = Path(link["path"])
+        return path.is_file() and path.stat().st_size == link["size"]
+    except OSError:
+        return False
+
+
 def _build_api_provider(settings: Settings, key: str) -> Provider:
     if settings.api_provider == "anthropic":
         return AnthropicLLM(settings.api_model, key)
@@ -116,13 +154,15 @@ class Core:
         ocr_factory: Callable[[], OcrLike | None] | None = None,
         api_factory: Callable[[Settings, str], Provider] = _build_api_provider,
         catalog: Catalog | None = None,
+        external_scan: Callable[[], list[ExternalModel]] | None = None,
         answer_settings: AnswerSettings | None = None,
         debounce: float = 2.0,
         warm_attribution: bool = False,
     ):
         """`llm` replaces the local runtime, `ocr_factory` the OCR models, and `api_factory`
         builds the API provider from the settings and the key; they exist so tests can use
-        fakes. `warm_attribution` embeds a new answer's sources in the background so the first
+        fakes, as does `external_scan` for the scan of other tools' model stores.
+        `warm_attribution` embeds a new answer's sources in the background so the first
         "Check source" is fast."""
         data_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir = data_dir
@@ -148,6 +188,11 @@ class Core:
         self._llama_exe = llama_exe
         self._catalog = catalog or load_catalog()
         self.models = ModelManager(models_dir, self._catalog, on_installed=self._model_installed)
+        # Looked up at call time, so tests can patch tamra.core.scan_external.
+        self._external_scan = external_scan or (lambda: scan_external(Path.home(), os.environ))
+        self._external: tuple[float, list[ExternalModel]] | None = None
+        self._external_lock = threading.Lock()
+        self._links_lock = threading.Lock()  # one read-modify-write of linked_models at a time
         self._hardware: Hardware | None = None
         self._hardware_lock = threading.Lock()
         self._settings = load_settings(self.store)
@@ -265,40 +310,90 @@ class Core:
             self.answers.when_idle(replaced.close)
         return provider
 
-    def resolve_local_model(self) -> tuple[str, Path, str]:
-        """The local model to serve, as (id, file, label): the selected one if installed, else the
-        first installed catalog model, else the first GGUF that is not in the catalog. The id is
-        a catalog id or "import:<file name>", so it is a valid `local_model_id`. The label is
-        the catalog name ("Qwen3-8B"), or the file name without its extension for an import.
+    def external_models(self) -> list[ExternalModel]:
+        """The models Ollama, LM Studio and the Hugging Face cache hold, scanned at most every
+        EXTERNAL_TTL seconds (GET /api/models is polled every second). A failing scan lists none."""
+        with self._external_lock:
+            now = time.monotonic()
+            if self._external is None or now - self._external[0] >= EXTERNAL_TTL:
+                try:
+                    found = self._external_scan()
+                except Exception:  # a broken store must never break the model list
+                    log.exception("scanning other tools' model folders failed")
+                    found = []
+                self._external = (now, found)
+            return self._external[1]
 
-        Raises ProviderError (model_missing) when no model is installed.
-        """
+    def _forget_scan(self) -> None:
+        with self._external_lock:
+            self._external = None
+
+    def local_choices(self) -> list[LocalChoice]:
+        """Every local model Tamra can run, in the order resolve_local_model falls back through:
+        catalog LLMs (from Tamra's folder, else a linked file, else another tool, matched by
+        sha256), then uncatalogued files in Tamra's folder, then linked files, then other tools'.
+
+        Only sizes are checked here; nothing is hashed (linked files carry their sha256 from the
+        import, and Ollama and Hugging Face name their files by it)."""
+        llms = self._catalog.llms()
         installed = self._catalog.installed(self._models_dir)
-        llm_ids = [m.id for m in self._catalog.llms() if m.id in installed]
-        uncatalogued = self._catalog.uncatalogued(self._models_dir)
+        links = [link for link in self._settings.linked_models if _intact(link)]
+        scanned = self.external_models()
+        catalog_hashes = {e.main_file.sha256.lower() for e in llms}
+        hashed: dict[str, tuple[Path, str]] = {}
+        for link in links:
+            hashed.setdefault(link["sha256"], (Path(link["path"]), "linked"))
+        for m in scanned:
+            if m.sha256 is not None:
+                hashed.setdefault(m.sha256.lower(), (m.path, m.source))
+
+        choices: list[LocalChoice] = []
+        for entry in llms:
+            sha = entry.main_file.sha256.lower()
+            if entry.id in installed:
+                path, source = installed[entry.id], "tamra"
+            elif sha in hashed:
+                path, source = hashed[sha]
+            else:
+                continue
+            choices.append(LocalChoice(entry.id, path, entry.name, source, True))
+        for path in self._catalog.uncatalogued(self._models_dir):
+            choices.append(LocalChoice(f"import:{path.name}", path, path.stem, "tamra", False))
+        offered: set[str] = set()
+        for link in links:
+            path = Path(link["path"])
+            if link["sha256"] not in catalog_hashes and _path_key(path) not in offered:
+                offered.add(_path_key(path))
+                choices.append(LocalChoice(f"file:{path}", path, path.stem, "linked", False))
+        for m in scanned:
+            if (m.sha256 or "").lower() not in catalog_hashes and _path_key(m.path) not in offered:
+                offered.add(_path_key(m.path))
+                choices.append(LocalChoice(f"file:{m.path}", m.path, m.name, m.source, False))
+        return choices
+
+    def resolve_local_model(self) -> tuple[str, Path, str]:
+        """The local model to serve, as (id, file, label): the selected one if it is available,
+        else the first of local_choices(). The id is a valid `local_model_id`.
+
+        Raises ProviderError (model_missing) when no model is available.
+        """
+        choices = self.local_choices()
         wanted = self._settings.local_model_id
-        if wanted in llm_ids:
-            return wanted, installed[wanted], self._catalog.get(wanted).name
-        if wanted and wanted.startswith("import:"):
-            name = wanted.removeprefix("import:").lower()
-            for path in uncatalogued:
-                if path.name.lower() == name:
-                    return f"import:{path.name}", path, path.stem
-        if llm_ids:
-            return llm_ids[0], installed[llm_ids[0]], self._catalog.get(llm_ids[0]).name
-        if uncatalogued:
-            return f"import:{uncatalogued[0].name}", uncatalogued[0], uncatalogued[0].stem
-        raise ProviderError("No local model is installed.", "model_missing")
+        chosen = next((c for c in choices if wanted and _same_id(c.id, wanted)), None)
+        if chosen is None and choices:
+            chosen = choices[0]
+        if chosen is None:
+            raise ProviderError("No local model is installed.", "model_missing")
+        return chosen.id, chosen.path, chosen.label
 
     def _local_model_path(self) -> Path:
         return self.resolve_local_model()[1]
 
     def _local_label(self, path: Path) -> str:
-        """The name to show for the model file `path`: its catalog name, else its file stem."""
-        installed = self._catalog.installed(self._models_dir)
-        for entry in self._catalog.llms():
-            if installed.get(entry.id) == path:
-                return entry.name
+        """The name to show for the model file `path`: its catalog or Ollama name, else its stem."""
+        for choice in self.local_choices():
+            if choice.path == path:
+                return choice.label
         return path.stem
 
     # --- documents ---
