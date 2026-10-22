@@ -185,6 +185,10 @@ The M1 to M4 steps are unchanged and still pass:
 
 ## Not done in M5
 
+- **PDFs indexed before M5 are not re-checked.** A file is parsed again only when its size, mtime
+  or content changes, or when it was marked `needs_ocr`. An unchanged browser-printed Thai PDF
+  therefore keeps its broken M4 text until its project is rebuilt (**Project settings > Rebuild
+  index**), the same as DOCX tables after M4. Do this once after the OCR model is installed.
 - **Small margin on the Chinese photocopy gate:** 0.027 against a limit of 0.03. onnxruntime's
   float kernels differ between CPUs, so the result may differ on other machines.
 - **Lost lines at a 2–3° tilt.** At 2–3° the Thai pages `th_0` and `th_3` still lose a line
