@@ -178,6 +178,8 @@ export const en = {
   "chat.error.quota": "The provider's usage limit was reached. Try again later.",
   "chat.error.modelMissing":
     "No model is ready to answer. Choose or download one in Settings.",
+  "chat.error.modelUnsupported":
+    "Tamra cannot run this type of model yet. Choose another model in Settings.",
   "error.embeddingMissing":
     "The search model is not installed. Download it in Settings > AI model.",
   "chat.openModelSettings": "Open model settings",
@@ -197,6 +199,10 @@ export const en = {
   "model.downloading": "downloading {percent}%",
   "model.verifying": "verifying…",
   "model.imported": "Imported model",
+  "model.source.linked": "Linked file",
+  "model.source.ollama": "From Ollama",
+  "model.source.lmstudio": "From LM Studio",
+  "model.source.huggingface": "From Hugging Face",
   "model.cloudSent": "{provider} · passages are sent to the provider",
   "model.cloudNoKey": "{provider} · add an API key in Settings first",
   "model.cpuFallback":
@@ -290,13 +296,17 @@ export const en = {
   "settings.uncatalogued": "Not in Tamra's catalog; answer quality is unknown.",
   "settings.importButton": "Import model file…",
   "settings.importHint":
-    "For computers without internet. The file is checked against the model catalog.",
+    "Tamra uses the file where it is. A file on a USB stick or other removable drive is copied in, and so are search and OCR model files.",
   "settings.importPathLabel": "Model file path",
   "settings.importPathPlaceholder": "Full path to a .gguf file, like D:\\Models\\model.gguf",
   "settings.importGo": "Import",
   "settings.importing": "Importing…",
   "settings.importedCatalogued": "Imported {file}. It matches the model catalog.",
   "settings.importedOther": "Imported {file}. {warning}",
+  "settings.importedLinked": "Using {file} where it is; it was not copied.",
+  "settings.importedLinkedOther": "Using {file} where it is; it was not copied. {warning}",
+  "settings.unlink": "Remove from list",
+  "settings.unlinkHint": "Tamra stops using this file. The file itself is not deleted.",
 
   "settings.cloudWarning":
     "In API mode, the passages found for each question are sent to the provider. Your files and the search index stay on this computer.",

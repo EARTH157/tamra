@@ -20,6 +20,7 @@ export function localModel(over: Partial<LocalModel>): LocalModel {
     context_length: 32768,
     thinking: true,
     min_vram_gb: 0,
+    source: "tamra",
     ...over,
   };
 }
@@ -56,10 +57,20 @@ export function modelsInfo(over: Partial<ModelsInfo> = {}): ModelsInfo {
         state: "downloading",
         done: 62,
         total: 100,
+        source: null,
       }),
-      localModel({ id: "qwen3-14b", name: "Qwen3-14B", tier: "large", installed: false }),
+      localModel({ id: "qwen3-14b", name: "Qwen3-14B", tier: "large", installed: false, source: null }),
     ],
-    uncatalogued: [{ id: "import:mine.gguf", name: "mine", file: "mine.gguf", size: 8 }],
+    uncatalogued: [
+      {
+        id: "import:mine.gguf",
+        name: "mine",
+        file: "mine.gguf",
+        size: 8,
+        source: "tamra",
+        path: "C:\\Users\\me\\AppData\\Local\\Tamra\\models\\mine.gguf",
+      },
+    ],
     embedding: embeddingModel({}),
     ocr: embeddingModel({ id: "pp-ocrv5-mobile", name: "PP-OCRv5 mobile", size: 29_366_176 }),
     ...over,

@@ -176,6 +176,7 @@ export const th: Record<TranslationKey, string> = {
   "chat.error.auth": "ยังไม่ได้ตั้งค่าคีย์ API หรือผู้ให้บริการไม่รับคีย์นี้ ตรวจสอบได้ในการตั้งค่า",
   "chat.error.quota": "ถึงขีดจำกัดการใช้งานของผู้ให้บริการแล้ว ลองอีกครั้งภายหลัง",
   "chat.error.modelMissing": "ยังไม่มีโมเดลที่พร้อมตอบ เลือกหรือดาวน์โหลดโมเดลในการตั้งค่า",
+  "chat.error.modelUnsupported": "Tamra ยังรันโมเดลชนิดนี้ไม่ได้ เลือกโมเดลอื่นในการตั้งค่า",
   "error.embeddingMissing":
     "ยังไม่ได้ติดตั้งโมเดลค้นหา ดาวน์โหลดได้ที่การตั้งค่า > โมเดล AI",
   "chat.openModelSettings": "เปิดการตั้งค่าโมเดล",
@@ -195,6 +196,10 @@ export const th: Record<TranslationKey, string> = {
   "model.downloading": "กำลังดาวน์โหลด {percent}%",
   "model.verifying": "กำลังตรวจสอบไฟล์…",
   "model.imported": "โมเดลที่นำเข้า",
+  "model.source.linked": "ไฟล์ที่เลือกไว้",
+  "model.source.ollama": "จาก Ollama",
+  "model.source.lmstudio": "จาก LM Studio",
+  "model.source.huggingface": "จาก Hugging Face",
   "model.cloudSent": "{provider} · ข้อความที่ค้นพบจะถูกส่งให้ผู้ให้บริการ",
   "model.cloudNoKey": "{provider} · ตั้งค่าคีย์ API ในการตั้งค่าก่อน",
   "model.cpuFallback":
@@ -287,13 +292,18 @@ export const th: Record<TranslationKey, string> = {
   "settings.sizeMb": "{size} MB",
   "settings.uncatalogued": "ไม่อยู่ในแคตตาล็อกของ Tamra จึงไม่ทราบคุณภาพของคำตอบ",
   "settings.importButton": "นำเข้าไฟล์โมเดล…",
-  "settings.importHint": "สำหรับเครื่องที่ไม่มีอินเทอร์เน็ต ไฟล์จะถูกตรวจสอบกับแคตตาล็อกโมเดล",
+  "settings.importHint":
+    "Tamra ใช้ไฟล์จากที่เดิม ถ้าไฟล์อยู่บน USB หรือไดรฟ์ถอดได้จะคัดลอกเข้ามา และไฟล์โมเดลค้นหากับ OCR จะคัดลอกเสมอ",
   "settings.importPathLabel": "ที่อยู่ไฟล์โมเดล",
   "settings.importPathPlaceholder": "ใส่ที่อยู่ไฟล์ .gguf แบบเต็ม เช่น D:\\Models\\model.gguf",
   "settings.importGo": "นำเข้า",
   "settings.importing": "กำลังนำเข้า…",
   "settings.importedCatalogued": "นำเข้า {file} แล้ว ตรงกับแคตตาล็อกโมเดล",
   "settings.importedOther": "นำเข้า {file} แล้ว {warning}",
+  "settings.importedLinked": "ใช้ไฟล์ {file} จากที่เดิม ไม่ได้คัดลอก",
+  "settings.importedLinkedOther": "ใช้ไฟล์ {file} จากที่เดิม ไม่ได้คัดลอก {warning}",
+  "settings.unlink": "เอาออกจากรายการ",
+  "settings.unlinkHint": "Tamra จะเลิกใช้ไฟล์นี้ แต่ไม่ลบตัวไฟล์",
 
   "settings.cloudWarning":
     "ในโหมด API ข้อความที่ค้นพบสำหรับแต่ละคำถามจะถูกส่งให้ผู้ให้บริการ ไฟล์ของคุณและดัชนีการค้นหายังอยู่ในคอมพิวเตอร์เครื่องนี้",

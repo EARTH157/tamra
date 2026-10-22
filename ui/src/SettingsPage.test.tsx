@@ -641,6 +641,53 @@ describe("AI model tab: local", () => {
     });
   });
 
+  it("names where each model file is and removes a linked file from the list", async () => {
+    const { calls } = await mountPage({
+      tab: "model",
+      models: modelsInfo({
+        local: [localModel({ source: "ollama" })],
+        uncatalogued: [
+          {
+            id: "file:D:\\Models\\mine.gguf",
+            name: "mine",
+            file: "mine.gguf",
+            size: 5_000_000_000,
+            source: "linked",
+            path: "D:\\Models\\mine.gguf",
+          },
+          {
+            id: "file:C:\\Users\\me\\.ollama\\models\\blobs\\sha256-ab",
+            name: "llama3:8b",
+            file: "sha256-ab",
+            size: 4_700_000_000,
+            source: "ollama",
+            path: "C:\\Users\\me\\.ollama\\models\\blobs\\sha256-ab",
+          },
+        ],
+      }),
+      routes: { "POST /api/models/unlink": noContent },
+    });
+    const rows = [...view!.container.querySelectorAll(".model-row")];
+    expect(rows[0].textContent).toContain("From Ollama");
+    expect(rows[1].textContent).toContain("Linked file · 5.0 GB");
+    expect(rows[1].querySelector(".model-name")?.getAttribute("title")).toBe("D:\\Models\\mine.gguf");
+    expect(rows[2].textContent).toContain("From Ollama · 4.7 GB");
+    expect(rows[2].textContent).not.toContain("Remove from list");
+    await click(rows[1].querySelector('button[aria-label="Remove from list: mine"]'));
+    expect(calls).toContainEqual({
+      key: "POST /api/models/unlink",
+      body: { path: "D:\\Models\\mine.gguf" },
+    });
+    const order = keys(calls);
+    expect(order.lastIndexOf("GET /api/models")).toBeGreaterThan(order.indexOf("POST /api/models/unlink"));
+  });
+
+  it("does not name Tamra's own folder on a catalog model", async () => {
+    await mountPage({ tab: "model" });
+    const first = view!.container.querySelector(".model-row")!;
+    expect(first.textContent).not.toContain("Imported model");
+  });
+
   it("switches to the Cloud API", async () => {
     const { calls } = await mountPage({ tab: "model" });
     await click(radio("Cloud API"));
@@ -656,6 +703,7 @@ describe("AI model tab: import", () => {
     id: "import:mine.gguf",
     path: "C:\\Users\\me\\AppData\\Local\\Tamra\\models\\mine.gguf",
     catalogued: false,
+    linked: false,
     warning: "This model is not in Tamra's catalog; answer quality is unknown.",
   };
 
@@ -691,6 +739,34 @@ describe("AI model tab: import", () => {
     expect(find('[role="status"]').textContent).toBe(
       "Imported Qwen3-4B-Q4_K_M.gguf. It matches the model catalog.",
     );
+  });
+
+  it("says a linked file is used where it is", async () => {
+    await mountPage({
+      tab: "model",
+      routes: {
+        "POST /api/pick-file": () => json({ file_path: "D:\\Models\\mine.gguf" }),
+        "POST /api/models/import": () =>
+          json({ ...imported, id: "file:D:\\Models\\mine.gguf", path: "D:\\Models\\mine.gguf", linked: true }),
+      },
+    });
+    await click(buttonByText(view!.container, "Import model file…"));
+    expect(find('[role="status"]').textContent).toBe(
+      "Using mine.gguf where it is; it was not copied. Not in Tamra's catalog; answer quality is unknown.",
+    );
+  });
+
+  it("says a linked catalog file is used where it is, without a warning", async () => {
+    await mountPage({
+      tab: "model",
+      routes: {
+        "POST /api/pick-file": () => json({ file_path: "D:\\Models\\q.gguf" }),
+        "POST /api/models/import": () =>
+          json({ id: "qwen3-4b", path: "D:\\Models\\q.gguf", catalogued: true, linked: true, warning: null }),
+      },
+    });
+    await click(buttonByText(view!.container, "Import model file…"));
+    expect(find('[role="status"]').textContent).toBe("Using q.gguf where it is; it was not copied.");
   });
 
   it("does nothing when the picker is cancelled", async () => {

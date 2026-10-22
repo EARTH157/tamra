@@ -125,7 +125,14 @@ export type ChatDetail = Chat & { messages: Message[] };
 export type AnswerMode = "answer" | "search";
 
 /** Why a model call failed (ProviderError.reason); errors that are not the model's carry none. */
-export type ErrorReason = "offline" | "auth" | "quota" | "model_missing" | "embedding_missing" | "other";
+export type ErrorReason =
+  | "offline"
+  | "auth"
+  | "quota"
+  | "model_missing"
+  | "model_unsupported"
+  | "embedding_missing"
+  | "other";
 
 export type AnswerEvent =
   | { type: "sources"; sources: Source[] }
@@ -162,9 +169,22 @@ export type LocalModel = ModelStatus & {
   thinking: boolean;
   /** The video memory the model needs to run well; 0 for a model that runs on the CPU. */
   min_vram_gb: number;
+  /** Where the installed copy is; null while the model is not installed. */
+  source: ModelSource | null;
 };
 
-export type UncataloguedModel = { id: string; name: string; file: string; size: number };
+/** Where a local model file is: Tamra's own folder, a file the user linked, or another tool. */
+export type ModelSource = "tamra" | "linked" | "ollama" | "lmstudio" | "huggingface";
+
+export type UncataloguedModel = {
+  id: string;
+  name: string;
+  file: string;
+  size: number;
+  source: ModelSource;
+  /** The full path of the file (shown as a tooltip; sent back to unlink a linked file). */
+  path: string;
+};
 
 /** `integrated` is a GPU that shares the computer's memory (an iGPU). */
 export type Gpu = { name: string; vram_mb: number; integrated: boolean };
@@ -216,7 +236,14 @@ export type Settings = {
 export type ConnectionTest = { ok: boolean; reason: ErrorReason | null; message: string };
 
 /** The answer of POST /api/models/import. */
-export type ImportResult = { id: string; path: string; catalogued: boolean; warning: string | null };
+export type ImportResult = {
+  id: string;
+  path: string;
+  catalogued: boolean;
+  /** Used where it is rather than copied into Tamra's models folder. */
+  linked: boolean;
+  warning: string | null;
+};
 
 /** What PUT /api/settings accepts: any of the saved settings (never the key state or data_dir). */
 export type SettingsChanges = Partial<Omit<Settings, "api_key_set" | "api_key_hint" | "data_dir">>;

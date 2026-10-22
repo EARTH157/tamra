@@ -4,7 +4,7 @@ import { api, ApiError } from "./api";
 import { errorText } from "./apiErrors";
 import ConfirmDialog from "./ConfirmDialog";
 import { type TranslationKey, useT } from "./i18n";
-import { isDownloading, type ModelsApi, percent } from "./models";
+import { isDownloading, type ModelsApi, percent, SOURCE_KEYS } from "./models";
 import { useSettings } from "./settings";
 import { RadioMark, Section } from "./SettingsControls";
 import type { Gpu, ImportResult, LocalModel, ModelsInfo, ModelStatus, UncataloguedModel } from "./types";
@@ -100,17 +100,32 @@ export default function SettingsLocal({ models, refresh }: ModelsApi) {
     }
   }
 
+  async function unlink(model: UncataloguedModel) {
+    setError(null);
+    try {
+      await api("POST", "/api/models/unlink", { path: model.path });
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function importPath(file: string) {
     setImporting(true);
     setNote(null);
     try {
       const result = await api<ImportResult>("POST", "/api/models/import", { path: file });
       const name = baseName(result.path);
+      const warning = t("settings.uncatalogued");
       setNote({
         ok: true,
-        text: result.catalogued
-          ? t("settings.importedCatalogued", { file: name })
-          : t("settings.importedOther", { file: name, warning: t("settings.uncatalogued") }),
+        text: result.linked
+          ? result.catalogued
+            ? t("settings.importedLinked", { file: name })
+            : t("settings.importedLinkedOther", { file: name, warning })
+          : result.catalogued
+            ? t("settings.importedCatalogued", { file: name })
+            : t("settings.importedOther", { file: name, warning }),
       });
       setTyping(false);
       setPath("");
@@ -169,6 +184,7 @@ export default function SettingsLocal({ models, refresh }: ModelsApi) {
             model={model}
             selected={model.id === models.active.id}
             onSelect={() => select(model.id)}
+            onUnlink={() => void unlink(model)}
           />
         ))}
       </div>
@@ -239,6 +255,9 @@ function ModelRow({ model, selected, onSelect, onDownload, onCancel }: RowProps)
       : t("settings.forCpu"),
   );
   if (model.thinking) parts.push(t("model.canThink"));
+  if (model.installed && model.source && model.source !== "tamra") {
+    parts.push(t(SOURCE_KEYS[model.source]));
+  }
   return (
     <div className={selected ? "model-row selected" : "model-row"}>
       <button
@@ -336,10 +355,12 @@ function ImportedRow({
   model,
   selected,
   onSelect,
+  onUnlink,
 }: {
   model: UncataloguedModel;
   selected: boolean;
   onSelect: () => void;
+  onUnlink: () => void;
 }) {
   const t = useT();
   return (
@@ -353,9 +374,11 @@ function ImportedRow({
       >
         <RadioMark on={selected} />
         <span className="model-text">
-          <span className="model-name">{model.name}</span>
+          <span className="model-name" title={model.path}>
+            {model.name}
+          </span>
           <span className="model-detail">
-            {t("model.imported")} · {formatSize(model.size, t)}
+            {t(SOURCE_KEYS[model.source])} · {formatSize(model.size, t)}
           </span>
           <span className="model-warning">
             <AlertTriangle size={13} />
@@ -368,6 +391,17 @@ function ImportedRow({
           <Check size={14} />
           {t("settings.installed")}
         </span>
+        {model.source === "linked" && (
+          <button
+            type="button"
+            className="link-button"
+            aria-label={`${t("settings.unlink")}: ${model.name}`}
+            title={t("settings.unlinkHint")}
+            onClick={onUnlink}
+          >
+            {t("settings.unlink")}
+          </button>
+        )}
       </div>
     </div>
   );

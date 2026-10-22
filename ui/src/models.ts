@@ -1,6 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { LocalModel, ModelsInfo, ModelStatus, Settings, UncataloguedModel } from "./types";
+import type { TranslationKey } from "./i18n";
+import type {
+  LocalModel,
+  ModelSource,
+  ModelsInfo,
+  ModelStatus,
+  Settings,
+  UncataloguedModel,
+} from "./types";
+
+/** The words for where a model file is, as the model list and the model menu show them. */
+export const SOURCE_KEYS: Record<ModelSource, TranslationKey> = {
+  tamra: "model.imported",
+  linked: "model.source.linked",
+  ollama: "model.source.ollama",
+  lmstudio: "model.source.lmstudio",
+  huggingface: "model.source.huggingface",
+};
 
 export type ModelsApi = {
   /** The last answer of GET /api/models; null until the first one arrives (or when it failed). */
