@@ -14,13 +14,18 @@ log = logging.getLogger(__name__)
 
 
 class LlamaServerError(Exception):
-    pass
+    """llama-server could not start. `reason` is a tamra.llm.base.ErrorReason."""
+
+    def __init__(self, message: str, reason: str = "other"):
+        super().__init__(message)
+        self.reason = reason
 
 
 LOG_VERBOSITY = "4"
 MAX_LOG_BYTES = 1024 * 1024  # a larger log is restarted instead of appended to
 _OFFLOADED = re.compile(r"offloaded\s+(\d+)\s*/\s*(\d+)\s+layers\s+to\s+GPU", re.IGNORECASE)
 _MODEL_BUFFER = re.compile(r"load_tensors:\s+(\w+)\s+model buffer size\s*=\s*([\d.]+)\s*MiB")
+_UNKNOWN_ARCH = re.compile(r"unknown model architecture: '([^']+)'")
 
 
 def _log_size(path: Path) -> int:
@@ -118,22 +123,31 @@ class LlamaServer:
                     self.gpu_used = gpu
                     return self
                 self.stop()
+                unknown = _UNKNOWN_ARCH.search(self._run_log())
+                if unknown:  # the CPU would fail the same way
+                    raise LlamaServerError(
+                        f"This version of llama.cpp cannot run models of type {unknown.group(1)}.",
+                        "model_unsupported",
+                    )
             except BaseException:
                 self.stop()
                 raise
         raise LlamaServerError(f"llama-server failed to start; see {self.log_file}")
 
+    def _run_log(self) -> str:
+        """This run's part of the log file; empty when it cannot be read."""
+        try:
+            with self.log_file.open("rb") as f:
+                f.seek(self._log_start)
+                return f.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+
     @property
     def gpu_offload(self) -> bool | None:
         """True when layers were offloaded to the GPU, False when none were (CPU only), None when
         the log says nothing about it."""
-        try:
-            with self.log_file.open("rb") as f:
-                f.seek(self._log_start)
-                text = f.read().decode("utf-8", errors="replace")
-        except OSError:
-            return None
-        return parse_gpu_offload(text)
+        return parse_gpu_offload(self._run_log())
 
     def alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None

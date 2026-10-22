@@ -23,7 +23,7 @@ class Chunk:
 # asked; local Qwen3 thinks when "Think longer" is on).
 THINKING_HEADROOM = 2048
 
-ErrorReason = Literal["offline", "auth", "quota", "model_missing", "other"]
+ErrorReason = Literal["offline", "auth", "quota", "model_missing", "model_unsupported", "other"]
 
 
 class LLMError(Exception):
