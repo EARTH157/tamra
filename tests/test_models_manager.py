@@ -511,3 +511,57 @@ def test_a_failed_hook_does_not_fail_the_download(tmp_path):
     manager = ModelManager(tmp_path, _catalog(), transport=_transport(), on_installed=boom)
     manager.start_download("tiny")
     assert _wait_idle(manager, "tiny")["error"] is None
+
+
+def test_a_linked_catalog_llm_is_hashed_but_not_copied(tmp_path):
+    source = tmp_path / "elsewhere" / "anything.gguf"
+    source.parent.mkdir()
+    source.write_bytes(LLM)
+    manager = ModelManager(tmp_path / "models", _catalog())
+    result = manager.import_file(source, link_llm=True)
+    assert (result.id, result.path, result.catalogued, result.linked) == (
+        "tiny",
+        source,
+        True,
+        True,
+    )
+    assert (result.sha256, result.size, result.warning) == (_sha(LLM), len(LLM), None)
+    assert not (tmp_path / "models").exists()
+
+
+def test_a_linked_unknown_gguf_gets_a_file_id_and_the_warning(tmp_path):
+    source = tmp_path / "My Model.gguf"
+    source.write_bytes(b"GGUF-custom")
+    manager = ModelManager(tmp_path / "models", _catalog())
+    result = manager.import_file(source, link_llm=True)
+    assert result.id == f"file:{source}"
+    assert (result.catalogued, result.linked, result.warning) == (False, True, UNCATALOGUED_WARNING)
+    assert (result.sha256, result.size) == (_sha(b"GGUF-custom"), len(b"GGUF-custom"))
+    assert not (tmp_path / "models").exists()
+
+
+def test_a_linked_gguf_may_reuse_a_catalog_file_name(tmp_path):
+    # LM Studio's lmstudio-community build has the official file name with other content.
+    source = tmp_path / "Tiny-Q4.gguf"
+    source.write_bytes(b"GGUF-other-build")
+    result = ModelManager(tmp_path / "models", _catalog()).import_file(source, link_llm=True)
+    assert (result.id, result.linked) == (f"file:{source}", True)
+
+
+def test_linking_still_refuses_non_gguf_files(tmp_path):
+    manager = ModelManager(tmp_path / "models", _catalog())
+    text = tmp_path / "notes.txt"
+    text.write_text("hi")
+    fake = tmp_path / "fake.gguf"
+    fake.write_bytes(b"nope")
+    for path in (text, fake):
+        with pytest.raises(ImportRefused):
+            manager.import_file(path, link_llm=True)
+
+
+def test_an_embedding_file_is_copied_even_when_linking_is_asked(tmp_path):
+    source = tmp_path / "model.onnx"
+    source.write_bytes(EMB)
+    result = ModelManager(tmp_path / "models", _catalog()).import_file(source, link_llm=True)
+    assert (result.id, result.linked) == ("emb", False)
+    assert (tmp_path / "models" / "emb" / "model.onnx").read_bytes() == EMB
