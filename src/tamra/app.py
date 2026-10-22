@@ -231,7 +231,8 @@ def _show_window(
     )
     if file_picker is not None:
         file_picker.window = picker.window
-    webview.start()
+    # pywebview otherwise uses sys.executable's icon, which is python.exe's when run from source.
+    webview.start(icon=str(resource_dir() / "packaging" / "tamra.ico"))
 
 
 def _alert(message: str) -> None:

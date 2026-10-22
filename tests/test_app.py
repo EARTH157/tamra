@@ -1,5 +1,6 @@
 import logging
 import threading
+from pathlib import Path
 
 import pytest
 import webview
@@ -17,6 +18,16 @@ class FakeWindow:
     def create_file_dialog(self, kind):
         self.kinds.append(kind)
         return self.result
+
+
+def test_the_window_shows_the_tamra_icon(monkeypatch):
+    started = {}
+    monkeypatch.setattr(webview, "create_window", lambda *a, **k: FakeWindow(None))
+    monkeypatch.setattr(webview, "start", lambda **k: started.update(k))
+    app._show_window(8765, "t", app.FolderPicker())
+    # Without it the title bar shows python.exe's icon when run from source.
+    assert started["icon"].endswith("tamra.ico")
+    assert Path(started["icon"]).is_file()
 
 
 def test_the_folder_picker_returns_the_chosen_folder():

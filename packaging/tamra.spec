@@ -13,6 +13,7 @@ a = Analysis(
         (str(ROOT / "ui" / "dist"), "ui/dist"),
         (str(ROOT / "vendor" / "llama"), "vendor/llama"),
         (str(ROOT / "src" / "tamra" / "models" / "catalog.json"), "tamra/models"),
+        (str(ROOT / "packaging" / "tamra.ico"), "packaging"),
         (str(ROOT / "LICENSE"), "."),
         (str(ROOT / "NOTICE"), "."),
     ],
