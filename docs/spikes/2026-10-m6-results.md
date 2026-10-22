@@ -48,7 +48,7 @@ The PR's run of `release.yml` (pull request #9, 2026-10-22) passed every step:
 | | Result |
 |---|---|
 | Run | https://github.com/EARTH157/tamra/actions/runs/39709592395 |
-| Inno Setup on the runner | preinstalled, 6.7.1 (`C:/ProgramData/Chocolatey/bin\ISCC.exe`); choco not needed |
+| Inno Setup on the runner | preinstalled, 6.7.1 (the Chocolatey `ISCC.exe` shim); choco not needed |
 | Build (UI, PyInstaller, ISCC) | 111 s, of which ISCC 48 s |
 | Silent install | exit 0, 8 s |
 | Installed exe's selfcheck | exit 0, `ok: true` |
