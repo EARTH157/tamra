@@ -235,9 +235,14 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
   Typhoon (Thai-tuned). Exact picks per tier are chosen in M2 against the eval set.
 - **Download:** resumable (HTTP Range), with progress, verified against `sha256` before
   use, stored in `models\`.
-- **Import:** for offline machines. Pick a file, verify `sha256` against the catalog, and
-  copy it into `models\`. Uncatalogued GGUF files are allowed for the LLM role, with a
-  warning. The embedding model must match the catalog exactly.
+- **Import:** pick a model file, which is hashed and matched against the catalog. An LLM file
+  on a fixed or network drive is used where it is (linked, not copied) and selected. One on
+  a removable drive is copied into `models\`, and so is every embedding and OCR file. The
+  embedding model must match the catalog exactly. Uncatalogued GGUF files are allowed for
+  the LLM role, with a warning.
+- **Other tools' models:** GGUF chat models that Ollama, LM Studio or the Hugging Face
+  cache already hold are found and run in place. Tamra never writes to those stores. See
+  `2026-10-23-external-models-design.md`.
 - **Settings:**
   - Mode: `local` or `api`.
   - API provider: Anthropic or OpenAI-compatible (base URL), plus model name. The default
