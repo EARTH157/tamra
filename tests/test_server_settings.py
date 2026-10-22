@@ -181,6 +181,7 @@ ROUTES = [
     ("POST", "/api/models/small/download", None),
     ("DELETE", "/api/models/small/download", None),
     ("POST", "/api/models/import", {"path": "C:/m.gguf"}),
+    ("POST", "/api/models/unlink", {"path": "C:/m.gguf"}),
     ("POST", "/api/pick-file", None),
     ("DELETE", "/api/chats", None),
     ("POST", "/api/open-data-folder", None),
@@ -513,6 +514,7 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
                 "context_length": 4096,
                 "thinking": True,
                 "min_vram_gb": 0,
+                "source": "tamra",
             },
             {
                 "id": "medium",
@@ -527,10 +529,18 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
                 "context_length": 0,
                 "thinking": False,
                 "min_vram_gb": 6,
+                "source": None,
             },
         ],
         "uncatalogued": [
-            {"id": "import:mine.gguf", "name": "mine", "file": "mine.gguf", "size": 8}
+            {
+                "id": "import:mine.gguf",
+                "name": "mine",
+                "file": "mine.gguf",
+                "size": 8,
+                "source": "tamra",
+                "path": str(client.models_dir / "mine.gguf"),
+            }
         ],
         "embedding": {
             "id": "emb",
@@ -699,7 +709,7 @@ def test_unknown_models_are_404_for_download_and_cancel(env):
     assert client.delete("/api/models/small/download", headers=AUTH).status_code == 204  # idle
 
 
-def test_import_copies_a_gguf_and_returns_an_id_the_settings_accept(env):
+def test_import_links_a_gguf_where_it_is_and_selects_it(env):
     client, core, tmp_path = env
     source = tmp_path / "elsewhere" / "My Model.gguf"
     source.parent.mkdir()
@@ -707,23 +717,77 @@ def test_import_copies_a_gguf_and_returns_an_id_the_settings_accept(env):
     response = client.post("/api/models/import", headers=AUTH, json={"path": str(source)})
     assert response.status_code == 200
     body = response.json()
-    assert body["id"] == "import:My Model.gguf"
-    assert body["catalogued"] is False
+    assert (body["id"], body["linked"], body["catalogued"]) == (f"file:{source}", True, False)
     assert body["warning"]
+    assert list(client.models_dir.iterdir()) == []
+    listed = client.get("/api/models", headers=AUTH).json()
+    assert listed["active"]["id"] == body["id"]
+    assert [(m["id"], m["source"], m["path"]) for m in listed["uncatalogued"]] == [
+        (body["id"], "linked", str(source))
+    ]
+
+
+def test_import_copies_a_gguf_from_a_removable_drive(env, monkeypatch):
+    client, _, tmp_path = env
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: True)
+    source = tmp_path / "usb" / "My Model.gguf"
+    source.parent.mkdir()
+    source.write_bytes(b"GGUF-custom")
+    body = client.post("/api/models/import", headers=AUTH, json={"path": str(source)}).json()
+    assert (body["id"], body["linked"]) == ("import:My Model.gguf", False)
     assert (client.models_dir / "My Model.gguf").read_bytes() == b"GGUF-custom"
-    chosen = client.put("/api/settings", headers=AUTH, json={"local_model_id": body["id"]})
-    assert chosen.status_code == 200
-    listed = client.get("/api/models", headers=AUTH).json()["uncatalogued"]
-    assert [m["id"] for m in listed] == [body["id"]]
 
 
-def test_import_of_a_catalog_file_returns_the_catalog_id(env):
+def test_import_of_a_catalog_file_returns_the_catalog_id(env, monkeypatch):
     client, _, tmp_path = env
     source = tmp_path / "anything.bin"
     source.write_bytes(MEDIUM)
     body = client.post("/api/models/import", headers=AUTH, json={"path": str(source)}).json()
-    assert (body["id"], body["catalogued"], body["warning"]) == ("medium", True, None)
+    assert (body["id"], body["catalogued"], body["linked"], body["warning"]) == (
+        "medium",
+        True,
+        True,
+        None,
+    )
+    local = client.get("/api/models", headers=AUTH).json()["local"]
+    assert [(m["id"], m["installed"], m["source"]) for m in local] == [
+        ("small", False, None),
+        ("medium", True, "linked"),
+    ]
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: True)
+    copied = client.post("/api/models/import", headers=AUTH, json={"path": str(source)}).json()
+    assert copied["linked"] is False
     assert (client.models_dir / "Medium-Q4.gguf").read_bytes() == MEDIUM
+
+
+def test_an_embedding_file_is_always_copied(env):
+    client, _, tmp_path = env
+    source = tmp_path / "model.onnx"
+    source.write_bytes(EMB)
+    body = client.post("/api/models/import", headers=AUTH, json={"path": str(source)}).json()
+    assert (body["id"], body["linked"]) == ("emb", False)
+    assert (client.models_dir / "emb" / "model.onnx").read_bytes() == EMB
+
+
+def test_unlink_forgets_a_linked_file_and_404s_an_unknown_one(env):
+    client, core, tmp_path = env
+    source = tmp_path / "m.gguf"
+    source.write_bytes(b"GGUF-custom")
+    client.post("/api/models/import", headers=AUTH, json={"path": str(source)})
+    gone = client.post("/api/models/unlink", headers=AUTH, json={"path": str(source)})
+    assert gone.status_code == 204
+    assert core.settings.linked_models == ()
+    assert source.exists()
+    again = client.post("/api/models/unlink", headers=AUTH, json={"path": str(source)})
+    assert again.status_code == 404
+
+
+def test_linked_models_are_not_a_client_setting(env):
+    client, _, _ = env
+    link = {"path": "C:\\m.gguf", "size": 1, "sha256": "a" * 64}
+    response = client.put("/api/settings", headers=AUTH, json={"linked_models": [link]})
+    assert response.status_code == 400
+    assert "linked_models" not in client.get("/api/settings", headers=AUTH).json()
 
 
 def test_import_validates_the_path_and_reports_refusals(env):
@@ -769,7 +833,7 @@ def test_import_accepts_a_unc_path_shape(env, monkeypatch):
     client, core, _ = env
     seen = []
     monkeypatch.setattr(Path, "is_file", lambda self: True)
-    monkeypatch.setattr(core.models, "import_file", lambda path: seen.append(path) or _imported())
+    monkeypatch.setattr(core, "import_model", lambda path: seen.append(path) or _imported())
     response = client.post("/api/models/import", headers=AUTH, json={"path": UNC})
     assert response.status_code == 200
     assert str(seen[0]) == UNC
@@ -790,7 +854,7 @@ def test_a_destination_error_is_a_json_500_with_a_fixed_message(env, monkeypatch
     def full_disk(path):
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(core.models, "import_file", full_disk)
+    monkeypatch.setattr(core, "import_model", full_disk)
     response = client.post("/api/models/import", headers=AUTH, json={"path": str(source)})
     assert response.status_code == 500
     assert response.json() == {

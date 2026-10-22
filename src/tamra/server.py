@@ -170,6 +170,10 @@ class ImportBody(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
 
 
+class UnlinkBody(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+
+
 def create_app(
     token: str,
     ui_dir: Path | None,
@@ -653,6 +657,10 @@ def _add_settings_routes(app: FastAPI, core: Core) -> None:
 
     @app.put("/api/settings")
     def put_settings(changes: dict[str, Any]) -> dict:
+        if "linked_models" in changes:
+            raise HTTPException(
+                status_code=400, detail="linked_models is changed by importing a model file."
+            )
         try:
             core.apply_settings(changes)
         except ValueError as e:  # names the unknown or invalid field
@@ -727,9 +735,11 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
         installed = catalog.installed(models_dir)  # file sizes only: nothing is hashed here
         status = core.models.status()
         tier = recommend(hardware, catalog)
+        choices = core.local_choices()
+        sources = {c.id: c.source for c in choices if c.catalogued}
         local = [
             {
-                **_entry_payload(m, m.id in installed, status[m.id]),
+                **_entry_payload(m, m.id in sources, status[m.id]),
                 "tier": m.tier,
                 "recommended": m.tier == tier,
                 "license": m.license,
@@ -737,17 +747,27 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
                 "context_length": m.context_length,
                 "thinking": m.thinking,
                 "min_vram_gb": m.min_vram_gb,
+                "source": sources.get(m.id),  # where the installed copy is; None if not installed
             }
             for m in catalog.llms()
         ]
         uncatalogued = []
-        for path in catalog.uncatalogued(models_dir):
+        for choice in choices:
+            if choice.catalogued:
+                continue
             try:
-                size = path.stat().st_size
+                size = choice.path.stat().st_size
             except OSError:
                 continue  # removed since the listing
             uncatalogued.append(
-                {"id": f"import:{path.name}", "name": path.stem, "file": path.name, "size": size}
+                {
+                    "id": choice.id,
+                    "name": choice.label,
+                    "file": choice.path.name,
+                    "size": size,
+                    "source": choice.source,
+                    "path": str(choice.path),
+                }
             )
         embedding = catalog.embedding()
         ocr = catalog.ocr()
@@ -792,7 +812,7 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
         if not path.is_file():
             raise HTTPException(status_code=400, detail=f"File not found: {raw}")
         try:
-            result = core.models.import_file(path)
+            result = core.import_model(path)
         except ImportRefused as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except OSError as e:  # the destination: a full disk, or the model file is in use
@@ -806,8 +826,18 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
             "id": result.id,
             "path": str(result.path),
             "catalogued": result.catalogued,
+            "linked": result.linked,
             "warning": result.warning,
         }
+
+    @app.post("/api/models/unlink", status_code=204)
+    def unlink_model(body: UnlinkBody) -> Response:
+        """Stop using a linked model file. The file itself is never deleted."""
+        try:
+            core.unlink_model(body.path.strip())
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="This file is not linked.") from e
+        return Response(status_code=204)
 
     @app.post("/api/models/{model_id}/download", status_code=202)
     def download_model(model_id: str) -> dict:
