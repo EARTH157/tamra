@@ -268,8 +268,8 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 - **Quality gate** (`tests/test_ocr_quality.py`, needs the models): Thai at 300 dpi CER ≤ 0.06;
   Thai 200 dpi image-only scan CER ≤ 0.02 with every line found; Chinese photocopy (noise and a
   1° tilt) CER ≤ 0.03; pages turned 3°: Thai CER ≤ 0.10, Chinese ≤ 0.01; English word hit ≥ 0.9.
-- **Not in M5:** image files and images in DOCX, vertical or Traditional Chinese, rotated pages,
-  a GPU path, an OCR language setting, re-OCR on demand.
+- **Not in M5:** image files and images in DOCX, vertical or Traditional Chinese, rotated pages
+  beyond a small tilt, a GPU path, an OCR language setting, re-OCR on demand.
 
 ## 11. Packaging and release
 

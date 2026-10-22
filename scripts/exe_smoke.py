@@ -4,8 +4,8 @@
 
 Starts Tamra.exe in dev mode (API only on 127.0.0.1:8765; the packaged exe takes the token
 from TAMRA_DEV_TOKEN, and the smoke makes a fresh one that it never prints) with a scratch data
-folder and a scratch models folder that holds only the embedding model (hard-linked from
-.models), then:
+folder and a scratch models folder that holds only the embedding and OCR models (hard-linked
+from .models), then:
 
 1. Imports the dev GGUF that fetch_assets.py downloads (qwen2.5-0.5b-instruct) through
    POST /api/models/import, as an uncatalogued model, and selects it as the local model.
@@ -30,7 +30,11 @@ folder and a scratch models folder that holds only the embedding model (hard-lin
    apartment-lease.pdf from Contracts; moving the chat to Contracts lists it there in
    GET /api/chats; a rename (and a clashing rename, 409) and a rebuild of one project work; and
    deleting Contracts reports the chats it deleted and leaves its folder alone.
-8. Ends the exe by PID and checks that its llama-server ended with it.
+8. A scanned page (M5): a "Scans" project over an image-only PDF rendered at run time from the
+   committed tests/fixtures/ocr/th_0.pdf. It must be indexed through OCR, a Thai question about
+   it must cite it with an " · OCR" label, and locating that source must find an OCR page with
+   highlight boxes.
+9. Ends the exe by PID and checks that its llama-server ended with it.
 """
 
 import argparse
@@ -47,7 +51,8 @@ import time
 from pathlib import Path
 
 import httpx
-from build_eval_corpus import build
+from build_eval_corpus import build  # also puts tests/ on sys.path for docgen
+from docgen import image_pdf
 from eval_retrieval import load_questions
 
 from tamra import secrets as key_store
@@ -60,6 +65,8 @@ PNG_SIGNATURE = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 PAGE_SCALE = 1.5  # the viewer's default render scale
 SMOKE_IDS = ("th-leave-annual", "en-lease-rent", "zh-warranty-sofa", "none-world-cup")
 CITATION = re.compile(r"\[(\d+)\]")
+SCAN_SOURCE = ROOT / "tests" / "fixtures" / "ocr" / "th_0.pdf"  # a committed text PDF
+SCAN_QUESTION = "ผู้ใช้ห้องปฏิบัติการต้องผ่านการอบรมอะไรก่อนเริ่มใช้งานเครื่องมือ"
 PROJECT_FILES = {  # project name -> eval corpus documents (rendered names)
     "Company": ("company-history.txt", "hr-leave-policy.docx", "it-security-policy.md"),
     "Contracts": ("apartment-lease.pdf", "shipping-policy.pdf", "furniture-warranty.txt"),
@@ -292,15 +299,19 @@ def check_source_viewer(
         problems.append("viewer: the text route returned no lines for a cited text file")
 
 
-def link_embedding_model(src: Path, dest: Path) -> None:
-    """Make src/bge-m3 available under dest without copying (a copy when hard links fail)."""
-    for f in (src / "bge-m3").iterdir():
-        target = dest / "bge-m3" / f.name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.link(f, target)
-        except OSError:
-            shutil.copy2(f, target)
+def link_models(src: Path, dest: Path) -> None:
+    """Make the embedding and OCR model folders of src available under dest without copying
+    (a copy when hard links fail). The LLM is not linked: it comes from the import step."""
+    for folder in ("bge-m3", "ppocr-v5"):
+        if not (src / folder).is_dir():
+            raise SystemExit(f"missing {src / folder}; run scripts/fetch_assets.py")
+        for f in (src / folder).iterdir():
+            target = dest / folder / f.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(f, target)
+            except OSError:
+                shutil.copy2(f, target)
 
 
 def put_settings(client: httpx.Client, **fields) -> dict:
@@ -576,6 +587,44 @@ def check_projects(
         problems.append("projects: deleting the project changed the user's folder")
 
 
+def check_scanned(client: httpx.Client, folder: Path, report: dict, problems: list[str]) -> None:
+    """M5: a scanned Thai page (an image-only PDF rendered from a committed text PDF) is read by
+    OCR, found by a question, and its cited source locates to an OCR page with boxes."""
+    step: dict = {}
+    report["scanned"] = step
+    step["ocr_installed"] = client.get("/api/models").json()["ocr"]["installed"]
+    folder.mkdir()
+    image_pdf(SCAN_SOURCE, folder / "lab-rules-scan.pdf", dpi=200)
+    created = client.post("/api/projects", json={"name": "Scans", "folder_path": str(folder)})
+    created.raise_for_status()
+    project_id = created.json()["id"]
+    started = time.monotonic()
+    index = wait_for(lambda: settled(client, {project_id: 1}), 300, "OCR indexing")[project_id]
+    step["index_s"] = round(time.monotonic() - started, 1)
+    step["counts"] = index["counts"]
+    if index["counts"]["indexed"] != 1 or index["problems"]:
+        problems.append(f"scanned: the scan was not indexed cleanly: {index['problems']}")
+        return
+    chat_id = new_chat(client, [project_id])
+    ask(client, chat_id, SCAN_QUESTION)
+    answer = last_answer(client, chat_id)
+    sources = (answer or {}).get("sources", [])
+    step["labels"] = [s["label"] for s in sources]
+    step["cited"] = bool(answer and CITATION.search(answer["content"]))
+    scanned = [s for s in sources if s["location"].get("ocr")]
+    if not scanned:
+        problems.append("scanned: the answer has no source on an OCR page")
+        return
+    if not scanned[0]["label"].endswith("· OCR"):
+        problems.append(f"scanned: the source label does not say OCR: {scanned[0]['label']}")
+    located = client.get(f"/api/sources/{answer['id']}/{scanned[0]['n']}/locate")
+    where = located.json() if located.status_code == 200 else {}
+    step["locate"] = {k: where.get(k) for k in ("found", "kind", "page", "ocr")}
+    step["locate"]["rects"] = len(where.get("rects") or [])
+    if not (where.get("found") and where.get("ocr") and where.get("rects")):
+        problems.append(f"scanned: the OCR source did not locate with boxes: {step['locate']}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="End-to-end check of the packaged Tamra.exe")
     parser.add_argument("--exe", type=Path, default=ROOT / "dist" / "Tamra" / "Tamra.exe")
@@ -602,8 +651,8 @@ def main() -> int:
             for file in files:
                 shutil.copy2(corpus / file, folders[name] / file)
         shutil.rmtree(corpus)
-        models = Path(tmp) / "models"  # only the embedding model: the LLM comes from the import
-        link_embedding_model(ROOT / ".models", models)
+        models = Path(tmp) / "models"  # embedding + OCR models: the LLM comes from the import
+        link_models(ROOT / ".models", models)
         token = secrets.token_urlsafe(32)  # never printed or reported
         env = {
             **os.environ,
@@ -683,6 +732,7 @@ def main() -> int:
                     problems,
                 )
                 check_projects(client, ids, folders, questions[SMOKE_IDS[1]], report, problems)
+                check_scanned(client, Path(tmp) / "Scans", report, problems)
         finally:
             proc.kill()  # a hard kill: llama-server must still end with Tamra (Job Object)
             proc.wait(timeout=30)

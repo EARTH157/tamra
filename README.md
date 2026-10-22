@@ -7,7 +7,7 @@ app for Windows. Point it at a folder of documents and ask questions in Thai, En
 Chinese. Answers cite the passages they came from, and you can select any part of an
 answer to see the exact source text that supports it.
 
-> **Status: pre-alpha.** Milestone M4 works: keep several projects, each a folder of documents with its own index and chats, choose which of them a question searches, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, check any sentence against its source and open the PDF at the highlighted passage, with a Settings page and an English or Thai interface. There is no installer yet (M6). See the [roadmap](#roadmap).
+> **Status: pre-alpha.** Milestone M5 works: keep several projects, each a folder of documents with its own index and chats, choose which of them a question searches, ask in Thai, English, or Chinese, and get answers with [n] citations from a local model or a cloud API, check any sentence against its source and open the PDF at the highlighted passage, with a Settings page and an English or Thai interface, and scanned PDF pages are read by OCR (download the text recognition model in Settings > AI model). There is no installer yet (M6). See the [roadmap](#roadmap).
 
 ## Planned features
 
@@ -23,14 +23,14 @@ answer to see the exact source text that supports it.
   supporting passage, highlighted in the original PDF.
 - **Projects.** Each project is a folder of documents with its own search index and chats.
   Tamra watches the folders and keeps the indexes up to date. It never modifies your files.
-- PDF, Word (.docx), TXT, and Markdown, with OCR for scanned PDFs planned.
+- PDF, Word (.docx), TXT, and Markdown, including scanned PDFs (OCR in Thai, English and Chinese).
 
 ## Try it from source
 
 You need Windows 10 or 11, [uv](https://docs.astral.sh/uv/), and Node.js 24.
 
     uv sync
-    uv run python scripts/fetch_assets.py   # llama.cpp, bge-m3, and a small test model (~1.1 GB)
+    uv run python scripts/fetch_assets.py   # llama.cpp, bge-m3, the OCR models, and a small test model (~1.1 GB)
     npm --prefix ui ci
     npm --prefix ui run build
     uv run tamra
@@ -112,6 +112,11 @@ Models are stored in `%LOCALAPPDATA%\Tamra\models` (or `TAMRA_MODELS_DIR`). When
 Tamra from source, they live in the repo's `.models` folder instead. Search and
 indexing always run locally with the bge-m3 embedding model, whichever AI mode you choose.
 
+**Scanned PDFs.** Pages with no text, or with a broken Thai text layer, are read by OCR once you
+download **Text recognition (OCR)** (PP-OCRv5, 29 MB) in Settings > AI model. Until then such
+pages are listed under "needs attention". OCR takes a few seconds per page and runs on this
+computer; a page read by OCR shows "· OCR" next to its page number.
+
 ## Cloud API
 
 For better answers on a computer that cannot run a large model, switch to **Cloud API** in
@@ -156,14 +161,17 @@ The full design is in [docs/superpowers/specs/2026-10-02-tamra-design.md](docs/s
 
 Python (FastAPI, ONNX Runtime, SQLite + sqlite-vec) · React + TypeScript (Vite) ·
 pywebview · [llama.cpp](https://github.com/ggml-org/llama.cpp) ·
-[bge-m3](https://huggingface.co/BAAI/bge-m3) embeddings
+[bge-m3](https://huggingface.co/BAAI/bge-m3) embeddings ·
+[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5 models, with detection geometry
+adapted from [RapidOCR](https://github.com/RapidAI/RapidOCR) (see [NOTICE](NOTICE))
 
 ## ภาษาไทย
 
 Tamra คือแอปบน Windows สำหรับถามคำถามจากเอกสารของคุณเอง รองรับภาษาไทย อังกฤษ และจีน
 ใช้งานแบบ offline ได้ และทุกคำตอบอ้างอิงแหล่งที่มา คลุมข้อความในคำตอบเพื่อดูต้นฉบับที่ใช้ตอบได้ทันที
-ตอนนี้ (M4) ใช้งานจากซอร์สโค้ดได้แล้ว: สร้างโปรเจกต์จากโฟลเดอร์เอกสารได้หลายโปรเจกต์ เลือกว่าจะค้นในโปรเจกต์ไหน ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n]
-จากโมเดลในเครื่องหรือ API บนคลาวด์ มีหน้าตั้งค่าและเปลี่ยนภาษาของแอปเป็นไทยได้ ยังไม่มีตัวติดตั้ง
+ตอนนี้ (M5) ใช้งานจากซอร์สโค้ดได้แล้ว: สร้างโปรเจกต์จากโฟลเดอร์เอกสารได้หลายโปรเจกต์ เลือกว่าจะค้นในโปรเจกต์ไหน ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n]
+จากโมเดลในเครื่องหรือ API บนคลาวด์ มีหน้าตั้งค่าและเปลี่ยนภาษาของแอปเป็นไทยได้
+และอ่านไฟล์ PDF ที่สแกนมาได้ด้วย OCR หลังดาวน์โหลดโมเดล "อ่านข้อความจากภาพ (OCR)" ในหน้าตั้งค่า ยังไม่มีตัวติดตั้ง
 
 - **โมเดล:** ที่ ตั้งค่า > โมเดล AI ดาวน์โหลดโมเดลที่แนะนำตามเครื่องของคุณ หรือกด "นำเข้าไฟล์โมเดล"
   เพื่อใช้ไฟล์ .gguf ที่มีอยู่แล้วโดยไม่ต้องต่ออินเทอร์เน็ต
