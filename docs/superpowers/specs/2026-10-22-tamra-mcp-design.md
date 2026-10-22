@@ -152,8 +152,8 @@ gave it one, and never the query or passage text.
     open, and the passages they find are sent to that app's AI model, which may run in the cloud;
   - a "Copy setup" button that copies
     `{"mcpServers": {"tamra": {"command": mcp_command[0], "args": mcp_command[1:]}}}`. The hint under it
-    says where to paste it: Claude Desktop's `claude_desktop_config.json`, or
-    `claude mcp add-json tamra '<json>'` for Claude Code.
+    says where to paste it: Claude Desktop's `claude_desktop_config.json`, or `.mcp.json` in a
+    project folder for Claude Code (both take this `mcpServers` form).
 - **Sidebar:** while `mcp_enabled` is on, a badge above the Settings button reads "AI apps can
   search". It opens Settings > General.
 - English and Thai strings for all of the above.
@@ -171,17 +171,18 @@ gave it one, and never the query or passage text.
 
 ## 9. Packaging and dependencies
 
-- `pyproject.toml`: `mcp>=2.3,<3`. Its tree as of 2.3.0, all compatible with Apache-2.0: `mcp-types`
-  (MIT), `httpx2` (BSD-3-Clause), `jsonschema` (MIT), `pydantic` (MIT), `pyjwt` (MIT) with
-  `cryptography` (Apache-2.0 OR BSD-3-Clause), `opentelemetry-api` (Apache-2.0), `pywin32` (PSF),
-  `sse-starlette` (BSD-3-Clause), `python-multipart` (Apache-2.0), `starlette`, `uvicorn`, `anyio`
-  (already present). The plan re-checks the resolved lock and adds what `NOTICE` needs.
-- PyInstaller: `tamra.mcp_server` and the `mcp` package as hidden imports. Package metadata is
-  collected if a dependency reads it at import time.
-- The bundle grows (mainly `cryptography` and `pywin32`). The plan records the size before and after.
-- `Tamra.exe` is built with `console=False`. The first plan task checks that the windowed exe
-  receives the client's stdin and stdout pipes. If it does not, a second `EXE` (`console=True`,
-  named `tamra-mcp`) is added to the same `COLLECT`, and `mcp_command` points to it.
+- `pyproject.toml`: `mcp>=2.3,<3`. Resolved against the lock on 2026-10-22, it adds `mcp` and
+  `mcp-types` (MIT), `jsonschema`, `jsonschema-specifications`, `referencing`, `rpds-py`, `attrs`
+  (MIT), `pyjwt` (MIT), `python-multipart` (Apache-2.0), `pywin32` (PSF) and `sse-starlette`
+  (BSD-3-Clause), all compatible with Apache-2.0. The rest of its tree (`cryptography`,
+  `opentelemetry-api`, `httpx2`, `pydantic`, `starlette`, `uvicorn`, `anyio`) is already in the lock.
+  `NOTICE` lists only adapted code, so it does not change.
+- PyInstaller: `tamra.mcp_server` as a hidden import, like the other lazily imported entry points.
+- The bundle grows (mainly `pywin32` and `rpds-py`). The plan records the size before and after.
+- `Tamra.exe` is built with `console=False`. That is enough: on 2026-10-22 a throwaway windowed
+  PyInstaller exe was launched with stdin and stdout pipes (with and without `CREATE_NO_WINDOW`), and
+  `sys.stdin` and `sys.stdout` were set and carried the data both ways. No console exe is needed.
+  `scripts/exe_smoke.py` checks the real `Tamra.exe mcp` (§10).
 
 ## 10. Testing
 
@@ -215,7 +216,7 @@ gave it one, and never the query or passage text.
 
 ## 12. Risks
 
-- **Windowed exe and stdio** (§9): checked first. The fallback is known and small.
+- **Windowed exe and stdio** (§9): a probe showed it works. The exe smoke test keeps checking it.
 - **Bundle size** grows by the SDK's dependencies. It is measured, and accepted unless it is far
   larger than expected.
 - **The `mcp` SDK's 2.x API** is newer than earlier milestones' experience. The plan pins the minor
