@@ -6,7 +6,7 @@
   --border: #e2ddd1;
   --border-strong: #cfc8b8;
   --surface: #ffffff;
-  --primary: #0f5c56; /* accent fill: buttons, the logo tile, the send button */
+  --primary: #0f5c56; /* accent fill: buttons, the send button */
   --primary-hover: #0c4a45;
   --primary-ink: #0f5c56; /* the accent as text, an icon or a border; lighter in dark mode */
   --primary-soft: #ddece9;
@@ -344,14 +344,8 @@ svg.lucide {
 }
 
 .logo-tile {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 7px;
-  background: var(--primary);
-  color: var(--on-primary);
 }
 
 .brand-name {
@@ -897,14 +891,8 @@ svg.lucide {
 }
 
 .hero-tile {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 48px;
   height: 48px;
-  border-radius: var(--radius-md);
-  background: var(--primary);
-  color: var(--on-primary);
 }
 
 .hero h1 {

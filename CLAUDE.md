@@ -23,6 +23,7 @@ uv run ruff check; uv run ruff format     # lint, format
 uv run tamra --dev                        # core API only on :8765, token "dev"
 npm --prefix ui run dev                   # UI with hot reload → http://localhost:5173/#token=dev
 npm --prefix ui test                      # UI unit tests (Vitest)
+uv run scripts/make_icon.py               # re-render packaging/tamra.ico after changing ui/src/logo.svg
 npm --prefix ui run build                 # build UI into ui/dist (bundled by PyInstaller)
 uv run python scripts/fetch_assets.py     # download pinned llama.cpp + dev models (~1.1 GB, gitignored)
 uv run python scripts/eval_retrieval.py   # retrieval eval: hit@k and the not-found threshold (needs .models)

@@ -28,6 +28,7 @@ RestartApplications=no
 LicenseFile=..\LICENSE
 OutputDir=..\dist
 OutputBaseFilename=Tamra-Setup-{#AppVersion}
+SetupIconFile=tamra.ico
 UninstallDisplayIcon={app}\Tamra.exe
 WizardStyle=modern
 SolidCompression=yes

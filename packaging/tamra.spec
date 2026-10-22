@@ -24,5 +24,13 @@ a = Analysis(
     + ["tamra.app", "tamra.selfcheck", "tamra.embedder"],
 )
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Tamra", console=False)
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="Tamra",
+    console=False,
+    icon=str(ROOT / "packaging" / "tamra.ico"),
+)
 coll = COLLECT(exe, a.binaries, a.datas, name="Tamra")

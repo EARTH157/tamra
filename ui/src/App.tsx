@@ -1,4 +1,4 @@
-import { AlertTriangle, BookOpen, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { AlertTriangle, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { projectErrorText } from "./apiErrors";
@@ -7,6 +7,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import DeleteChatDialog from "./DeleteChatDialog";
 import { useT } from "./i18n";
 import IndexStatus from "./IndexStatus";
+import logo from "./logo.svg";
 import { NewProjectDialog, ProjectSettingsDialog } from "./ProjectDialog";
 import ProjectTree from "./ProjectTree";
 import { useProjects } from "./projects";
@@ -208,9 +209,7 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <span className="logo-tile">
-            <BookOpen size={17} />
-          </span>
+          <img className="logo-tile" src={logo} alt="" />
           <span className="brand-name">Tamra</span>
           <span className="brand-thai" lang="th">
             ตำรา
