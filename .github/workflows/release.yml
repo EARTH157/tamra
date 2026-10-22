@@ -1,0 +1,134 @@
+name: Release
+# Builds the installer and proves it: silent install, the installed exe's selfcheck, silent
+# uninstall. PR and manual runs keep it as an artifact; a v* tag publishes a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "scripts/build.ps1"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: uv sync --locked
+      - name: Read the version
+        id: version
+        run: |
+          $version = uv run python -c "import tamra; print(tamra.__version__)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: The tag matches the version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ($env:TAG -cne "v$env:VERSION") { throw "Tag $env:TAG does not match tamra.__version__ $env:VERSION (expected v$env:VERSION)" }
+      - name: Inno Setup
+        run: |
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") |
+              Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if ($iscc) { "Using $iscc"; exit 0 }
+          choco install innosetup --version=6.4.3 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the installer
+        run: ./scripts/build.ps1 -Installer
+      - name: Silent install
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $setup = "dist\Tamra-Setup-$env:VERSION.exe"
+          if (-not (Test-Path $setup)) { throw "$setup was not built" }
+          $env:INSTALL_DIR = "$env:RUNNER_TEMP\Tamra-install"
+          "INSTALL_DIR=$env:INSTALL_DIR" >> $env:GITHUB_ENV
+          $log = "$env:RUNNER_TEMP\install.log"
+          $p = Start-Process $setup -Wait -PassThru -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES",
+            "/NORESTART", "/CURRENTUSER", "/DIR=`"$env:INSTALL_DIR`"", "/LOG=`"$log`""
+          if ($p.ExitCode -ne 0 -or -not (Test-Path "$env:INSTALL_DIR\Tamra.exe")) {
+            Get-Content $log
+            throw "Setup exited with $($p.ExitCode); Tamra.exe installed: $(Test-Path "$env:INSTALL_DIR\Tamra.exe")"
+          }
+      - name: Selfcheck the installed exe
+        run: |
+          $report = "$env:RUNNER_TEMP\selfcheck.json"
+          $p = Start-Process "$env:INSTALL_DIR\Tamra.exe" -ArgumentList "selfcheck", "--report", $report -Wait -PassThru
+          if (-not (Test-Path $report)) { throw "No selfcheck report (exit code $($p.ExitCode))" }
+          Get-Content $report
+          if ($p.ExitCode -ne 0) { throw "Selfcheck exited with $($p.ExitCode)" }
+      - name: Silent uninstall
+        run: |
+          $log = "$env:RUNNER_TEMP\uninstall.log"
+          $p = Start-Process "$env:INSTALL_DIR\unins000.exe" -Wait -PassThru -ArgumentList "/VERYSILENT",
+            "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$log`""
+          # The uninstaller hands over to a copy of itself in %TEMP%, so wait for the files to go.
+          $deadline = (Get-Date).AddSeconds(120)
+          while ((Test-Path "$env:INSTALL_DIR\Tamra.exe") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+          if ($p.ExitCode -ne 0 -or (Test-Path "$env:INSTALL_DIR\Tamra.exe")) {
+            if (Test-Path $log) { Get-Content $log }
+            throw "Uninstall exited with $($p.ExitCode); Tamra.exe still there: $(Test-Path "$env:INSTALL_DIR\Tamra.exe")"
+          }
+      - name: Write the sha256
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $name = "Tamra-Setup-$env:VERSION.exe"
+          $hash = (Get-FileHash "dist\$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$PWD\dist\$name.sha256", "$hash  $name`n")
+          Get-Content "dist\$name.sha256"
+          "Installer size: $((Get-Item "dist\$name").Length) bytes"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tamra-Setup
+          path: |
+            dist/Tamra-Setup-${{ steps.version.outputs.version }}.exe
+            dist/Tamra-Setup-${{ steps.version.outputs.version }}.exe.sha256
+          if-no-files-found: error
+
+  release:
+    needs: installer
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Tamra-Setup
+          path: dist
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.installer.outputs.version }}
+        run: |
+          gh release create $env:TAG "dist/Tamra-Setup-$env:VERSION.exe" "dist/Tamra-Setup-$env:VERSION.exe.sha256" --generate-notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
