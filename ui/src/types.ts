@@ -201,6 +201,8 @@ export type ModelsInfo = {
   local: LocalModel[];
   uncatalogued: UncataloguedModel[];
   embedding: EmbeddingModel;
+  /** The reranker; null when the catalog has none. */
+  reranker: ModelStatus | null;
   /** The OCR model; null when the catalog has none. */
   ocr: ModelStatus | null;
 };

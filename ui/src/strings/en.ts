@@ -288,6 +288,9 @@ export const en = {
   "settings.searchModel": "Search model",
   "settings.searchModelHint":
     "Needed to search your documents. It always runs on this computer.",
+  "settings.rerankModel": "Result ranking",
+  "settings.rerankModelHint":
+    "Optional. Puts the passages that answer your question first, so answers cite the right source more often. Adds a few seconds per question. It always runs on this computer.",
   "settings.ocrModel": "Text recognition (OCR)",
   "settings.ocrModelHint":
     "Reads scanned PDF pages that have no text. It always runs on this computer.",

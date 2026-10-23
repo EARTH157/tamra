@@ -1,6 +1,7 @@
 import hashlib
 import time
 
+import numpy as np
 import pytest
 from docgen import make_pdf
 from fakes import FakeEmbedder, FakeLLM, FakeLocalLLM, FakeOcr, fake_spans
@@ -825,6 +826,54 @@ def test_a_broken_ocr_model_is_not_reloaded_until_it_is_installed_again(tmp_path
         c._model_installed("pp-ocrv5-mobile")  # downloaded again from Settings
         first = c.ocr_engine()
         assert first is not None and c.ocr_engine() is first and len(attempts) == 2
+    finally:
+        c.shutdown()
+
+
+class FakeReranker:
+    def __init__(self):
+        self.calls = []
+
+    def score(self, query, texts):
+        self.calls.append(texts)
+        return np.array([float(len(t)) for t in texts])  # longest passage first
+
+
+def test_the_reranker_is_not_loaded_while_it_is_not_installed(tmp_path):
+    c = make_core(tmp_path)  # the real factory: an empty models folder
+    try:
+        assert c.reranker() is None
+        assert c._rerank("q", ["a"]) is None
+    finally:
+        c.shutdown()
+
+
+def test_answers_use_the_reranker_once_it_is_installed(tmp_path):
+    reranker = FakeReranker()
+    c = make_core(tmp_path, reranker_factory=lambda: reranker)
+    try:
+        assert c._rerank("q", ["a", "bbb"]).tolist() == [1.0, 3.0]
+        assert reranker.calls == [["a", "bbb"]]
+        assert c.reranker() is reranker  # loaded once, then kept
+    finally:
+        c.shutdown()
+
+
+def test_a_broken_reranker_is_not_reloaded_until_it_is_installed_again(tmp_path):
+    attempts = []
+
+    def factory():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("damaged model file")
+        return FakeReranker()
+
+    c = make_core(tmp_path, reranker_factory=factory)
+    try:
+        assert c.reranker() is None
+        assert c._rerank("q", ["a"]) is None and len(attempts) == 1
+        c._model_installed("bge-reranker-v2-m3-int8")  # downloaded again from Settings
+        assert c.reranker() is not None and len(attempts) == 2
     finally:
         c.shutdown()
 

@@ -819,6 +819,7 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
                 }
             )
         embedding = catalog.embedding()
+        reranker = catalog.reranker()
         ocr = catalog.ocr()
         settings = core.settings
         # The local model that local mode would serve now; the same resolution LocalLLM uses.
@@ -843,6 +844,9 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
             "local": local,
             "uncatalogued": uncatalogued,
             "embedding": _entry_payload(embedding, embedding.id in installed, status[embedding.id]),
+            "reranker": None
+            if reranker is None
+            else _entry_payload(reranker, reranker.id in installed, status[reranker.id]),
             "ocr": None
             if ocr is None
             else _entry_payload(ocr, ocr.id in installed, status[ocr.id]),

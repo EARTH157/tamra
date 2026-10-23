@@ -552,6 +552,7 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
             "installed": False,
             **idle,
         },
+        "reranker": None,
         "ocr": {"id": "ocr", "name": "OCR", "size": len(OCR), "installed": False, **idle},
     }
     core.apply_settings({"mode": "api", "api_model": "claude-x"})

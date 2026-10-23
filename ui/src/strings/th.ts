@@ -286,6 +286,9 @@ export const th: Record<TranslationKey, string> = {
   "settings.searchModel": "โมเดลค้นหา",
   "settings.searchModelHint":
     "จำเป็นสำหรับการค้นหาในเอกสารของคุณ และทำงานบนเครื่องนี้เสมอ",
+  "settings.rerankModel": "จัดอันดับผลค้นหา",
+  "settings.rerankModelHint":
+    "ไม่บังคับ ช่วยดันข้อความที่ตอบคำถามได้ขึ้นมาก่อน คำตอบจึงอ้างแหล่งที่ถูกบ่อยขึ้น ใช้เวลาเพิ่มคำถามละไม่กี่วินาที ทำงานบนเครื่องนี้เสมอ",
   "settings.ocrModel": "อ่านข้อความจากภาพ (OCR)",
   "settings.ocrModelHint": "อ่านหน้า PDF ที่สแกนมาและไม่มีข้อความ ทำงานบนเครื่องนี้เสมอ",
   "settings.localModel": "โมเดลในเครื่อง",

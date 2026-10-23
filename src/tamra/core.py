@@ -34,6 +34,8 @@ from tamra.models.hardware import Hardware, detect
 from tamra.models.manager import ImportResult, ModelManager
 from tamra.ocr import MODEL_DIR as OCR_MODEL_DIR
 from tamra.ocr import OcrEngine
+from tamra.reranker import MODEL_DIR as RERANKER_MODEL_DIR
+from tamra.reranker import Reranker
 from tamra.settings import LinkedModel, Settings, load_settings, save_settings
 from tamra.store import Collection, FileRecord, MessageRecord, SourceRecord, Store
 from tamra.viewer import FileMissing, Unreadable, ViewerError, resolve_file
@@ -171,6 +173,7 @@ class Core:
         token_spans_factory: Callable[[], TokenSpans] | None = None,
         llm: LocalLLM | None = None,
         ocr_factory: Callable[[], OcrLike | None] | None = None,
+        reranker_factory: Callable[[], Reranker | None] | None = None,
         api_factory: Callable[[Settings, str], Provider] = _build_api_provider,
         catalog: Catalog | None = None,
         external_scan: Callable[[], list[ExternalModel]] | None = None,
@@ -178,7 +181,8 @@ class Core:
         debounce: float = 2.0,
         warm_attribution: bool = False,
     ):
-        """`llm` replaces the local runtime, `ocr_factory` the OCR models, and `api_factory`
+        """`llm` replaces the local runtime, `ocr_factory` the OCR models, `reranker_factory`
+        the reranker, and `api_factory`
         builds the API provider from the settings and the key; they exist so tests can use
         fakes, as does `external_scan` for the scan of other tools' model stores.
         `warm_attribution` embeds a new answer's sources in the background so the first
@@ -229,6 +233,10 @@ class Core:
         self._ocr: OcrLike | None = None
         self._ocr_failed = False  # the load raised: not tried again until the models are installed
         self._ocr_lock = threading.Lock()
+        self._reranker_factory = reranker_factory or self._load_reranker
+        self._reranker: Reranker | None = None
+        self._reranker_failed = False  # as _ocr_failed
+        self._reranker_lock = threading.Lock()
         self.indexer = Indexer(
             self.store, self.embedder, spans_factory, MODEL_ID, ocr=self.ocr_engine
         )
@@ -240,6 +248,7 @@ class Core:
             model_id=MODEL_ID,
             settings=answer_settings,
             on_saved=self._warm if warm_attribution else None,
+            rerank=self._rerank,
         )
 
     # --- settings and providers ---
@@ -480,10 +489,38 @@ class Core:
             return None
         return OcrEngine.load(self._models_dir / OCR_MODEL_DIR)
 
+    def reranker(self) -> Reranker | None:
+        """The reranker, loaded on first use and kept. None while it is not installed or cannot
+        be loaded; answers then keep the fused order. A reranker that failed to load is not tried
+        again until it is installed again or the app restarts."""
+        with self._reranker_lock:
+            if self._reranker is None and not self._reranker_failed:
+                try:
+                    self._reranker = self._reranker_factory()
+                except Exception as e:  # damaged or unreadable model files
+                    log.warning("the reranker cannot be loaded: %s", e)
+                    self._reranker_failed = True
+                else:
+                    if self._reranker is not None:
+                        log.info("the reranker is loaded")
+            return self._reranker
+
+    def _load_reranker(self) -> Reranker | None:
+        entry = self._catalog.reranker()
+        if entry is None or entry.id not in self._catalog.installed(self._models_dir):
+            return None
+        return Reranker.load(self._models_dir / RERANKER_MODEL_DIR)
+
+    def _rerank(self, query: str, texts: list[str]) -> np.ndarray | None:
+        reranker = self.reranker()
+        return None if reranker is None else reranker.score(query, texts)
+
     def _model_installed(self, model_id: str) -> None:
         """The search model arrived: files that paused for lack of it are indexed now. The OCR
-        models arrived: every file with pages left for OCR is read again, in every project."""
+        models arrived: every file with pages left for OCR is read again, in every project. The
+        reranker arrived: the next question loads it."""
         ocr = self._catalog.ocr()
+        reranker = self._catalog.reranker()
         if ocr is not None and model_id == ocr.id:
             with self._ocr_lock:
                 self._ocr_failed = False  # new files: load them on the next scanned page
@@ -491,6 +528,9 @@ class Core:
             self.indexer.request_reconcile()
         elif model_id == self._catalog.embedding().id:
             self.indexer.request_reconcile()
+        elif reranker is not None and model_id == reranker.id:
+            with self._reranker_lock:
+                self._reranker_failed = False
 
     def _embed_query(self, text: str) -> np.ndarray:
         return self.embedder().embed([text])[0]

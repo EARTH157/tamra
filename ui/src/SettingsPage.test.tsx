@@ -458,6 +458,36 @@ describe("AI model tab: local", () => {
     expect(text()).not.toContain("Text recognition (OCR)");
   });
 
+  it("shows the reranker row between search and OCR and downloads it after confirming", async () => {
+    const { calls } = await mountPage({
+      tab: "model",
+      models: modelsInfo({
+        reranker: embeddingModel({
+          id: "bge-reranker-v2-m3-int8",
+          name: "bge-reranker-v2-m3 (int8)",
+          size: 587_809_994,
+          installed: false,
+        }),
+      }),
+      routes: {
+        "POST /api/models/bge-reranker-v2-m3-int8/download": () =>
+          json({ status: "downloading" }, 202),
+      },
+    });
+    const heading = [...view!.container.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(heading.indexOf("Search model")).toBeLessThan(heading.indexOf("Result ranking"));
+    expect(heading.indexOf("Result ranking")).toBeLessThan(heading.indexOf("Text recognition (OCR)"));
+    await click(find('button[aria-label="Download bge-reranker-v2-m3 (int8)"]'));
+    expect(dialog()?.querySelector("h2")?.textContent).toBe("Download bge-reranker-v2-m3 (588 MB)?");
+    await click(buttonByText(dialog()!, "Download"));
+    expect(keys(calls)).toContain("POST /api/models/bge-reranker-v2-m3-int8/download");
+  });
+
+  it("shows no reranker row when the core has no reranker", async () => {
+    await mountPage({ tab: "model" });
+    expect(text()).not.toContain("Result ranking");
+  });
+
   it("says so when there is no dedicated GPU", async () => {
     await mountPage({
       tab: "model",

@@ -72,6 +72,7 @@ export function modelsInfo(over: Partial<ModelsInfo> = {}): ModelsInfo {
       },
     ],
     embedding: embeddingModel({}),
+    reranker: null,
     ocr: embeddingModel({ id: "pp-ocrv5-mobile", name: "PP-OCRv5 mobile", size: 29_366_176 }),
     ...over,
   };

@@ -13,7 +13,7 @@ from tamra.embedder import EmbedderUnavailable
 from tamra.llm.base import LLMError, Message, Provider
 from tamra.llm.llama_server import LlamaServerError
 from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
-from tamra.store import Collection, SourceRecord, Store
+from tamra.store import ChunkRecord, Collection, SourceRecord, Store
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +72,10 @@ class AnswerSettings:
     # below this best dense similarity: "not found" (M1 eval; docs/spikes/2026-10-m1-results.md)
     min_similarity: float = 0.43
     max_tokens: int = 1024
+    # fused candidates the reranker reorders before the top k are taken: each full chunk costs
+    # ~0.45 s on a CPU, and every eval hit was in the fused top 10
+    # (docs/spikes/2026-10-reranker-results.md)
+    rerank_candidates: int = 10
 
 
 def detect_language(text: str) -> str:
@@ -215,11 +219,16 @@ class AnswerService:
         model_id: str,
         settings: AnswerSettings | None = None,
         on_saved: Callable[[int], None] | None = None,
+        rerank: Callable[[str, list[str]], np.ndarray | None] | None = None,
     ):
         """on_saved(message_id) runs after a generated answer is saved, on the answering thread:
-        it must return quickly (start a thread for slow work). Its failures are only logged."""
+        it must return quickly (start a thread for slow work). Its failures are only logged.
+
+        rerank(query, texts) scores passages for the query, higher is better; it returns None
+        while the reranker is not installed, and the fused order is kept."""
         self._store = store
         self._embed_query = embed_query
+        self._rerank = rerank
         self._route = route
         self._model_id = model_id
         self._settings = settings or AnswerSettings()
@@ -275,15 +284,36 @@ class AnswerService:
         self, collection_ids: Sequence[int], vector: np.ndarray, query: str, k: int
     ) -> list[SourceRecord]:
         """The best k passages of these projects for the query, numbered from 1, best first.
-        None when even the best is not close enough: the "not found" gate of spec §6."""
+        None when even the best is not close enough: the "not found" gate of spec §6.
+
+        The gate uses the dense similarity of the fused hits; the reranker, when installed, only
+        reorders the top candidates."""
         hits = hybrid_search(self._store, collection_ids, vector, fts_query(query))
         if best_similarity(hits) < self._settings.min_similarity:
             return []
-        chunks = self._store.get_chunks([hit.chunk_id for hit in hits[:k]])
+        if self._rerank is None:
+            chunks = self._store.get_chunks([hit.chunk_id for hit in hits[:k]])
+        else:
+            n = max(k, self._settings.rerank_candidates)
+            chunks = self._reranked(query, self._store.get_chunks([h.chunk_id for h in hits[:n]]))
+            chunks = chunks[:k]
         return [
             SourceRecord(n, c.id, c.file_id, c.rel_path, c.text, c.location, c.file_hash)
             for n, c in enumerate(chunks, start=1)
         ]
+
+    def _reranked(self, query: str, chunks: list[ChunkRecord]) -> list[ChunkRecord]:
+        """chunks reordered by reranker score, best first; unchanged when the reranker is not
+        installed or fails (an answer from the fused order beats no answer)."""
+        try:
+            scores = self._rerank(query, [c.text for c in chunks]) if chunks else None
+        except Exception:
+            log.exception("reranking failed; the fused order is kept")
+            return chunks
+        if scores is None:
+            return chunks
+        order = sorted(range(len(chunks)), key=lambda i: -scores[i])  # stable: ties keep RRF order
+        return [chunks[i] for i in order]
 
     def ask(
         self,

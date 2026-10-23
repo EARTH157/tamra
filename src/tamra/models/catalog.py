@@ -20,7 +20,7 @@ class ModelFile:
 @dataclass(frozen=True)
 class ModelEntry:
     id: str
-    role: str  # "llm" | "embedding" | "ocr"
+    role: str  # "llm" | "embedding" | "reranker" | "ocr"
     name: str
     files: tuple[ModelFile, ...]
     tier: str | None = None  # llm only: "small" | "medium" | "large"
@@ -51,6 +51,10 @@ class Catalog:
     def ocr(self) -> ModelEntry | None:
         """The OCR models' entry; None for a catalog without one."""
         return next((m for m in self.models if m.role == "ocr"), None)
+
+    def reranker(self) -> ModelEntry | None:
+        """The reranker's entry; None for a catalog without one."""
+        return next((m for m in self.models if m.role == "reranker"), None)
 
     def get(self, model_id: str) -> ModelEntry:
         for m in self.models:

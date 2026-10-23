@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 from fakes import FakeEmbedder, FakeLLM
 
@@ -34,7 +35,7 @@ def env(tmp_path):
     ]
     store.replace_file_chunks(file_id, chunks, embedder.embed(texts), content_hash="h", note=None)
 
-    def make(llm, name="local", settings=None):
+    def make(llm, name="local", settings=None, rerank=None):
         def opened():
             return llm() if callable(llm) and not hasattr(llm, "generate") else llm
 
@@ -44,10 +45,70 @@ def env(tmp_path):
             lambda: Route(name, opened),
             model_id="m",
             settings=settings or AnswerSettings(min_similarity=0.3),
+            rerank=rerank,
         )
 
     yield store, make, store.create_chat(collection_id=collection.id)
     store.close()
+
+
+def _source_texts(events):
+    return [s["text"] for s in next(e for e in events if e["type"] == "sources")["sources"]]
+
+
+def test_the_reranker_reorders_the_fused_candidates(env):
+    _, make, chat = env
+    calls = []
+
+    def rerank(query, texts):
+        calls.append((query, texts))
+        return np.array([1.0 if "Parking" in t else 0.0 for t in texts])
+
+    events = list(make(FakeLLM(), rerank=rerank).ask(chat.id, "How long is the lease term?"))
+    assert _source_texts(events) == ["Parking costs fifty baht", "The lease term is three years"]
+    assert calls[0][0] == "How long is the lease term?"
+    assert sorted(calls[0][1]) == ["Parking costs fifty baht", "The lease term is three years"]
+
+
+def test_the_reranker_sees_at_most_rerank_candidates_and_the_top_k_are_kept(env):
+    _, make, chat = env
+    seen = []
+
+    def rerank(query, texts):
+        seen.append(len(texts))
+        return np.array([1.0 if "Parking" in t else 0.0 for t in texts])
+
+    settings = AnswerSettings(min_similarity=0.3, top_k=1, rerank_candidates=1)
+    events = list(make(FakeLLM(), settings=settings, rerank=rerank).ask(chat.id, "lease term?"))
+    assert seen == [1]  # max(top_k, rerank_candidates): only the best fused hit is scored
+    assert _source_texts(events) == ["The lease term is three years"]
+
+
+@pytest.mark.parametrize("failure", ["missing", "raises"])
+def test_answers_keep_the_fused_order_without_a_working_reranker(env, failure):
+    _, make, chat = env
+
+    def rerank(query, texts):
+        if failure == "raises":
+            raise RuntimeError("onnxruntime fell over")
+        return None  # not installed
+
+    events = list(make(FakeLLM(), rerank=rerank).ask(chat.id, "How long is the lease term?"))
+    assert _source_texts(events)[0] == "The lease term is three years"
+    assert events[-1]["type"] == "done"
+
+
+def test_the_not_found_gate_stays_on_the_dense_similarity(env):
+    _, make, chat = env
+    calls = []
+
+    def rerank(query, texts):
+        calls.append(texts)
+        return np.ones(len(texts))  # a reranker that likes everything changes nothing here
+
+    events = list(make(FakeLLM(), rerank=rerank).ask(chat.id, "ใครเป็นผู้จัดการฝ่ายขาย"))
+    assert events[1]["text"] == "ไม่พบข้อมูลนี้ในเอกสาร"
+    assert calls == []
 
 
 def test_an_answer_streams_sources_then_tokens_and_is_saved(env):
