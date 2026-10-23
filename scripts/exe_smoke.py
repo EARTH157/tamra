@@ -8,7 +8,8 @@ folder and a scratch models folder that holds only the embedding, reranker and O
 (hard-linked from .models), then:
 
 1. Imports the dev GGUF that fetch_assets.py downloads (qwen2.5-0.5b-instruct) through
-   POST /api/models/import, as an uncatalogued model, and selects it as the local model.
+   POST /api/models/import, which links it where it is (an LLM file on a fixed drive is not
+   copied) as an uncatalogued model, and selects it as the local model.
 2. Creates two projects, "Company" and "Contracts", from two sibling folders that hold six
    documents of the eval corpus, and waits for both to be indexed. Asks one question in each
    language and one off-topic question in chats that search both projects, and checks the
@@ -351,15 +352,22 @@ def last_answer(client: httpx.Client, chat_id: int) -> dict | None:
 
 
 def import_dev_model(client: httpx.Client, gguf: Path, report: dict, problems: list[str]) -> None:
-    """Import the dev GGUF as an uncatalogued model and select it as the local model."""
+    """Link the dev GGUF in place as an uncatalogued model and select it as the local model."""
     before = client.get("/api/models").json()
-    if any(m["installed"] for m in before["local"]) or before["uncatalogued"]:
-        problems.append("the scratch models folder was expected to hold no local model")
+    # Models found in Ollama, LM Studio or the Hugging Face cache are listed too; only Tamra's own
+    # (its models folder, or a link) would mean the scratch setup is not clean.
+    if any(m["source"] in {"tamra", "linked"} for m in before["local"] + before["uncatalogued"]):
+        problems.append("the scratch data was expected to hold no local model of Tamra's own")
     imported = client.post("/api/models/import", json={"path": str(gguf)}, timeout=300)
     if imported.status_code != 200:
         raise SystemExit(f"model import failed: {imported.status_code} {imported.text[:200]}")
     result = imported.json()
-    if result["catalogued"] or not result["warning"] or not result["id"].startswith("import:"):
+    if (
+        result["catalogued"]
+        or not result["linked"]
+        or not result["warning"]
+        or not result["id"].startswith("file:")
+    ):
         problems.append(f"unexpected import result: {result}")
     models = client.get("/api/models").json()
     if result["id"] not in {m["id"] for m in models["uncatalogued"]}:
