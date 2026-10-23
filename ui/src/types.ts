@@ -80,6 +80,8 @@ export type Locate = {
   page?: number;
   /** Fractions of the page, top-left origin: [x0, y0, x1, y1]. */
   rects?: number[][];
+  /** PDF only, when asked with a focus: where the focused text is in the passage, in the same form. */
+  focus_rects?: number[][];
   /** Text: 1-based lines; DOCX: paragraph indices. The end is exclusive. For a PDF, offsets in the page text. */
   start?: number;
   end?: number;
@@ -226,10 +228,14 @@ export type Settings = {
   text_size: TextSize;
   spacing: Spacing;
   ask_before_delete: boolean;
+  /** AI apps (MCP) may search every project while Tamra is open. */
+  mcp_enabled: boolean;
   api_key_set: boolean;
   api_key_hint: string | null;
   /** Where Tamra keeps its data (read-only; the core's `data_dir`). */
   data_dir: string;
+  /** How an AI app starts Tamra's MCP server: the command, then its arguments (read-only). */
+  mcp_command: string[];
 };
 
 /** The answer of POST /api/settings/test-connection (always 200). */
@@ -246,4 +252,6 @@ export type ImportResult = {
 };
 
 /** What PUT /api/settings accepts: any of the saved settings (never the key state or data_dir). */
-export type SettingsChanges = Partial<Omit<Settings, "api_key_set" | "api_key_hint" | "data_dir">>;
+export type SettingsChanges = Partial<
+  Omit<Settings, "api_key_set" | "api_key_hint" | "data_dir" | "mcp_command">
+>;

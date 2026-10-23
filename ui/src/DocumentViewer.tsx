@@ -5,8 +5,8 @@ import { errorText, viewerErrorText } from "./apiErrors";
 import Modal from "./Modal";
 import { type TranslationKey, useT } from "./i18n";
 import { cpToUtf16 } from "./offsets";
-import PdfPage from "./PdfPage";
-import { fileName, folderOf } from "./SourcePanel";
+import PdfPage, { useDragScroll, useWheelZoom } from "./PdfPage";
+import { answerFocus, fileName, folderOf } from "./SourcePanel";
 import type { Locate, Source, TextDoc, ViewerRequest } from "./types";
 
 /** The zoom steps of a PDF page, in percent. */
@@ -74,11 +74,13 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
   const title = useRef<HTMLHeadingElement>(null);
 
   const key = targetKey(target);
+  // As in the source panel: the selected answer text alone is marked where the passage has it.
+  const focus = target === initial ? answerFocus(request.selection) : undefined;
   useEffect(() => {
     let current = true;
     const range =
       target.start === null || target.end === null ? undefined : { start: target.start, end: target.end };
-    locateSource(request.messageId, target.n, range)
+    locateSource(request.messageId, target.n, range, focus)
       .then((located) => {
         if (current) setResult({ key, located, error: null });
       })
@@ -88,7 +90,7 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
     return () => {
       current = false;
     };
-  }, [request.messageId, target.n, target.start, target.end, key, t]);
+  }, [request.messageId, target.n, target.start, target.end, focus, key, t]);
 
   const state = result?.key === key ? result : null;
   const located = state?.located ?? null;
@@ -127,6 +129,11 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
   }
 
   const zoomAt = ZOOM_STEPS.indexOf(zoom);
+  const stage = useRef<HTMLDivElement>(null);
+  useDragScroll(stage);
+  useWheelZoom(stage, (by) => {
+    if (isPdf) setZoom(ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, zoomAt + by))]);
+  });
   const folder = folderOf(target.file);
 
   return (
@@ -241,7 +248,7 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
           )}
           {located?.found && <p className="viewer-note">{t("viewer.note")}</p>}
         </div>
-        <div className="viewer-stage">
+        <div className="viewer-stage" ref={stage}>
           {openError && (
             <div className="chat-error" role="alert">
               <span>
@@ -277,7 +284,14 @@ export default function DocumentViewer({ request, sources, onClose }: Props) {
               file={fileName(target.file)}
               page={page}
               zoom={zoom}
-              highlight={located.found && located.page ? { page: located.page, rects: located.rects ?? [] } : null}
+              highlight={
+                located.found && located.page
+                  ? {
+                      page: located.page,
+                      rects: located.focus_rects?.length ? located.focus_rects : (located.rects ?? []),
+                    }
+                  : null
+              }
             />
           )}
           {located && !isPdf && (

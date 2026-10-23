@@ -6,6 +6,7 @@ import pytest
 import webview
 
 from tamra import app
+from tamra.discovery import read_discovery
 from tamra.logs import shutdown_logging
 from tamra.net import free_port
 
@@ -18,6 +19,17 @@ class FakeWindow:
     def create_file_dialog(self, kind):
         self.kinds.append(kind)
         return self.result
+
+
+def test_the_window_lets_text_be_selected(monkeypatch):
+    made = {}
+    monkeypatch.setattr(
+        webview, "create_window", lambda *a, **k: made.update(k) or FakeWindow(None)
+    )
+    monkeypatch.setattr(webview, "start", lambda **k: None)
+    app._show_window(8765, "t", app.FolderPicker())
+    # pywebview's default (False) makes the whole page unselectable, which breaks "Check source".
+    assert made["text_select"] is True
 
 
 def test_the_window_shows_the_tamra_icon(monkeypatch):
@@ -147,3 +159,42 @@ def test_run_refuses_a_second_instance(monkeypatch, tmp_path):
             app.run(dev=True)
     finally:
         app._close_handle(held)
+
+
+class FakeCore:
+    def start(self):
+        pass
+
+    def shutdown(self):
+        pass
+
+
+def test_serve_publishes_the_mcp_port_and_token_only_while_it_runs(monkeypatch, tmp_path):
+    monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path))
+    port = free_port()
+    monkeypatch.setattr(app, "DEV_PORT", port)
+    monkeypatch.setattr(app, "build_core", FakeCore)
+    real_create_app = app.create_app
+    monkeypatch.setattr(
+        app,
+        "create_app",
+        lambda token, ui_dir, core, **options: real_create_app(
+            token, ui_dir, mcp_token=options["mcp_token"]
+        ),
+    )
+    seen = {}
+
+    def while_running(port_, token, thread):
+        seen["published"] = read_discovery(tmp_path)
+        seen["ui_token"] = token
+
+    monkeypatch.setattr(app, "_wait_in_dev_mode", while_running)
+    try:
+        app._serve(True, "dev-token")
+    finally:
+        shutdown_logging()
+    published_port, mcp_token = seen["published"]
+    assert published_port == port
+    assert len(mcp_token) >= 32
+    assert mcp_token != seen["ui_token"]
+    assert read_discovery(tmp_path) is None  # removed at shutdown

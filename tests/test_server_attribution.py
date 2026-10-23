@@ -379,6 +379,14 @@ def test_locate_a_pdf_passage_with_rects(env, client):
         assert len(rect) == 4 and all(0.0 <= v <= 1.0 for v in rect)
         assert rect[0] < rect[2] and rect[1] < rect[3]
     assert body["start"] < body["end"]
+    assert "focus_rects" not in body
+
+    focused = locate(client, message_id, 1, focus="TEN years").json()
+    assert len(focused["focus_rects"]) == 1
+    (fx0, _, fx1, _), (x0, _, x1, _) = focused["focus_rects"][0], body["rects"][0]
+    assert x0 < fx0 < fx1 < x1  # the words sit inside the passage's line
+    assert locate(client, message_id, 1, focus="A second line").json()["focus_rects"] == []
+    assert locate(client, message_id, 1, focus="x" * 2001).status_code == 422
 
 
 SCANNED = "The boiler warranty lasts ten years from purchase."

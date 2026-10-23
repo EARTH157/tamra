@@ -1,5 +1,5 @@
-import { AlertTriangle, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, Plug, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { projectErrorText } from "./apiErrors";
 import ChatView from "./ChatView";
@@ -7,13 +7,13 @@ import ConfirmDialog from "./ConfirmDialog";
 import DeleteChatDialog from "./DeleteChatDialog";
 import { useT } from "./i18n";
 import IndexStatus from "./IndexStatus";
-import logo from "./logo.svg";
 import { NewProjectDialog, ProjectSettingsDialog } from "./ProjectDialog";
 import ProjectTree from "./ProjectTree";
 import { useProjects } from "./projects";
 import SettingsPage from "./SettingsPage";
 import { useSettings } from "./settings";
 import Setup from "./Setup";
+import Splitter from "./Splitter";
 import type { Chat, SettingsTab } from "./types";
 import Welcome from "./Welcome";
 
@@ -24,6 +24,11 @@ type Dialog =
   // Change folder, from the project's menu or from its settings (which come back afterwards).
   | { kind: "folder"; id: number; from: "menu" | "settings" }
   | { kind: "deleteProject"; id: number };
+
+/** The sidebar's width at start, and how narrow and wide it can be dragged, in CSS pixels. */
+export const SIDEBAR_WIDTH = 260;
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 480;
 
 export default function App() {
   const t = useT();
@@ -39,6 +44,8 @@ export default function App() {
   const [deleting, setDeleting] = useState<Chat | null>(null);
   // The chat stays mounted (but hidden) while Settings is open, so a streaming answer carries on.
   const [view, setView] = useState<"chat" | "settings">("chat");
+  // shortcut: kept for this run only; save it in settings if people want it to stay.
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
 
   // Bumped when a chat is changed here (renamed, moved, new scope). A reload of the list that was
@@ -206,10 +213,14 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
       <aside className="sidebar">
         <div className="brand">
-          <img className="logo-tile" src={logo} alt="" />
+          {/* The logo's glyph (no tile), as in the Figma lockup; the brackets follow the theme's text. */}
+          <svg className="brand-mark" viewBox="-6.41 -6.41 76 76" fill="none" strokeWidth={6.65} aria-hidden="true">
+            <path d="M18.29 3.33H3.33V59.85H18.29M44.89 3.33H59.85V59.85H44.89" stroke="currentColor" />
+            <path d="M19.95 19.95H43.23M31.59 19.95V48.21" stroke="var(--logo-t)" />
+          </svg>
           <span className="brand-name">Tamra</span>
           <span className="brand-thai" lang="th">
             ตำรา
@@ -248,6 +259,12 @@ export default function App() {
             onOpenModelSettings={() => openSettings("model")}
           />
         )}
+        {settings.mcp_enabled && (
+          <button type="button" className="sidebar-mcp" onClick={() => openSettings("general")}>
+            <Plug size={14} />
+            {t("mcp.badge")}
+          </button>
+        )}
         <button
           type="button"
           className="sidebar-settings"
@@ -258,6 +275,15 @@ export default function App() {
           {t("settings.open")}
         </button>
       </aside>
+      <Splitter
+        label={t("app.resizeSidebar")}
+        orientation="vertical"
+        size={sidebarWidth}
+        min={SIDEBAR_MIN}
+        max={() => Math.min(SIDEBAR_MAX, window.innerWidth / 3)}
+        grow={1}
+        onResize={setSidebarWidth}
+      />
       <main className="main">
         {offline ? (
           <div className="banner" role="alert">

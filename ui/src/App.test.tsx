@@ -335,6 +335,20 @@ describe("Settings in the app", () => {
     ).toBe("AI model");
   });
 
+  it("shows that AI apps can search while access is on, and opens General from it", async () => {
+    await mountWithSettings({ mcp_enabled: true });
+    await click(buttonByText(view!.container, "AI apps can search"));
+    expect(view!.container.querySelector(".settings")).not.toBeNull();
+    expect(
+      view!.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
+    ).toBe("General");
+  });
+
+  it("shows no AI apps badge while access is off", async () => {
+    await mountWithSettings();
+    expect(buttonByText(view!.container, "AI apps can search")).toBeUndefined();
+  });
+
   it("deletes a chat without asking when the setting is off", async () => {
     const calls = await mountWithSettings(
       { ask_before_delete: false },

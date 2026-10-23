@@ -13,7 +13,7 @@ from tamra.embedder import EmbedderUnavailable
 from tamra.llm.base import LLMError, Message, Provider
 from tamra.llm.llama_server import LlamaServerError
 from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
-from tamra.store import SourceRecord, Store
+from tamra.store import Collection, SourceRecord, Store
 
 log = logging.getLogger(__name__)
 
@@ -188,6 +188,23 @@ def build_messages(
     return messages
 
 
+class StaleIndex(Exception):
+    """Every project to search was indexed with another embedding model (spec §5)."""
+
+    def __init__(self, names: list[str]):
+        super().__init__(", ".join(names))
+        self.names = names
+
+
+class NothingIndexed(Exception):
+    """None of the projects to search has an indexed file yet. `skipped` names the stale
+    projects that were left out, so the caller can say why."""
+
+    def __init__(self, skipped: list[str]):
+        super().__init__("no indexed documents")
+        self.skipped = skipped
+
+
 class AnswerService:
     def __init__(
         self,
@@ -239,6 +256,35 @@ class AnswerService:
             action()
         return True
 
+    def searchable(self, collections: Sequence[Collection]) -> tuple[list[Collection], list[str]]:
+        """The projects to search, and the names of the stale ones left out: a project indexed
+        with another embedding model is never searched (spec §5, §6).
+
+        Raises StaleIndex when every project is stale, and NothingIndexed when none of the others
+        has an indexed file (also when there is no project at all).
+        """
+        searched = [c for c in collections if c.embedding_model_id == self._model_id]
+        skipped = [c.name for c in collections if c not in searched]
+        if collections and not searched:
+            raise StaleIndex(skipped)
+        if not any(self._store.status_counts(c.id)["indexed"] for c in searched):
+            raise NothingIndexed(skipped)
+        return searched, skipped
+
+    def passages(
+        self, collection_ids: Sequence[int], vector: np.ndarray, query: str, k: int
+    ) -> list[SourceRecord]:
+        """The best k passages of these projects for the query, numbered from 1, best first.
+        None when even the best is not close enough: the "not found" gate of spec §6."""
+        hits = hybrid_search(self._store, collection_ids, vector, fts_query(query))
+        if best_similarity(hits) < self._settings.min_similarity:
+            return []
+        chunks = self._store.get_chunks([hit.chunk_id for hit in hits[:k]])
+        return [
+            SourceRecord(n, c.id, c.file_id, c.rel_path, c.text, c.location, c.file_hash)
+            for n, c in enumerate(chunks, start=1)
+        ]
+
     def ask(
         self,
         chat_id: int,
@@ -282,20 +328,18 @@ class AnswerService:
         # The chat's scope; an empty one falls back to its home project. A chat with neither
         # searches nothing: it never reaches every project implicitly.
         wanted = chat.scope or ([chat.collection_id] if chat.collection_id is not None else [])
-        in_scope = [c for c in collections if c.id in wanted]
-        # A project indexed with another embedding model is never searched.
-        searched = [c for c in in_scope if c.embedding_model_id == self._model_id]
-        skipped = [c.name for c in in_scope if c not in searched]
-        if in_scope and not searched:
+        try:
+            searched, skipped = self.searchable([c for c in collections if c.id in wanted])
+        except StaleIndex as e:
             yield {
                 "type": "error",
-                "message": f"The index of {', '.join(skipped)} was built with a different "
+                "message": f"The index of {', '.join(e.names)} was built with a different "
                 "embedding model. Rebuild the index.",
             }
             return
-        if not any(self._store.status_counts(c.id)["indexed"] for c in searched):
-            if skipped:  # say why those projects were left out, not only that nothing is ready
-                yield {"type": "notice", "code": "stale_projects", "names": skipped}
+        except NothingIndexed as e:
+            if e.skipped:  # say why those projects were left out, not only that nothing is ready
+                yield {"type": "notice", "code": "stale_projects", "names": e.skipped}
             yield {
                 "type": "error",
                 "message": "No documents are indexed yet. Wait for indexing to finish, "
@@ -316,10 +360,11 @@ class AnswerService:
             yield event
             return
         self._store.add_user_message(chat_id, question)
-        hits = hybrid_search(self._store, [c.id for c in searched], vector, fts_query(query))
+        budget = self._settings.top_k if route.name == "local" else self._settings.api_top_k
+        sources = self.passages([c.id for c in searched], vector, query, budget)
         if skipped:
             yield {"type": "notice", "code": "stale_projects", "names": skipped}
-        if best_similarity(hits) < self._settings.min_similarity:
+        if not sources:
             text = NOT_FOUND[language]
             message_id = self._store.add_assistant_message(
                 chat_id, text, provider=None, model=None, sources=[]
@@ -328,12 +373,6 @@ class AnswerService:
             yield {"type": "token", "text": text}
             yield {"type": "done", "message_id": message_id}
             return
-        budget = self._settings.top_k if route.name == "local" else self._settings.api_top_k
-        chunks = self._store.get_chunks([hit.chunk_id for hit in hits[:budget]])
-        sources = [
-            SourceRecord(n, c.id, c.file_id, c.rel_path, c.text, c.location, c.file_hash)
-            for n, c in enumerate(chunks, start=1)
-        ]
         yield {"type": "sources", "sources": source_payloads(self._store, sources)}
         if mode == "search":  # passages only: no model is involved, so none is recorded
             message_id = self._store.add_assistant_message(

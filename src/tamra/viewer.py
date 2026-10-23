@@ -211,6 +211,29 @@ def locate(doc: ParsedDoc, passage: str, hint: dict | None = None) -> Found | No
     return _to_found(doc, units, first, last)
 
 
+def find_within(doc: ParsedDoc, found: Found, part: str) -> list[tuple[int, int]]:
+    """Page-text spans of every occurrence of `part` inside a passage located on a PDF page.
+
+    Matched like `locate` (case and whitespace folded), but any length counts: the passage itself
+    tells which occurrences are meant.
+    """
+    needle = _fold(part).strip()
+    if doc.kind != "pdf" or not needle:
+        return []
+    spans = []
+    for unit in doc.units:
+        if unit.page != found.page:
+            continue
+        text = _Normalized(unit.text)
+        at = text.text.find(needle)
+        while at >= 0:
+            start, end = text.span(at, at + len(needle))
+            if found.start <= unit.char + start and unit.char + end <= found.end:
+                spans.append((unit.char + start, unit.char + end))
+            at = text.text.find(needle, at + 1)
+    return spans
+
+
 def _search_forward(units: _Units, part: str, cursor: _Match, spread: int) -> _Match | None:
     """The part after `cursor`: ahead within `spread` units if long, else only right beside it."""
     index, _, end = cursor

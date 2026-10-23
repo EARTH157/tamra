@@ -343,3 +343,10 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
   queue with progress, and batching. Measure in M0.
 - **Trigram FTS** cannot match queries shorter than 3 characters. Dense search still covers
   these.
+
+## 15. AI apps (MCP)
+
+`Tamra.exe mcp` is a stdio MCP server that lets Claude Desktop, Claude Code and other MCP apps
+search the user's projects while Tamra is open. It is off by default (Settings > General > AI apps)
+and offers two read-only tools, `list_projects` and `search`. Design:
+`docs/superpowers/specs/2026-10-22-tamra-mcp-design.md`.

@@ -9,6 +9,7 @@ export const th: Record<TranslationKey, string> = {
   "common.retry": "ลองอีกครั้ง",
 
   "app.newChat": "แชทใหม่",
+  "app.resizeSidebar": "ปรับความกว้างแถบด้านข้าง",
   "app.projects": "โปรเจกต์",
   "app.newProject": "โปรเจกต์ใหม่",
   "app.noProjects": "ยังไม่มีโปรเจกต์ เพิ่มโฟลเดอร์เอกสารเพื่อเริ่มต้นใช้งาน",
@@ -101,13 +102,17 @@ export const th: Record<TranslationKey, string> = {
   "chat.cite": "แหล่งที่มา {n}",
   "chat.sourcePanel": "แหล่งที่มา",
   "chat.closeSource": "ปิดแหล่งที่มา",
+  "chat.resizeSource": "ปรับความกว้างแผงแหล่งที่มา",
   "chat.checkSource": "ตรวจสอบแหล่งที่มา",
   "source.open": "เปิดไฟล์",
   "source.compare": "เปรียบเทียบ",
+  "source.resizeCompare": "ปรับขนาดช่องเปรียบเทียบกับหน้าเอกสาร",
   "source.answer": "คำตอบ",
   "source.document": "เอกสาร",
   "source.strong": "ตรงกันมาก",
   "source.partial": "ตรงกันบางส่วน",
+  "source.selectHint": "ลากคลุมคำในช่องนี้เพื่อทำเครื่องหมายบนหน้าเอกสาร",
+  "source.focusNotFound": "ไม่พบคำที่เลือกในข้อความส่วนนี้บนหน้าเอกสาร",
   "source.matchOf": "{index} จาก {count}",
   "source.previous": "ผลลัพธ์ก่อนหน้า",
   "source.next": "ผลลัพธ์ถัดไป",
@@ -258,6 +263,19 @@ export const th: Record<TranslationKey, string> = {
   "settings.deleteAllText.one":
     "แชทนี้จะถูกลบออกจากคอมพิวเตอร์เครื่องนี้ เอกสารของคุณจะไม่ถูกแก้ไข",
   "settings.footer": "Tamra · pre-alpha · สัญญาอนุญาต Apache-2.0",
+  "settings.mcp": "แอป AI (MCP)",
+  "settings.mcpEnable": "ให้แอป AI ค้นหาเอกสารของฉัน",
+  "settings.mcpHint":
+    "Claude Desktop, Claude Code และแอป MCP อื่น ๆ ค้นหาได้ทุกโปรเจกต์ขณะที่ Tamra เปิดอยู่",
+  "settings.mcpWarning":
+    "ข้อความที่แอปเหล่านี้ค้นพบจะถูกส่งให้โมเดล AI ของแอปนั้น ซึ่งอาจทำงานบนคลาวด์ ไฟล์ของคุณและดัชนีการค้นหายังอยู่ในคอมพิวเตอร์เครื่องนี้",
+  "settings.mcpSetup": "เชื่อมต่อแอป",
+  "settings.mcpSetupHint":
+    "วางใน claude_desktop_config.json ของ Claude Desktop หรือใน .mcp.json ในโฟลเดอร์งานสำหรับ Claude Code",
+  "settings.mcpCopy": "คัดลอกการตั้งค่า",
+  "settings.mcpCopied": "คัดลอกแล้ว",
+  "settings.mcpCopyFailed": "คัดลอกไปยังคลิปบอร์ดไม่ได้ คัดลอกการตั้งค่าด้านล่างแทน",
+  "mcp.badge": "แอป AI ค้นหาได้",
 
   "settings.aiMode": "โหมด AI",
   "settings.modeLocal": "โมเดลในเครื่อง",

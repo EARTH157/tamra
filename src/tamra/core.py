@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from tamra import secrets
-from tamra.answer import AnswerService, AnswerSettings, Route
+from tamra.answer import AnswerService, AnswerSettings, Route, source_payloads
 from tamra.attribution import Attributor, Match
 from tamra.drives import is_removable
 from tamra.embedder import MODEL_ID, Embedder, EmbedderUnavailable
@@ -69,6 +69,24 @@ class FolderMissing(ValueError):
 
 class FolderNotAllowed(ValueError):
     """A whole drive or share, or a folder that holds or lies inside Tamra's own folders."""
+
+
+class NoProjects(LookupError):
+    """There is no project to search."""
+
+
+class UnknownProject(LookupError):
+    """A project name that matches no project."""
+
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.name = name
+
+
+def _nocase(name: str) -> str:
+    """The name as SQLite's NOCASE compares it, folding only A-Z: the store keeps project names
+    unique that way, so at most one project matches."""
+    return "".join(c.lower() if c.isascii() else c for c in name)
 
 
 MAX_PROJECT_NAME = 80
@@ -679,6 +697,34 @@ class Core:
             self.indexer.forget(collection_id)
             self._forget_documents(file_ids)
         return outcome[0]
+
+    def search(self, query: str, names: list[str] | None, k: int) -> tuple[list[dict], list[str]]:
+        """The best k passages for an AI app (MCP spec §5), as `source_payloads` builds them,
+        and the names of the stale projects left out. `names` limits the search to those
+        projects (matched ignoring case); None searches every project. Nothing is saved.
+
+        Raises NoProjects, UnknownProject, StaleIndex, NothingIndexed or EmbedderUnavailable.
+        """
+        collections = self.store.list_collections()
+        if not collections:
+            raise NoProjects("no projects")
+        if names is not None:
+            by_name = {_nocase(c.name): c for c in collections}
+            chosen: list[Collection] = []
+            for name in names:
+                collection = by_name.get(_nocase(name))
+                if collection is None:
+                    raise UnknownProject(name)
+                if collection not in chosen:
+                    chosen.append(collection)
+            collections = chosen
+        searched, skipped = self.answers.searchable(collections)
+        sources = self.answers.passages(
+            [c.id for c in searched], self._embed_query(query), query, k
+        )
+        # Counts only: the query and the passages never go to the log.
+        log.info("mcp search: %d project(s), k=%d, %d passage(s)", len(searched), k, len(sources))
+        return source_payloads(self.store, sources), skipped
 
     def _checked_folder(self, folder: str, excluding: int | None = None) -> Path:
         """The resolved folder, if it exists, is not a whole drive or one of Tamra's own folders,
