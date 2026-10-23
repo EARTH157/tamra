@@ -1,5 +1,5 @@
 import { FileText, Info, Lightbulb, SearchX, X } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import AnswerText, { type Highlight } from "./AnswerText";
 import { api, attribute, streamAnswer } from "./api";
 import { attributionErrorText, errorText, projectErrorText } from "./apiErrors";
@@ -13,6 +13,7 @@ import { isNotFound } from "./notFound";
 import { utf16ToCp } from "./offsets";
 import { MIN_SELECTION, type Selected, sentenceBefore } from "./selection";
 import { useSettings } from "./settings";
+import Splitter from "./Splitter";
 import SourcePanel, {
   type Check,
   fileName,
@@ -93,6 +94,12 @@ function reopen(source: Source, saved: ChatDetail | null): Opened | null {
   return answer && same ? { owner: answer.id, source: same } : null;
 }
 
+/** The source panel's width at start, and how narrow it can be dragged, in CSS pixels. */
+export const PANEL_WIDTH = 520;
+const PANEL_MIN = 320;
+/** How narrow the chat can get as the source panel is dragged wider; the panel's CSS says it too. */
+const CHAT_MIN = 400;
+
 /** One chat: its messages, the answer being streamed, the question box, and a source panel. */
 export default function ChatView({
   chatId,
@@ -124,6 +131,8 @@ export default function ChatView({
   const [viewer, setViewer] = useState<ViewerRequest | null>(null);
   // A selection being checked against the sources of its answer. It and `opened` are never both set.
   const [check, setCheck] = useState<Check | null>(null);
+  const [panelWidth, setPanelWidth] = useState(PANEL_WIDTH);
+  const view = useRef<HTMLDivElement>(null);
   const checkSeq = useRef(0); // a check that was replaced or closed is ignored when it answers
   // The CPU-fallback line is shown until dismissed, then not again while the app stays open.
   const [cpuNoticeDismissed, setCpuNoticeDismissed] = useState(false);
@@ -416,7 +425,7 @@ export default function ChatView({
   const panelMessage = messages.find((message) => message.id === panelOwner);
 
   return (
-    <div className="chat-view">
+    <div className="chat-view" ref={view} style={{ "--panel-width": `${panelWidth}px` } as CSSProperties}>
       <div className="chat-column">
         <div className="messages" ref={scroller}>
           {empty && (
@@ -552,6 +561,17 @@ export default function ChatView({
           }
         />
       </div>
+      {(check || opened) && (
+        <Splitter
+          label={t("chat.resizeSource")}
+          orientation="vertical"
+          size={panelWidth}
+          min={PANEL_MIN}
+          max={() => (view.current?.clientWidth ?? 1000) - CHAT_MIN}
+          grow={-1}
+          onResize={setPanelWidth}
+        />
+      )}
       {(check || opened) && (
         <SourcePanel
           sources={panelMessage?.sources ?? []}

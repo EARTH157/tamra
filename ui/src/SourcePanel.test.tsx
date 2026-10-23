@@ -1,8 +1,8 @@
 import { act, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fitScale } from "./PdfPage";
-import SourcePanel, { type Check } from "./SourcePanel";
-import { buttonByText, click, json, type Mounted, mockFetch, mount, settle } from "./test-utils";
+import SourcePanel, { answerFocus, type Check } from "./SourcePanel";
+import { buttonByText, click, json, type Mounted, mockFetch, mount, press, settle } from "./test-utils";
 import type { Match, Source } from "./types";
 
 let view: Mounted | undefined;
@@ -95,8 +95,9 @@ const locatePdf = {
   end: 10,
   rects: [[0.1, 0.2, 0.6, 0.25]],
 };
-const locateUrl = (n: number, m: Match) =>
-  `GET /api/sources/4/${n}/locate?start=${m.start}&end=${m.end}`;
+// A check's selection goes along, so the page can mark just those words.
+const locateUrl = (n: number, m: Match, selection = "The lease runs three years") =>
+  `GET /api/sources/4/${n}/locate?start=${m.start}&end=${m.end}&${new URLSearchParams({ focus: selection })}`;
 const notFound = { file_id: 7, kind: "pdf", changed: false, found: false, page_count: 32 };
 const png = () => new Response(new Blob(["png"], { type: "image/png" }));
 const pageRoute = (page: number, scale = 1) => `GET /api/files/7/pages/${page}?scale=${scale}`;
@@ -327,6 +328,116 @@ describe("SourcePanel", () => {
     expect(zoomOut().disabled).toBe(false);
     const pages = calls.map((c) => c.key).filter((key) => key.includes("/pages/"));
     expect(pages).toEqual([pageRoute(14, 0.75), pageRoute(14, 1), pageRoute(14, 1.5), pageRoute(14, 2)]);
+  });
+
+  it("zooms with Ctrl + mouse wheel and leaves a plain wheel to scroll", async () => {
+    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf), ...pageRoutes, [pageRoute(14, 1.25)]: png });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    const body = view.container.querySelector(".source-body")!;
+    const readout = () => view!.container.querySelector(".source-zoom .viewer-readout")?.textContent;
+    const wheel = async (deltaY: number, ctrlKey: boolean) => {
+      const event = new WheelEvent("wheel", { deltaY, ctrlKey, bubbles: true, cancelable: true });
+      await act(async () => body.querySelector(".pdf-page")!.dispatchEvent(event));
+      await settle();
+      return event.defaultPrevented;
+    };
+    expect(await wheel(-100, false)).toBe(false);
+    expect(readout()).toBe("100%");
+    expect(await wheel(-100, true)).toBe(true);
+    expect(readout()).toBe("125%");
+    expect(await wheel(20, true)).toBe(true); // a small pinch step: not yet a zoom step
+    expect(readout()).toBe("125%");
+    expect(await wheel(100, true)).toBe(true);
+    expect(readout()).toBe("100%");
+    await wheel(100, true); // already the smallest
+    expect(readout()).toBe("100%");
+  });
+
+  it("scrolls when the page is dragged with the mouse, and sizes Compare from its bar", async () => {
+    mockFetch({ [locateUrl(1, match)]: () => json(locatePdf), ...pageRoutes });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    const panel = view.container.querySelector(".source-panel")!;
+    const body = panel.querySelector<HTMLElement>(".source-body")!;
+    body.scrollLeft = 50;
+    body.scrollTop = 80;
+    const pointer = (target: EventTarget, type: string, x: number, y: number) =>
+      act(async () => {
+        const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+        target.dispatchEvent(Object.assign(event, { pointerType: "mouse" }));
+      });
+    await pointer(panel.querySelector(".pdf-page img")!, "pointerdown", 100, 100);
+    expect(body.classList.contains("panning")).toBe(true);
+    await pointer(window, "pointermove", 70, 40); // dragged up and left: the view moves right and down
+    expect([body.scrollLeft, body.scrollTop]).toEqual([80, 140]);
+    await pointer(window, "pointerup", 70, 40);
+    expect(body.classList.contains("panning")).toBe(false);
+
+    const compare = panel.querySelector<HTMLElement>(".compare")!;
+    const bar = panel.querySelector<HTMLElement>('[role="separator"]')!;
+    expect(bar.getAttribute("aria-label")).toBe("Resize Compare and the page");
+    expect(compare.classList.contains("sized")).toBe(false);
+    await press(bar, "Home");
+    expect(compare.classList.contains("sized")).toBe(true);
+    expect(compare.style.height).toBe("100px");
+  });
+
+  it("marks just the selected answer words when the passage has them word for word", async () => {
+    mockFetch({
+      [locateUrl(1, match, "MATLAB")]: () => json({ ...locatePdf, focus_rects: [[0.3, 0.2, 0.4, 0.25]] }),
+      ...pageRoutes,
+    });
+    view = await mount(<SourcePanel {...base} check={check({ selection: "MATLAB [1]" })} />);
+    const boxes = [...view.container.querySelectorAll<HTMLElement>(".source-panel .pdf-hit")];
+    expect(boxes.map((box) => box.style.left)).toEqual(["30%"]);
+  });
+
+  it("strips citations from the answer text it looks for", () => {
+    expect(answerFocus("Deploy via MATLAB [1] and Simulink [2, 3].")).toBe("Deploy via MATLAB   and Simulink  .");
+    expect(answerFocus(" [4] ")).toBeUndefined();
+    expect(answerFocus(null)).toBeUndefined();
+  });
+
+  it("marks only the words selected in Compare on the page, and goes back on a click", async () => {
+    const focusUrl = locateUrl(1, match, "three years");
+    const calls = mockFetch({
+      [locateUrl(1, match)]: () => json(locatePdf),
+      [focusUrl]: () => json({ ...locatePdf, focus_rects: [[0.3, 0.2, 0.4, 0.25]] }),
+      [locateUrl(1, match, "Rent")]: () => json({ ...locatePdf, focus_rects: [] }),
+      ...pageRoutes,
+    });
+    view = await mount(<SourcePanel {...base} check={check()} />);
+    const panel = view.container.querySelector(".source-panel")!;
+    const documentText = panel.querySelectorAll(".compare-text")[1];
+    const select = async (from: number, to: number) => {
+      const text = documentText.firstChild!;
+      const range = document.createRange();
+      range.setStart(text, from);
+      range.setEnd(text, to);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      await act(async () => documentText.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+      await settle();
+    };
+    const lefts = () => [...panel.querySelectorAll<HTMLElement>(".pdf-hit")].map((box) => box.style.left);
+    expect(lefts()).toEqual(["10%"]);
+    const at = match.text.indexOf("three years");
+    await select(at, at + "three years".length);
+    expect(calls.map((c) => c.key)).toContain(focusUrl);
+    expect(lefts()).toEqual(["30%"]);
+    expect(panel.textContent).not.toContain("not in this passage");
+    await select(0, 0); // a click
+    expect(lefts()).toEqual(["10%"]);
+    // Words that are not in the passage on the page: the passage stays marked, and it says so.
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      anchorNode: documentText,
+      focusNode: documentText,
+      toString: () => " Rent ",
+    } as unknown as Selection);
+    await act(async () => documentText.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    await settle();
+    expect(lefts()).toEqual(["10%"]);
+    expect(panel.textContent).toContain("The selected words are not in this passage on the page.");
+    vi.restoreAllMocks();
   });
 
   it("keeps the zoom for the next passage of the same file and resets it for another file", async () => {

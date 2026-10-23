@@ -15,6 +15,7 @@ from tamra.ingest.parsers import PDFIUM_LOCK, ParsedDoc, Unit, parse_file, parse
 from tamra.viewer import (
     ViewerError,
     _encode_png,
+    find_within,
     locate,
     ocr_rects,
     pdf_page_count,
@@ -454,6 +455,17 @@ def test_short_parts_beside_the_anchor_are_part_of_the_span():
     )
     found = locate(doc, f"Terms\n\n{RENT}\n\nTotal: 5")
     assert (found.start, found.end) == (3, 8)  # lines 3 (Terms) to 7 (Total: 5)
+
+
+def test_find_within_marks_each_occurrence_inside_the_passage_only():
+    page = "MATLAB intro. Deploy via MATLAB  and\nmatlab tools. Outro MATLAB."
+    doc = ParsedDoc("pdf", [Unit(page[:14], page=1), Unit(page[14:], page=1, char=14)])
+    found = viewer.Found("pdf", 1, 14, page.index("Outro"))
+    spans = find_within(doc, found, " matlab ")
+    assert [page[s:e] for s, e in spans] == ["MATLAB", "matlab"]
+    assert find_within(doc, found, "MATLAB and matlab") == [(25, 43)]  # whitespace folded
+    assert find_within(doc, found, "  ") == []
+    assert find_within(ParsedDoc("text", [Unit(page, line=1)]), found, "MATLAB") == []
 
 
 def test_a_short_part_far_from_the_anchor_is_ignored():

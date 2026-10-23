@@ -133,7 +133,14 @@ export function locateSource(
   messageId: number,
   n: number,
   range?: { start: number; end: number },
+  focus?: string,
 ): Promise<Locate> {
-  const query = range ? `?start=${range.start}&end=${range.end}` : "";
+  const params = new URLSearchParams();
+  if (range) {
+    params.set("start", String(range.start));
+    params.set("end", String(range.end));
+  }
+  if (focus) params.set("focus", focus);
+  const query = params.toString() ? `?${params}` : "";
   return api<Locate>("GET", `/api/sources/${messageId}/${n}/locate${query}`);
 }
