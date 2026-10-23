@@ -21,6 +21,17 @@ class FakeWindow:
         return self.result
 
 
+def test_the_window_lets_text_be_selected(monkeypatch):
+    made = {}
+    monkeypatch.setattr(
+        webview, "create_window", lambda *a, **k: made.update(k) or FakeWindow(None)
+    )
+    monkeypatch.setattr(webview, "start", lambda **k: None)
+    app._show_window(8765, "t", app.FolderPicker())
+    # pywebview's default (False) makes the whole page unselectable, which breaks "Check source".
+    assert made["text_select"] is True
+
+
 def test_the_window_shows_the_tamra_icon(monkeypatch):
     started = {}
     monkeypatch.setattr(webview, "create_window", lambda *a, **k: FakeWindow(None))

@@ -80,6 +80,8 @@ export type Locate = {
   page?: number;
   /** Fractions of the page, top-left origin: [x0, y0, x1, y1]. */
   rects?: number[][];
+  /** PDF only, when asked with a focus: where the focused text is in the passage, in the same form. */
+  focus_rects?: number[][];
   /** Text: 1-based lines; DOCX: paragraph indices. The end is exclusive. For a PDF, offsets in the page text. */
   start?: number;
   end?: number;

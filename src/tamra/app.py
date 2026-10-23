@@ -242,6 +242,7 @@ def _show_window(
         width=1200,
         height=800,
         min_size=(800, 560),
+        text_select=True,  # answers and passages are selected to check them against the source
     )
     if file_picker is not None:
         file_picker.window = picker.window

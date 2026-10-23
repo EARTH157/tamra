@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import anyio
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -47,6 +47,7 @@ from tamra.viewer import (
     PathRefused,
     Unreadable,
     ViewerError,
+    find_within,
     locate,
     ocr_rects,
     pdf_page_count,
@@ -560,7 +561,11 @@ def _add_viewer_routes(
 
     @app.get("/api/sources/{message_id}/{n}/locate")
     def locate_source(
-        message_id: int, n: int, start: int | None = None, end: int | None = None
+        message_id: int,
+        n: int,
+        start: int | None = None,
+        end: int | None = None,
+        focus: Annotated[str | None, Query(max_length=2000)] = None,
     ) -> dict:
         message = core.store.get_message(message_id)
         source = next((s for s in message.sources if s.n == n), None) if message else None
@@ -591,14 +596,23 @@ def _add_viewer_routes(
             reply.update(found=True, start=found.start, end=found.end)
             if found.kind == "pdf" and found.page is not None:
                 scanned = core.store.ocr_page(record.id, found.page)
-                rects = (
-                    ocr_rects(scanned.text, scanned.boxes, found.start, found.end)
-                    if scanned is not None
-                    else pdf_rects(path, found.page, found.start, found.end)
-                )
+
+                def rects(begin: int, stop: int) -> list[list[float]]:
+                    boxes = (
+                        ocr_rects(scanned.text, scanned.boxes, begin, stop)
+                        if scanned is not None
+                        else pdf_rects(path, found.page, begin, stop)
+                    )
+                    return [list(r) for r in boxes]
+
                 reply.update(
-                    page=found.page, rects=[list(r) for r in rects], ocr=scanned is not None
+                    page=found.page, rects=rects(found.start, found.end), ocr=scanned is not None
                 )
+                if focus is not None:
+                    # A part of the passage the user selected: every place it is in the passage.
+                    reply["focus_rects"] = [
+                        r for span in find_within(doc, found, focus) for r in rects(*span)
+                    ]
             return reply
         except ViewerError as e:
             raise _viewer_error(e) from e

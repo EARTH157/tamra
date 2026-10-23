@@ -1,5 +1,5 @@
 import { TriangleAlert } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchBlob } from "./api";
 import { viewerErrorText } from "./apiErrors";
 import { useT } from "./i18n";
@@ -58,6 +58,60 @@ async function fetchPage(path: string, signal: AbortSignal): Promise<Blob> {
 export function pageScale(zoom: number, pixelRatio: number): number {
   const scale = (zoom / 100) * (pixelRatio || 1);
   return Math.round(Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale)) * 100) / 100;
+}
+
+/** Ctrl + mouse wheel (or a touchpad pinch) over `target` steps the zoom: `step(1)` in, `step(-1)` out. */
+export function useWheelZoom(target: RefObject<HTMLElement | null>, step: (by: 1 | -1) => void) {
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  useEffect(() => {
+    const element = target.current;
+    if (!element) return;
+    let travel = 0;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault(); // not the window's own zoom
+      // A wheel notch moves about 100 px, a pinch many small amounts: one step per 50 px.
+      travel += event.deltaY;
+      if (Math.abs(travel) < 50) return;
+      stepRef.current(travel < 0 ? 1 : -1);
+      travel = 0;
+    };
+    // Passive listeners cannot prevent the default, and React adds wheel listeners as passive.
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [target]);
+}
+
+/** Dragging a page with the mouse scrolls `target`, the pane a zoomed or long page scrolls in. */
+export function useDragScroll(target: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const element = target.current;
+    if (!element) return;
+    const onDown = (event: PointerEvent) => {
+      const onPage = event.target instanceof Element && event.target.closest(".pdf-page");
+      if (event.button !== 0 || event.pointerType !== "mouse" || !onPage) return;
+      event.preventDefault(); // no image drag
+      const { clientX: x, clientY: y } = event;
+      const { scrollLeft: left, scrollTop: top } = element;
+      element.classList.add("panning");
+      const move = (e: PointerEvent) => {
+        element.scrollLeft = left - (e.clientX - x);
+        element.scrollTop = top - (e.clientY - y);
+      };
+      const end = () => {
+        element.classList.remove("panning");
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    };
+    element.addEventListener("pointerdown", onDown);
+    return () => element.removeEventListener("pointerdown", onDown);
+  }, [target]);
 }
 
 /** The CSS width of a US Letter page at 100%, assumed for the first request of a fitted page. */
@@ -206,6 +260,7 @@ export default function PdfPage({ fileId, file, page, zoom, highlight, fit = fal
             style={{ width: width ?? undefined, visibility: width === null ? "hidden" : "visible" }}
           >
             <img
+              draggable={false}
               src={shown.url}
               alt={t("viewer.pageAlt", { page: shown.page, file })}
               onLoad={(event) => {
