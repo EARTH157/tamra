@@ -14,6 +14,7 @@ import truststore
 import uvicorn
 
 from tamra.core import Core
+from tamra.discovery import remove_discovery, write_discovery
 from tamra.logs import setup_logging
 from tamra.net import free_port
 from tamra.paths import data_dir, models_dir, resource_dir
@@ -80,6 +81,15 @@ def open_data_folder() -> None:
 def open_external(path: Path) -> None:
     """Open a file in its default app. The server passes only paths it resolved from the store."""
     os.startfile(path)  # type: ignore[attr-defined]  # Windows only
+
+
+def _publish_mcp(port: int, token: str) -> None:
+    """Tell `Tamra.exe mcp` where the API is. Without the file AI apps only see "not running",
+    so a failure is logged and Tamra carries on."""
+    try:
+        write_discovery(data_dir(), port, token)
+    except OSError as e:
+        log.warning("cannot write the MCP discovery file: %s", e)
 
 
 def _wait_until_up(
@@ -155,6 +165,7 @@ def _serve(dev: bool, dev_token: str) -> None:
     truststore.inject_into_ssl()  # downloads and cloud calls trust the Windows certificate store
     setup_logging(data_dir() / "logs", console=dev)
     port, token = (DEV_PORT, dev_token) if dev else (free_port(), secrets.token_urlsafe(32))
+    mcp_token = secrets.token_urlsafe(32)
     ui_dir = None if dev else resource_dir() / "ui" / "dist"
     picker = None if dev else FolderPicker()
     file_picker = None if dev else FilePicker()
@@ -172,6 +183,7 @@ def _serve(dev: bool, dev_token: str) -> None:
                 pick_file=file_picker,
                 open_data_folder=None if dev else open_data_folder,
                 open_external=None if dev else open_external,
+                mcp_token=mcp_token,
             ),
             host="127.0.0.1",
             port=port,
@@ -184,11 +196,13 @@ def _serve(dev: bool, dev_token: str) -> None:
         thread.start()
         try:
             _wait_until_up(port, token, thread)
+            _publish_mcp(port, mcp_token)
             if picker is None:
                 _wait_in_dev_mode(port, token, thread)
             else:
                 _show_window(port, token, picker, file_picker)
         finally:
+            remove_discovery(data_dir())
             server.should_exit = True
             thread.join(timeout=5)
     except Exception as e:
