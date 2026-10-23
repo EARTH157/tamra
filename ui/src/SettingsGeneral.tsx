@@ -1,3 +1,4 @@
+import { AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { api, ApiError } from "./api";
 import ConfirmDialog from "./ConfirmDialog";
@@ -15,7 +16,13 @@ type Props = {
 
 const DEFAULT_DATA_FOLDER = "%LOCALAPPDATA%\\Tamra"; // until the core reports the real path
 
-/** The General tab: language, deleting chats, and the data Tamra keeps. */
+/** The JSON an MCP app's config takes to start Tamra's MCP server (an `mcpServers` entry). */
+function mcpSetup(command: string[]): string {
+  const [exe, ...args] = command;
+  return JSON.stringify({ mcpServers: { tamra: { command: exe, args } } }, null, 2);
+}
+
+/** The General tab: language, deleting chats, AI apps (MCP), and the data Tamra keeps. */
 export default function SettingsGeneral({ chatCount, busy, onChatsDeleted }: Props) {
   const t = useT();
   const { settings, update } = useSettings();
@@ -24,6 +31,8 @@ export default function SettingsGeneral({ chatCount, busy, onChatsDeleted }: Pro
   // then replaced by a note.
   const [canOpenData, setCanOpenData] = useState(true);
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [manualSetup, setManualSetup] = useState<string | null>(null);
 
   function save(changes: Parameters<typeof update>[0]) {
     setError(null);
@@ -37,6 +46,19 @@ export default function SettingsGeneral({ chatCount, busy, onChatsDeleted }: Pro
     } catch (e) {
       if (e instanceof ApiError && e.status === 501) setCanOpenData(false);
       else setError((e as Error).message);
+    }
+  }
+
+  async function copySetup() {
+    setError(null);
+    const setup = mcpSetup(settings.mcp_command);
+    try {
+      await navigator.clipboard.writeText(setup);
+      setCopied(true);
+    } catch {
+      // Some web views refuse clipboard writes: show the text so it can be copied by hand.
+      setError(t("settings.mcpCopyFailed"));
+      setManualSetup(setup);
     }
   }
 
@@ -74,6 +96,42 @@ export default function SettingsGeneral({ chatCount, busy, onChatsDeleted }: Pro
             />
           </Row>
         </div>
+      </Section>
+
+      <Section title={t("settings.mcp")}>
+        <p className="warning-note">
+          <AlertTriangle size={16} />
+          {t("settings.mcpWarning")}
+        </p>
+        <div className="card">
+          <Row title={t("settings.mcpEnable")} hint={t("settings.mcpHint")}>
+            <Toggle
+              label={t("settings.mcpEnable")}
+              checked={settings.mcp_enabled}
+              onChange={(mcp_enabled) => save({ mcp_enabled })}
+            />
+          </Row>
+          <Row title={t("settings.mcpSetup")} hint={t("settings.mcpSetupHint")}>
+            <button
+              type="button"
+              className="btn"
+              disabled={settings.mcp_command.length === 0}
+              onClick={() => void copySetup()}
+            >
+              {copied ? t("settings.mcpCopied") : t("settings.mcpCopy")}
+            </button>
+          </Row>
+        </div>
+        {manualSetup && (
+          <textarea
+            className="mcp-setup"
+            readOnly
+            rows={8}
+            value={manualSetup}
+            aria-label={t("settings.mcpSetup")}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        )}
       </Section>
 
       <Section title={t("settings.data")}>

@@ -153,7 +153,8 @@ gave it one, and never the query or passage text.
   - a "Copy setup" button that copies
     `{"mcpServers": {"tamra": {"command": mcp_command[0], "args": mcp_command[1:]}}}`. The hint under it
     says where to paste it: Claude Desktop's `claude_desktop_config.json`, or `.mcp.json` in a
-    project folder for Claude Code (both take this `mcpServers` form).
+    project folder for Claude Code (both take this `mcpServers` form). If the web view refuses the
+    clipboard write, the page says so and shows the same text in a read-only field to copy by hand.
 - **Sidebar:** while `mcp_enabled` is on, a badge above the Settings button reads "AI apps can
   search". It opens Settings > General.
 - English and Thai strings for all of the above.

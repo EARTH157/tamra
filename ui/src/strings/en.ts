@@ -255,6 +255,19 @@ export const en = {
   "settings.deleteAllText.one":
     "The chat will be removed from this computer. Your documents are not changed.",
   "settings.footer": "Tamra · pre-alpha · Apache-2.0 license",
+  "settings.mcp": "AI apps (MCP)",
+  "settings.mcpEnable": "Let AI apps search my documents",
+  "settings.mcpHint":
+    "Claude Desktop, Claude Code and other MCP apps can search all your projects while Tamra is open.",
+  "settings.mcpWarning":
+    "The passages these apps find are sent to their AI model, which may run in the cloud. Your files and the search index stay on this computer.",
+  "settings.mcpSetup": "Connect an app",
+  "settings.mcpSetupHint":
+    "Paste it into Claude Desktop's claude_desktop_config.json, or into .mcp.json in a project folder for Claude Code.",
+  "settings.mcpCopy": "Copy setup",
+  "settings.mcpCopied": "Copied",
+  "settings.mcpCopyFailed": "Could not copy to the clipboard. Copy the setup below instead.",
+  "mcp.badge": "AI apps can search",
 
   "settings.aiMode": "AI mode",
   "settings.modeLocal": "Local model",

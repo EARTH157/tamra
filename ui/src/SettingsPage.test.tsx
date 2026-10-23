@@ -209,6 +209,71 @@ describe("General tab", () => {
     expect(text()).not.toContain("%LOCALAPPDATA%");
   });
 
+  function switchNamed(label: string): HTMLButtonElement {
+    return find<HTMLButtonElement>(`button[role="switch"][aria-label="${label}"]`);
+  }
+
+  it("turns on AI access for MCP apps and warns that passages leave the computer", async () => {
+    const { calls } = await mountPage();
+    expect(text()).toContain("The passages these apps find are sent to their AI model");
+    expect(switchNamed("Let AI apps search my documents").getAttribute("aria-checked")).toBe(
+      "false",
+    );
+    await click(switchNamed("Let AI apps search my documents"));
+    expect(calls).toContainEqual({ key: "PUT /api/settings", body: { mcp_enabled: true } });
+    expect(switchNamed("Let AI apps search my documents").getAttribute("aria-checked")).toBe(
+      "true",
+    );
+  });
+
+  it("copies the MCP setup with this computer's command", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    try {
+      await mountPage({ settings: { mcp_command: ["C:\\Tamra\\Tamra.exe", "mcp"] } });
+      await click(buttonByText(view!.container, "Copy setup"));
+      expect(writeText).toHaveBeenCalledWith(
+        JSON.stringify(
+          { mcpServers: { tamra: { command: "C:\\Tamra\\Tamra.exe", args: ["mcp"] } } },
+          null,
+          2,
+        ),
+      );
+      expect(buttonByText(view!.container, "Copied")).toBeDefined();
+    } finally {
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it("says so when the setup cannot be copied", async () => {
+    const writeText = vi.fn(async () => {
+      throw new Error("denied");
+    });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    try {
+      await mountPage({ settings: { mcp_command: ["C:\\Tamra\\Tamra.exe", "mcp"] } });
+      await click(buttonByText(view!.container, "Copy setup"));
+      expect(find('[role="alert"]').textContent).toBe(
+        "Could not copy to the clipboard. Copy the setup below instead.",
+      );
+      // The text to copy by hand.
+      expect(find<HTMLTextAreaElement>("textarea.mcp-setup").value).toBe(
+        JSON.stringify(
+          { mcpServers: { tamra: { command: "C:\\Tamra\\Tamra.exe", args: ["mcp"] } } },
+          null,
+          2,
+        ),
+      );
+    } finally {
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it("cannot copy a setup before the core reports its command", async () => {
+    await mountPage();
+    expect(buttonByText(view!.container, "Copy setup")?.disabled).toBe(true);
+  });
+
   it("opens the data folder", async () => {
     const { calls } = await mountPage({
       routes: { "POST /api/open-data-folder": noContent },
