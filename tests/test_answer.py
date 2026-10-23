@@ -5,7 +5,9 @@ from tamra.answer import (
     NOT_FOUND,
     AnswerService,
     AnswerSettings,
+    NothingIndexed,
     Route,
+    StaleIndex,
     auto_citation,
     build_messages,
     cited_numbers,
@@ -725,3 +727,50 @@ def test_a_question_the_search_model_cannot_embed_is_not_saved(env, error, reaso
     assert events[0].get("reason") == reason  # only missing files send the user to Settings
     assert events[0]["message"].startswith("Embedding model unavailable")
     assert store.list_messages(chat.id) == []
+
+
+# Retrieval without a chat (shared with the MCP search)
+
+
+def test_searchable_leaves_out_stale_projects_and_names_them(two):
+    store, make, projects = two
+    store.reset_index(projects["B"].id, "other-model")
+    searched, skipped = make(FakeLLM()).searchable(store.list_collections())
+    assert [c.name for c in searched] == ["A"]
+    assert skipped == ["B"]
+
+
+def test_searchable_raises_stale_index_when_every_project_is_stale(two):
+    store, make, projects = two
+    store.reset_index(projects["A"].id, "other-model")
+    with pytest.raises(StaleIndex) as raised:
+        make(FakeLLM()).searchable([store.get_collection(projects["A"].id)])
+    assert raised.value.names == ["A"]
+
+
+def test_searchable_raises_nothing_indexed_with_the_stale_names(two):
+    store, make, projects = two
+    store.reset_index(projects["A"].id, "other-model")
+    store.reset_index(projects["B"].id, "m")  # pending again
+    with pytest.raises(NothingIndexed) as raised:
+        make(FakeLLM()).searchable(store.list_collections())
+    assert raised.value.skipped == ["A"]
+    with pytest.raises(NothingIndexed):
+        make(FakeLLM()).searchable([])
+
+
+def test_passages_are_numbered_best_first_and_cut_at_k(two):
+    store, make, projects = two
+    vector = FakeEmbedder().embed(["parking baht"])[0]
+    found = make(FakeLLM()).passages(
+        [projects["A"].id, projects["B"].id], vector, "parking baht", 1
+    )
+    assert [(s.n, s.rel_path, s.text) for s in found] == [(1, "b.md", "Parking costs fifty baht")]
+
+
+def test_passages_are_empty_below_the_not_found_gate(two):
+    store, make, projects = two
+    query = "ใครเป็นผู้จัดการฝ่ายขาย"
+    vector = FakeEmbedder().embed([query])[0]
+    ids = [projects["A"].id, projects["B"].id]
+    assert make(FakeLLM()).passages(ids, vector, query, 4) == []
