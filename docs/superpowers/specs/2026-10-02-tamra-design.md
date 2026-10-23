@@ -17,7 +17,8 @@ answer can be checked against the exact passage it came from.
 - Runs on any Windows machine, from low-spec laptops to GPU desktops, by letting the user
   pick an LLM size suited to the hardware.
 - Every answer is verifiable: inline `[n]` citations, and selecting any text in an answer
-  shows the source passage that supports it.
+  shows the source passage that supports it. A Chat-mode reply, which searches nothing,
+  says that it is not from the documents instead (§6).
 
 **Non-goals for v1**
 - Platforms other than Windows 10/11 x64.
@@ -86,8 +87,9 @@ which is started on demand in local mode and stopped when the app exits.
   point of `text` (x0, y0, x1, y1 as fractions of the page, top-left origin; a newline has zeros).
   Primary key (`file_id`, `page`); deleted with the file.
 - `chats(id, title, collection_id, created_at, updated_at, activity)` — `collection_id` is the
-  chat's **home** project, which sets where the sidebar lists it (null only for a chat made
-  before any project existed). `chat_collections(chat_id, collection_id)` is its **search
+  chat's **home** project, which sets where the sidebar lists it. It is null for a **general
+  chat** (§6): one started in Chat mode, or made before any project existed. A new project
+  never takes over a general chat; moving it to a project gives it a home. `chat_collections(chat_id, collection_id)` is its **search
   scope**: the projects a question searches. Deleting a collection deletes its home chats and
   removes it from the scope of the others. Collection names are unique, ignoring case.
 - `messages(id, chat_id, role, content, provider, model, created_at)`
@@ -146,19 +148,58 @@ stored in `ocr_pages`.
 
 ## 6. Retrieval and answering
 
+- **Modes:** the composer's mode chip picks how Tamra responds to a question:
+  - **Answer** (default): retrieve, then write an answer that cites its sources.
+  - **Search only:** retrieve and show the passages, with no model call.
+  - **Chat:** ask the model without searching the documents. The prompt has no sources and
+    tells the model it cannot see the user's documents and must not write `[n]` markers.
+    The conversation history and answer language follow the rules below. No project needs
+    to be indexed. The reply is saved with no sources and is never auto-cited. The UI says
+    it is a general answer that is not from the documents, hides "Check source" and the
+    "Search in" chip, and tells a saved Chat reply from the not-found reply because it has
+    model text and no sources.
+  - A new chat whose first question is asked in Chat mode is a **general chat**
+    (`POST /api/chats {general: true}`): it has no home project and the sidebar lists it under
+    "Chats", apart from the projects. The mode can still change in it. A general chat with
+    no scope that asks in Answer or Search only mode first saves the projects the chip shows
+    (the first project) as its scope, since it has no home to fall back on.
 - Each chat has a search scope of one or more projects (collections), chosen with the
   "Search in" chip in the composer. It defaults to the chat's home project and can change
   mid-chat. If a scope ends up empty (a project in it was deleted), it falls back to the
   home project; a chat with neither searches nothing. A project whose index was built with
   another embedding model (stale) is left out of the search and named in a notice; if every
   project in scope is stale, the question gets an error asking for a rebuild instead.
+  When there is more than one project, the menu starts with "All projects": it ticks every
+  project there is now (a project added later is not ticked by itself), and unticking it
+  leaves only the home project. The chip says "All projects" while every project is ticked.
   When an answer's sources come from more than one project, each source shows its project's
   name.
 - **Query text:** the latest user question plus the previous user question, so follow-ups
   like "what about item 2?" stay on topic without an extra LLM call.
-- **Conversation:** the last 4 exchanges of the chat go to the model, their citation markers
-  removed, each question and answer cut to 600 characters. Unanswered questions and
-  not-found replies are left out.
+- **Conversation (token budget):** earlier exchanges go to the model newest first, as many
+  as fit a token budget, then in order (oldest first). Their citation markers are removed.
+  Unanswered questions and not-found replies are left out. At most the last 50 are read.
+  - **Room:** the model's context window less the reply's budget. The budget is
+    `max_tokens` (1024), plus the 2048-token thinking headroom where the provider asks for
+    it: a local model with "Think longer" on, and every Anthropic request. The window is
+    llama-server's `-c` (8192) for the local model and 32,000 tokens for API mode. 32,000
+    tokens is a size every supported endpoint has, including small OpenAI-compatible
+    servers.
+  - **Budget:** the room less the system prompt (with its sources), the question and a
+    256-token margin. In Answer mode history also gets at most a quarter of the room: the
+    sources come first, and a short prompt keeps small models on them. Their prompt also
+    changes with every question, so llama-server cannot reuse its cache. In Chat mode, which
+    has no sources, history gets the whole budget.
+  - **Fitting:** exchanges are kept whole and contiguous; the first one that does not fit
+    ends the history. The newest exchange is cut to fit instead of being dropped, because a
+    follow-up question needs it.
+  - **Counting:** tokens are estimated, not measured. Three letters or spaces of a
+    Latin-script text count one token. Any other character counts one: a Thai or CJK
+    character, CJK punctuation, a digit (Qwen splits numbers into digits) or a symbol. The
+    estimate errs high so that a prompt never overflows. Checked against Qwen3-8B's
+    tokenizer, the estimate is at or above the real count: Thai 102 vs 61, English 38 vs 28,
+    Chinese 30 vs 24, code 42 vs 31, an invoice line 46 vs 45. The cost is some unused room,
+    most of it for Thai.
 - **Hybrid search:** dense KNN (`sqlite-vec`) and keyword (FTS5 trigram, BM25), each top
   ~30, fused with Reciprocal Rank Fusion.
 - **Reranking (optional):** when the bge-reranker-v2-m3 cross-encoder is installed, the top 10
@@ -172,11 +213,28 @@ stored in `ocr_pages`.
   lowest-ranked chunks first.
 - **No relevant results:** if the best fused result is below threshold, reply "not found in
   the documents" without calling the LLM. The threshold is tuned on the eval set (§12).
+  The last reply of a chat, when it is not found, offers "Ask the model anyway (no
+  sources)". This asks the same question again in Chat mode as a new exchange. It never
+  happens without that click, and a draft in the question box is kept.
 - **Prompt:** numbered sources `[1]..[k]` with file name and location. Instructions: answer
   only from the sources, put `[n]` after each supported claim, answer in the language of
   the question, and say so plainly when the sources are insufficient.
 - **Streaming:** tokens go to the UI over SSE, and generation can be cancelled. `[n]`
   markers render as clickable chips that open the source popup (§7).
+- **Context and token counts:**
+  - Before the model is called (Answer and Chat modes), a `context` event gives the
+    estimated prompt size, the context window, and how many of the chat's answered exchanges
+    the prompt kept.
+  - The local model is asked for llama-server's per-token timings (`timings_per_token`).
+    Its provider yields them as `usage` chunks: the whole prompt (including the part reused
+    from llama-server's cache), the tokens generated so far (thinking and answer) and the
+    speed. The answer service sends them as `usage` events at most every 0.25 s, and always
+    sends the final counts. API providers send none.
+  - Under the composer, each chat shows a meter such as "Context ≈2.1k / 8.2k tokens". It
+    shows the estimate, then the local model's real count of prompt and generated tokens.
+    It turns amber at 90% and says how many older exchanges were left out. While the local
+    model writes, a line under the answer counts its tokens and speed. The saved answer's
+    meta line keeps them. These counts stay in memory only, for this session.
 - **Persistence:** after the answer completes, save the message and one `message_sources`
   row per `[n]`, including the text snapshot and the file hash at answer time. Old chats
   keep showing what the model actually saw, even if the document changes later.

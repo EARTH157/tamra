@@ -33,6 +33,11 @@ class LocalLLM:
         self._running_model: Path | None = None
 
     @property
+    def ctx_size(self) -> int:
+        """llama-server's context window, in tokens: the prompt and the reply share it."""
+        return self._ctx_size
+
+    @property
     def label(self) -> str:
         return self._label_for(self._model_path())
 

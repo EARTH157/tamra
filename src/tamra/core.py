@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from tamra import secrets
-from tamra.answer import AnswerService, AnswerSettings, Route, source_payloads
+from tamra.answer import API_CONTEXT_TOKENS, AnswerService, AnswerSettings, Route, source_payloads
 from tamra.attribution import Attributor, Match
 from tamra.drives import is_removable
 from tamra.embedder import MODEL_ID, Embedder, EmbedderUnavailable
@@ -308,8 +308,8 @@ class Core:
     def _route(self) -> Route:
         settings = self._settings  # one snapshot: the name and the provider agree
         if settings.mode == "local":
-            return Route("local", self.local.client)
-        return Route(settings.api_provider, lambda: self._open_api(settings))
+            return Route("local", self.local.client, self.local.ctx_size)
+        return Route(settings.api_provider, lambda: self._open_api(settings), API_CONTEXT_TOKENS)
 
     def _open_api(self, settings: Settings) -> Provider:
         """The API provider for these settings, built when first needed.
@@ -675,15 +675,13 @@ class Core:
         """Add a project and index its folder. ValueError (with a message safe to show) if the
         folder is not usable, is already used by another project, or the name is taken.
 
-        Chats that have no home project (made before any project existed) are adopted by the
-        first project that remains, so the first project gives them their home and scope."""
+        Chats that have no home project are general chats (spec §6): a new project leaves them
+        where they are."""
         with self._projects_lock:
             path = self._checked_folder(folder)
             collection = self.store.create_collection(
                 _clean_name(name) if name.strip() else _derived_name(path), str(path), MODEL_ID
             )
-            if len(self.store.list_collections()) == 1:
-                self.store.adopt_homeless_chats(collection.id)
             self._watch(collection)  # under the lock: a delete cannot unwatch before this
         self.indexer.request_reconcile(collection.id)
         return collection

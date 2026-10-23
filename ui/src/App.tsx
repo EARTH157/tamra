@@ -89,12 +89,11 @@ export default function App() {
       ? chats.filter((chat) => chat.project_id === dialog.id).length
       : 0;
 
-  async function createChat(): Promise<number> {
-    const chat = await api<Chat>(
-      "POST",
-      "/api/chats",
-      activeProject ? { project_id: activeProject.id } : undefined,
-    );
+  /** Create the chat for a first question: a general chat (no project) for a Chat-mode one. */
+  async function createChat(general: boolean): Promise<number> {
+    const home = activeProject ? { project_id: activeProject.id } : undefined;
+    const body = general ? { general: true } : home;
+    const chat = await api<Chat>("POST", "/api/chats", body);
     chatsVersion.current++; // a list asked for before this does not have the new chat
     setChats((list) => [chat, ...list]);
     setActiveId(chat.id);

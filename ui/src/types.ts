@@ -123,8 +123,9 @@ export type Message = {
 
 export type ChatDetail = Chat & { messages: Message[] };
 
-/** How Tamra responds: write an answer, or only show the matching passages. */
-export type AnswerMode = "answer" | "search";
+/** How Tamra responds: write a cited answer, only show the matching passages, or chat with the
+ * model without searching. */
+export type AnswerMode = "answer" | "search" | "chat";
 
 /** Why a model call failed (ProviderError.reason); errors that are not the model's carry none. */
 export type ErrorReason =
@@ -141,6 +142,16 @@ export type AnswerEvent =
   | { type: "notice"; code: "stale_projects"; names: string[] }
   | { type: "thinking"; text: string }
   | { type: "token"; text: string }
+  // How full the prompt makes the context window (an estimate), and the history it kept.
+  | {
+      type: "context";
+      prompt_tokens: number;
+      context_tokens: number;
+      history_kept: number;
+      history_total: number;
+    }
+  // The local model's own counts so far: the prompt, and the tokens it has generated.
+  | { type: "usage"; prompt_tokens: number; generated_tokens: number; tokens_per_second: number }
   | { type: "error"; message: string; reason?: ErrorReason }
   | { type: "done"; message_id: number };
 

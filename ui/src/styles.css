@@ -1236,6 +1236,27 @@ svg.lucide {
   font-size: 13px;
 }
 
+.not-found-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.answer-general {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.answer-general > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
 .chat-error {
   display: flex;
   align-items: center;
@@ -1633,6 +1654,42 @@ svg.lucide {
   color: var(--muted);
   font-size: 12px;
   text-align: center;
+}
+
+.context-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-bar {
+  position: relative;
+  width: 48px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--track);
+}
+
+.context-bar > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
+.context-meter.full .context-bar > span {
+  background: var(--warning-text);
+}
+
+.context-dropped::before {
+  content: "· ";
+}
+
+.live-tokens {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Source panel */

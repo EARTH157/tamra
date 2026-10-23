@@ -72,7 +72,8 @@ Not all of these modules exist yet. Plans add them milestone by milestone.
   child process and is called through the OpenAI-compatible client. Do not add Python
   llama.cpp bindings. Every LLM provider exposes
   `generate(messages, max_tokens, *, think=False) -> Iterator[Chunk]` (`tamra.llm.base`; a
-  chunk is answer text or thinking), plus `close()`, `label`, and `kind`.
+  chunk is answer text, thinking, or the local model's token `usage`), plus `close()`, `label`,
+  and `kind`.
 - **Licenses:** every dependency must be Apache-2.0-compatible. No AGPL or GPL. For
   example, use `pypdfium2`, never PyMuPDF.
 - **Assets:** model weights and llama.cpp binaries are pinned with sha256. They are never

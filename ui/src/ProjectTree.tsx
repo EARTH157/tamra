@@ -155,7 +155,7 @@ export default function ProjectTree({
     if (!open) onSelectProject(project.id); // opening a project makes it the one new chats go to
   }
 
-  // Chats with no home project: made before any project existed, and not yet adopted by one.
+  // General chats: no home project (started in Chat mode, or before any project existed).
   const homeless = chats.filter((chat) => chat.project_id === null);
   const chatList = (list: Chat[]) => (
     <ChatList

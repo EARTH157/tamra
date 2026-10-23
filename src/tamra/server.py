@@ -145,6 +145,7 @@ class FolderBody(BaseModel):
 
 class NewChatBody(BaseModel):
     project_id: int | None = None
+    general: bool = False  # a general chat (spec §6): no home project, listed under Chats
 
 
 class ChatChangeBody(BaseModel):
@@ -158,7 +159,7 @@ class ScopeBody(BaseModel):
 
 class QuestionBody(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
-    mode: Literal["answer", "search"] = "answer"
+    mode: Literal["answer", "search", "chat"] = "answer"
     think: bool = False
 
 
@@ -411,10 +412,14 @@ def _add_routes(app: FastAPI, core: Core) -> None:
 
     @app.post("/api/chats", status_code=201)
     def create_chat(body: NewChatBody | None = None) -> dict:
+        if body is not None and body.general:
+            if body.project_id is not None:
+                raise HTTPException(status_code=400, detail="A general chat has no project.")
+            return _chat_payload(core.store.create_chat("", None))
         project_id = body.project_id if body is not None else None
         if project_id is None:
             # No project named: the oldest one (lowest id) is home. Before any project the chat
-            # has no home; the first project created adopts it.
+            # has no home, so it is a general chat.
             projects = core.store.list_collections()
             project_id = min(p.id for p in projects) if projects else None
         try:

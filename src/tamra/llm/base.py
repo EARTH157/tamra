@@ -11,11 +11,22 @@ class Message(TypedDict):
 
 
 @dataclass(frozen=True)
-class Chunk:
-    """A piece of streamed output: answer text, or the model's reasoning ("thinking")."""
+class Usage:
+    """Token counts the local model reports while it writes (llama-server's timings)."""
 
-    kind: Literal["text", "thinking"]
-    text: str
+    prompt_tokens: int  # the whole prompt, including the part reused from llama-server's cache
+    generated_tokens: int  # thinking and answer so far
+    tokens_per_second: float
+
+
+@dataclass(frozen=True)
+class Chunk:
+    """A piece of streamed output: answer text, the model's reasoning ("thinking"), or the local
+    model's token counts so far ("usage", with `usage` set and no text)."""
+
+    kind: Literal["text", "thinking", "usage"]
+    text: str = ""
+    usage: Usage | None = None
 
 
 # Thinking tokens count against max_tokens. Reserve room for them on top of the answer so a short
