@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 from fakes import FakeEmbedder, FakeLLM
 
@@ -10,13 +11,15 @@ from tamra.answer import (
     StaleIndex,
     auto_citation,
     build_messages,
+    chat_messages,
     cited_numbers,
     detect_language,
+    estimate_tokens,
     location_label,
     source_payloads,
 )
 from tamra.embedder import EmbedderUnavailable
-from tamra.llm.base import Chunk, LLMError, ProviderError
+from tamra.llm.base import THINKING_HEADROOM, Chunk, LLMError, ProviderError, Usage
 from tamra.llm.llama_server import LlamaServerError
 from tamra.store import ChunkInput, SourceRecord, Store
 
@@ -34,27 +37,87 @@ def env(tmp_path):
     ]
     store.replace_file_chunks(file_id, chunks, embedder.embed(texts), content_hash="h", note=None)
 
-    def make(llm, name="local", settings=None):
+    def make(llm, name="local", settings=None, rerank=None, context_tokens=8192):
         def opened():
             return llm() if callable(llm) and not hasattr(llm, "generate") else llm
 
         return AnswerService(
             store,
             lambda text: embedder.embed([text])[0],
-            lambda: Route(name, opened),
+            lambda: Route(name, opened, context_tokens),
             model_id="m",
             settings=settings or AnswerSettings(min_similarity=0.3),
+            rerank=rerank,
         )
 
     yield store, make, store.create_chat(collection_id=collection.id)
     store.close()
 
 
+def _source_texts(events):
+    return [s["text"] for s in next(e for e in events if e["type"] == "sources")["sources"]]
+
+
+def test_the_reranker_reorders_the_fused_candidates(env):
+    _, make, chat = env
+    calls = []
+
+    def rerank(query, texts):
+        calls.append((query, texts))
+        return np.array([1.0 if "Parking" in t else 0.0 for t in texts])
+
+    events = list(make(FakeLLM(), rerank=rerank).ask(chat.id, "How long is the lease term?"))
+    assert _source_texts(events) == ["Parking costs fifty baht", "The lease term is three years"]
+    assert calls[0][0] == "How long is the lease term?"
+    assert sorted(calls[0][1]) == ["Parking costs fifty baht", "The lease term is three years"]
+
+
+def test_the_reranker_sees_at_most_rerank_candidates_and_the_top_k_are_kept(env):
+    _, make, chat = env
+    seen = []
+
+    def rerank(query, texts):
+        seen.append(len(texts))
+        return np.array([1.0 if "Parking" in t else 0.0 for t in texts])
+
+    settings = AnswerSettings(min_similarity=0.3, top_k=1, rerank_candidates=1)
+    events = list(make(FakeLLM(), settings=settings, rerank=rerank).ask(chat.id, "lease term?"))
+    assert seen == [1]  # max(top_k, rerank_candidates): only the best fused hit is scored
+    assert _source_texts(events) == ["The lease term is three years"]
+
+
+@pytest.mark.parametrize("failure", ["missing", "raises"])
+def test_answers_keep_the_fused_order_without_a_working_reranker(env, failure):
+    _, make, chat = env
+
+    def rerank(query, texts):
+        if failure == "raises":
+            raise RuntimeError("onnxruntime fell over")
+        return None  # not installed
+
+    events = list(make(FakeLLM(), rerank=rerank).ask(chat.id, "How long is the lease term?"))
+    assert _source_texts(events)[0] == "The lease term is three years"
+    assert events[-1]["type"] == "done"
+
+
+def test_the_not_found_gate_stays_on_the_dense_similarity(env):
+    _, make, chat = env
+    calls = []
+
+    def rerank(query, texts):
+        calls.append(texts)
+        return np.ones(len(texts))  # a reranker that likes everything changes nothing here
+
+    events = list(make(FakeLLM(), rerank=rerank).ask(chat.id, "ใครเป็นผู้จัดการฝ่ายขาย"))
+    assert events[1]["text"] == "ไม่พบข้อมูลนี้ในเอกสาร"
+    assert calls == []
+
+
 def test_an_answer_streams_sources_then_tokens_and_is_saved(env):
     store, make, chat = env
     llm = FakeLLM()
     events = list(make(llm).ask(chat.id, "How long is the lease term?"))
-    assert [e["type"] for e in events] == ["sources", "token", "token", "token", "done"]
+    assert [e["type"] for e in events] == ["sources", "context", "token", "token", "token", "done"]
     first = events[0]["sources"][0]
     assert (first["n"], first["file"], first["label"]) == (1, "lease.md", "line 1")
     assert first["text"] == "The lease term is three years"
@@ -74,7 +137,7 @@ def test_an_unrelated_question_gets_not_found_without_the_llm(env):
     store, make, chat = env
     llm = FakeLLM()
     events = list(make(llm).ask(chat.id, "ใครเป็นผู้จัดการฝ่ายขาย"))
-    assert [e["type"] for e in events] == ["sources", "token", "done"]
+    assert [e["type"] for e in events] == ["sources", "token", "done"]  # no model: no context
     assert events[1]["text"] == "ไม่พบข้อมูลนี้ในเอกสาร"
     assert llm.calls == []
     assert store.list_messages(chat.id)[1].content == "ไม่พบข้อมูลนี้ในเอกสาร"
@@ -92,7 +155,7 @@ def test_follow_ups_carry_the_previous_exchange(env):
     assert second[3]["content"] == "and parking?"
 
 
-def test_the_model_sees_the_last_four_exchanges_oldest_first(env):
+def test_the_model_sees_the_earlier_exchanges_that_fit_oldest_first(env):
     store, make, chat = env
     llm = FakeLLM()
     service = make(llm)
@@ -100,9 +163,9 @@ def test_the_model_sees_the_last_four_exchanges_oldest_first(env):
         list(service.ask(chat.id, f"How long is the lease term? {i}"))
     list(service.ask(chat.id, "and parking?"))
     last = llm.calls[-1]
-    assert [m["role"] for m in last] == ["system"] + ["user", "assistant"] * 4 + ["user"]
+    assert [m["role"] for m in last] == ["system"] + ["user", "assistant"] * 5 + ["user"]
     assert [m["content"] for m in last[1:-1:2]] == [
-        f"How long is the lease term? {i}" for i in range(1, 5)
+        f"How long is the lease term? {i}" for i in range(5)
     ]
     assert last[2]["content"] == "The lease is three years."  # its [1] pointed at old sources
     assert last[-1]["content"] == "and parking?"
@@ -138,10 +201,69 @@ def test_build_messages_adds_answered_exchanges_without_their_markers():
     ]
 
 
-def test_build_messages_cuts_each_earlier_question_and_answer_to_600_characters():
-    messages = build_messages("q2", [("q" * 700, "x" * 700 + " [1]")], [_record(1)], "en")
-    assert messages[1]["content"] == "q" * 600
-    assert messages[2]["content"] == "x" * 600
+def test_estimate_tokens_counts_thai_cjk_digits_and_symbols_by_character_and_errs_high():
+    assert estimate_tokens("") == 0
+    assert estimate_tokens("hello world") == 4  # 11 characters: about 2-3 real tokens
+    assert estimate_tokens("สวัสดี") == 6
+    assert estimate_tokens("租期多久") == 4
+    assert estimate_tokens("iPhone保修") == 4
+    assert estimate_tokens("2026") == 4  # Qwen splits a number into digits
+    assert estimate_tokens("a{}") == 3
+
+
+def _history(n: int, answer: str = "a" * 300) -> list[tuple[str, str]]:
+    return [(f"q{i}", answer) for i in range(n)]
+
+
+def _history_tokens(messages) -> int:
+    return sum(estimate_tokens(m["content"]) for m in messages[1:-1])
+
+
+def test_answer_mode_history_takes_at_most_a_quarter_of_the_room_newest_first():
+    messages = build_messages("q", _history(40), [_record(1)], "en", room=4000)
+    asked = [m["content"] for m in messages[1:-1:2]]
+    assert asked[-1] == "q39" and "q0" not in asked  # the oldest are dropped first
+    assert asked == [f"q{i}" for i in range(40 - len(asked), 40)]  # contiguous
+    assert _history_tokens(messages) <= 1000
+
+
+def test_chat_mode_history_fills_the_room_the_prompt_leaves():
+    answer_mode = build_messages("q", _history(40), [_record(1)], "en", room=4000)
+    chat_mode = chat_messages("q", _history(40), "en", room=4000)
+    assert len(chat_mode) > 2 * len(answer_mode)
+    assert 2500 < _history_tokens(chat_mode) <= 4000
+
+
+def test_a_larger_room_keeps_more_history():
+    small = chat_messages("q", _history(40), "en", room=2000)
+    large = chat_messages("q", _history(40), "en", room=30_000)
+    assert len(small) < len(large) == 2 + 2 * 40
+
+
+def test_the_newest_exchange_is_cut_to_fit_rather_than_dropped():
+    history = [("old", "kept out"), ("what is the rent?", "x" * 30_000 + " [1]")]
+    messages = chat_messages("and the deposit?", history, "en", room=2000)
+    assert [m["content"] for m in messages[1::2]] == ["what is the rent?", "and the deposit?"]
+    assert 0 < len(messages[2]["content"]) < 30_000
+    assert set(messages[2]["content"]) == {"x"}
+
+
+def test_a_long_earlier_answer_is_kept_whole_when_it_fits():
+    answer = "The deposit is two months of rent. " * 40
+    messages = chat_messages("and the rent?", [("deposit?", answer)], "en")
+    assert messages[2]["content"] == answer.strip()
+
+
+def test_the_routes_context_window_sets_the_room(env):
+    store, make, chat = env
+    long_answer = FakeLLM(("word " * 2000,))
+    list(make(long_answer).ask(chat.id, "tell me everything", mode="chat"))
+    small, large = FakeLLM(("ok",)), FakeLLM(("ok",))
+    list(make(small, context_tokens=2048).ask(chat.id, "and then?", mode="chat"))
+    list(make(large, context_tokens=32_000).ask(chat.id, "and then?", mode="chat"))
+    kept_small = small.calls[0][2]["content"]
+    kept_large = large.calls[0][2]["content"]
+    assert len(kept_small) < len(kept_large) == len(("word " * 2000).strip())
 
 
 def test_build_messages_skips_not_found_replies():
@@ -160,6 +282,7 @@ def test_cancel_stops_generation_and_keeps_the_partial_answer(env):
     service = make(FakeLLM(("one ", "two ", "three ")))
     stream = service.ask(chat.id, "How long is the lease term?")
     assert next(stream)["type"] == "sources"
+    assert next(stream)["type"] == "context"
     assert next(stream) == {"type": "token", "text": "one "}
     service.cancel()
     assert [e["type"] for e in stream] == ["done"]
@@ -170,6 +293,7 @@ def test_closing_the_stream_saves_the_partial_answer_and_frees_the_service(env):
     store, make, chat = env
     service = make(FakeLLM())
     stream = service.ask(chat.id, "How long is the lease term?")
+    next(stream)
     next(stream)
     next(stream)
     stream.close()
@@ -338,6 +462,7 @@ def test_a_cancelled_answer_gets_no_automatic_citation(env):
     service = make(FakeLLM(("The lease term ", "is three years.")))
     stream = service.ask(chat.id, "How long is the lease term?")
     next(stream)  # sources
+    next(stream)  # context
     next(stream)  # first token
     service.cancel()
     assert [e["type"] for e in stream] == ["done"]
@@ -364,8 +489,8 @@ def test_thinking_chunks_become_events_and_think_is_passed_on(env):
     store, make, chat = env
     llm = FakeLLM((Chunk("thinking", "Let me check."), Chunk("text", "Three years [1].")))
     events = list(make(llm).ask(chat.id, "How long is the lease term?", think=True))
-    assert [e["type"] for e in events] == ["sources", "thinking", "token", "done"]
-    assert events[1] == {"type": "thinking", "text": "Let me check."}
+    assert [e["type"] for e in events] == ["sources", "context", "thinking", "token", "done"]
+    assert events[2] == {"type": "thinking", "text": "Let me check."}
     assert llm.think_flags == [True]
     assert store.list_messages(chat.id)[1].content == "Three years [1]."
     list(make(llm).ask(chat.id, "How long is the lease term?"))
@@ -398,7 +523,113 @@ def test_search_mode_needs_no_model(env):
 def test_an_unknown_mode_is_refused(env):
     store, make, chat = env
     with pytest.raises(ValueError, match="unknown mode"):
-        list(make(FakeLLM()).ask(chat.id, "lease?", mode="chat"))
+        list(make(FakeLLM()).ask(chat.id, "lease?", mode="poem"))
+
+
+def test_chat_mode_asks_the_model_without_sources(env):
+    store, make, chat = env
+    llm = FakeLLM(("Paris is the capital of France.",))
+    events = list(make(llm).ask(chat.id, "What is the capital of France?", mode="chat"))
+    assert [e["type"] for e in events] == ["context", "token", "done"]
+    system = llm.calls[0][0]["content"]
+    assert "cannot see the user's" in system and "Sources:" not in system
+    saved = store.list_messages(chat.id)[1]
+    assert (saved.content, saved.provider, saved.model) == (
+        "Paris is the capital of France.",
+        "local",
+        "fake-llm",
+    )
+    assert not saved.sources
+
+
+def test_chat_mode_needs_no_indexed_project(env):
+    store, make, _ = env
+    empty = store.create_collection("Empty", "C:/empty", "m")
+    chat = store.create_chat(collection_id=empty.id)
+    refused = list(make(FakeLLM()).ask(chat.id, "hello"))
+    assert refused[-1]["type"] == "error"
+    events = list(make(FakeLLM(("Hi!",))).ask(chat.id, "hello", mode="chat"))
+    assert [e["type"] for e in events] == ["context", "token", "done"]
+
+
+def test_chat_mode_adds_no_citation_even_when_the_reply_repeats_a_document(env):
+    store, make, chat = env
+    llm = FakeLLM(("The lease term is three years",))
+    events = list(make(llm).ask(chat.id, "lease?", mode="chat"))
+    assert "".join(e["text"] for e in events if e["type"] == "token") == (
+        "The lease term is three years"
+    )
+
+
+def test_chat_messages_keep_the_earlier_exchanges_and_the_language():
+    history = [("q1", "The lease is three years [1]."), ("q2", NOT_FOUND["th"])]
+    messages = chat_messages("q3", history, "th")
+    assert "Thai" in messages[0]["content"]
+    assert [m["content"] for m in messages[1:]] == ["q1", "The lease is three years.", "q3"]
+
+
+def test_the_context_event_tells_the_prompt_size_window_and_history_kept(env):
+    store, make, chat = env
+    llm = FakeLLM(("Three years.",))
+    service = make(llm)
+    list(service.ask(chat.id, "How long is the lease term?"))
+    events = list(service.ask(chat.id, "and parking?", mode="chat"))
+    context = events[0]
+    assert context["type"] == "context"
+    assert (context["context_tokens"], context["reply_tokens"]) == (8192, 1024)
+    assert (context["history_kept"], context["history_total"]) == (1, 1)
+    sent = llm.calls[-1]
+    assert context["prompt_tokens"] == sum(estimate_tokens(m["content"]) + 8 for m in sent)
+    parts = context["parts"]
+    assert parts["sources"] == 0 and context["source_count"] == 0  # chat mode: none
+    assert parts["history"] == sum(estimate_tokens(m["content"]) + 8 for m in sent[1:-1])
+    assert parts["question"] == estimate_tokens("and parking?") + 8
+    assert sum(parts.values()) == context["prompt_tokens"]
+
+
+def test_the_context_event_counts_the_sources_apart_from_the_instructions(env):
+    store, make, chat = env
+    events = list(make(FakeLLM()).ask(chat.id, "How long is the lease term?", think=True))
+    context = next(e for e in events if e["type"] == "context")
+    assert context["source_count"] == 2
+    assert context["parts"]["sources"] > 0 and context["parts"]["instructions"] > 0
+    assert context["reply_tokens"] == 1024 + THINKING_HEADROOM
+
+
+def test_usage_chunks_become_throttled_usage_events_ending_with_the_final_counts(env):
+    store, make, chat = env
+    llm = FakeLLM(
+        (
+            Chunk("usage", usage=Usage(100, 1, 0.0)),
+            "Three ",
+            Chunk("usage", usage=Usage(100, 2, 30.0)),
+            "years.",
+            Chunk("usage", usage=Usage(100, 3, 31.25)),
+        )
+    )
+    events = list(make(llm).ask(chat.id, "lease?", mode="chat"))
+    usage = [e for e in events if e["type"] == "usage"]
+    assert usage[0] == {
+        "type": "usage",
+        "prompt_tokens": 100,
+        "generated_tokens": 1,
+        "tokens_per_second": 0.0,
+    }
+    assert usage[-1]["generated_tokens"] == 3 and usage[-1]["tokens_per_second"] == 31.2
+    assert len(usage) == 2  # the middle one came too soon after the first
+    assert store.list_messages(chat.id)[1].content == "Three years."
+
+
+def test_thinking_reserves_the_providers_extra_reply_room(env):
+    store, make, chat = env
+    long_answer = FakeLLM(("word " * 3000,))
+    list(make(long_answer).ask(chat.id, "tell me everything", mode="chat"))
+    plain, thinking = FakeLLM(("ok",)), FakeLLM(("ok",))
+    list(make(plain).ask(chat.id, "and then?", mode="chat"))
+    list(make(thinking).ask(chat.id, "and then?", mode="chat", think=True))
+    kept_plain = estimate_tokens(plain.calls[0][2]["content"])
+    kept_thinking = estimate_tokens(thinking.calls[0][2]["content"])
+    assert kept_plain - kept_thinking >= THINKING_HEADROOM - 16
 
 
 def test_a_missing_local_model_is_reported_with_its_reason(env):
@@ -408,7 +639,7 @@ def test_a_missing_local_model_is_reported_with_its_reason(env):
         raise ProviderError("No local model is installed.", "model_missing")
 
     events = list(make(no_model).ask(chat.id, "How long is the lease term?"))
-    assert [e["type"] for e in events] == ["sources", "error"]
+    assert [e["type"] for e in events] == ["sources", "context", "error"]
     assert events[-1] == {
         "type": "error",
         "message": "No local model is installed.",
@@ -557,7 +788,7 @@ def test_an_answer_with_only_thinking_is_reported_not_silent(env):
     store, make, chat = env
     llm = FakeLLM((Chunk("thinking", "Hmm."),))
     events = list(make(llm).ask(chat.id, "How long is the lease term?", think=True))
-    assert [e["type"] for e in events] == ["sources", "thinking", "error"]
+    assert [e["type"] for e in events] == ["sources", "context", "thinking", "error"]
     assert events[-1] == {
         "type": "error",
         "message": "The model returned no answer.",

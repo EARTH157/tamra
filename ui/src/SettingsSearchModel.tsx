@@ -10,18 +10,24 @@ import { formatSize, ModelAction } from "./SettingsLocal";
 const POLL_MS = 1000;
 const ROWS = {
   embedding: { title: "settings.searchModel", hint: "settings.searchModelHint", name: "bge-m3" },
+  reranker: {
+    title: "settings.rerankModel",
+    hint: "settings.rerankModelHint",
+    name: "bge-reranker-v2-m3",
+  },
   ocr: { title: "settings.ocrModel", hint: "settings.ocrModelHint", name: "PP-OCRv5" },
 } as const; // the dialog names the model, not its quantisation or file set
 
 type Props = ModelsApi & { kind?: keyof typeof ROWS };
 
-/** A model every mode needs (search, OCR): status, size and download, above the mode's own list. */
+/** A model every mode uses (search, reranking, OCR): status, size and download, above the mode's
+ * own list. */
 export default function SettingsSearchModel({ models, refresh, kind = "embedding" }: Props) {
   const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const row = ROWS[kind];
-  const model = kind === "ocr" ? models?.ocr : models?.embedding;
+  const model = models?.[kind];
   const active = model ? isDownloading(model) : false;
 
   useEffect(() => {

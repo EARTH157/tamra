@@ -1,4 +1,4 @@
-import { AlignLeft, Check, ChevronDown } from "lucide-react";
+import { AlignLeft, Check, ChevronDown, MessageCircle } from "lucide-react";
 import { useState } from "react";
 import { useT } from "./i18n";
 import PopMenu from "./PopMenu";
@@ -6,15 +6,19 @@ import type { AnswerMode } from "./types";
 
 type Props = { mode: AnswerMode; onChange: (mode: AnswerMode) => void };
 
-/** The "Answer" chip and its menu: write an answer, or only show the matching passages. */
+const iconOf = (mode: AnswerMode) => (mode === "chat" ? MessageCircle : AlignLeft);
+
+/** The "Answer" chip and its menu: write an answer, only show the matching passages, or chat. */
 export default function ModeMenu({ mode, onChange }: Props) {
   const t = useT();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const options: { mode: AnswerMode; name: string; text: string }[] = [
     { mode: "answer", name: t("chat.mode.answer"), text: t("chat.mode.answerText") },
     { mode: "search", name: t("chat.mode.search"), text: t("chat.mode.searchText") },
+    { mode: "chat", name: t("chat.mode.chat"), text: t("chat.mode.chatText") },
   ];
   const current = options.find((option) => option.mode === mode) ?? options[0];
+  const CurrentIcon = iconOf(current.mode);
 
   return (
     <>
@@ -26,7 +30,7 @@ export default function ModeMenu({ mode, onChange }: Props) {
         aria-label={`${t("chat.mode.menu")}: ${current.name}`}
         onClick={(event) => setAnchor(anchor ? null : event.currentTarget)}
       >
-        <AlignLeft size={14} />
+        <CurrentIcon size={14} />
         {current.name}
         <ChevronDown size={13} className="chip-chevron" />
       </button>
@@ -41,27 +45,30 @@ export default function ModeMenu({ mode, onChange }: Props) {
           }}
         >
           <div className="menu-heading">{t("chat.mode.menu")}</div>
-          {options.map((option) => (
-            <button
-              key={option.mode}
-              type="button"
-              role="menuitemradio"
-              aria-checked={option.mode === mode}
-              className="menu-entry"
-              onClick={() => {
-                setAnchor(null);
-                anchor.focus();
-                onChange(option.mode);
-              }}
-            >
-              <AlignLeft size={16} className="entry-icon" />
-              <span className="entry-text">
-                <span className="entry-name">{option.name}</span>
-                <span className="entry-note">{option.text}</span>
-              </span>
-              {option.mode === mode && <Check size={16} className="entry-check" />}
-            </button>
-          ))}
+          {options.map((option) => {
+            const OptionIcon = iconOf(option.mode);
+            return (
+              <button
+                key={option.mode}
+                type="button"
+                role="menuitemradio"
+                aria-checked={option.mode === mode}
+                className="menu-entry"
+                onClick={() => {
+                  setAnchor(null);
+                  anchor.focus();
+                  onChange(option.mode);
+                }}
+              >
+                <OptionIcon size={16} className="entry-icon" />
+                <span className="entry-text">
+                  <span className="entry-name">{option.name}</span>
+                  <span className="entry-note">{option.text}</span>
+                </span>
+                {option.mode === mode && <Check size={16} className="entry-check" />}
+              </button>
+            );
+          })}
         </PopMenu>
       )}
     </>

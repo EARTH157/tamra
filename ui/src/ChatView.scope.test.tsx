@@ -82,9 +82,66 @@ describe("Search in chip", () => {
   });
 
   it("shows the home project's name and how many more are searched", async () => {
+    mockFetch({ "GET /api/chats/5": () => json({ ...chatOf(5, 1, [1, 3]), messages: [] }) });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    expect(chip().textContent).toBe("HR Documents + 1");
+  });
+
+  it("says All projects when every project is searched", async () => {
     mockFetch({ "GET /api/chats/5": () => json({ ...chatOf(5, 1, [1, 2, 3]), messages: [] }) });
     view = await mount(<ChatView {...base} chatId={5} />);
-    expect(chip().textContent).toBe("HR Documents + 2");
+    expect(chip().textContent).toBe("All projects");
+  });
+
+  it("ticks every project with All projects, and leaves the home project when unticked", async () => {
+    const saved = [[1, 2, 3], [1]];
+    const calls = mockFetch({
+      "GET /api/chats/5": () => json({ ...chatOf(5, 1, [1]), messages: [] }),
+      "PUT /api/chats/5/scope": () => json(chatOf(5, 1, saved.shift()!)),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    await click(chip());
+    expect(item("All projects").getAttribute("aria-checked")).toBe("false");
+    await click(item("All projects"));
+    expect(item("All projects").getAttribute("aria-checked")).toBe("true");
+    expect(chip().textContent).toBe("All projects");
+    await click(item("All projects"));
+    expect(calls.filter((c) => c.key === "PUT /api/chats/5/scope").map((c) => c.body)).toEqual([
+      { project_ids: [1, 2, 3] },
+      { project_ids: [1] },
+    ]);
+    expect(chip().textContent).toBe("HR Documents");
+  });
+
+  it("saves what the chip shows before a general chat asks over the documents", async () => {
+    const general: Chat = { ...chatOf(9, 1, []), project_id: null };
+    const calls = mockFetch({
+      "GET /api/chats/9": () => json({ ...general, messages: [] }),
+      "PUT /api/chats/9/scope": () => json({ ...general, scope: [2] }),
+      "POST /api/chats/9/messages": () => sse([{ type: "done", message_id: 1 }]),
+    });
+    view = await mount(<ChatView {...base} chatId={9} />);
+    expect(chip().textContent).toBe("Contracts"); // no home: the first project
+    await ask();
+    expect(calls.map((c) => c.key).filter((key) => !key.startsWith("GET "))).toEqual([
+      "PUT /api/chats/9/scope",
+      "POST /api/chats/9/messages",
+    ]);
+    expect(calls.find((c) => c.key === "PUT /api/chats/9/scope")?.body).toEqual({
+      project_ids: [2],
+    });
+  });
+
+  it("hides the chip in Chat mode, which searches nothing", async () => {
+    mockFetch({ "GET /api/chats/5": () => json({ ...chatOf(5, 1, [1]), messages: [] }) });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    await click(view.container.querySelector('button[aria-label^="How Tamra responds"]'));
+    await click(
+      [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((el) =>
+        el.textContent?.startsWith("Chat"),
+      ),
+    );
+    expect(view.container.querySelector('button[aria-label^="Search in"]')).toBeNull();
   });
 
   it("names the first searched project when the home project is not searched", async () => {
@@ -98,13 +155,19 @@ describe("Search in chip", () => {
     view = await mount(<ChatView {...base} chatId={5} />);
     await click(chip());
     expect(items().map((el) => el.querySelector(".entry-name")?.textContent)).toEqual([
+      "All projects",
       "HR Documents",
       "Contracts",
       "Manuals",
     ]);
-    expect(items().map((el) => el.getAttribute("aria-checked"))).toEqual(["true", "false", "true"]);
-    expect(items()[0].textContent).toContain("home");
-    expect(items()[1].textContent).not.toContain("home");
+    expect(items().map((el) => el.getAttribute("aria-checked"))).toEqual([
+      "false",
+      "true",
+      "false",
+      "true",
+    ]);
+    expect(items()[1].textContent).toContain("home");
+    expect(items()[2].textContent).not.toContain("home");
   });
 
   it("saves a ticked project at once and keeps the menu open", async () => {
@@ -583,7 +646,7 @@ describe("keeping the chip in step with the core", () => {
     await settle();
     expect(onChatChanged).toHaveBeenCalledTimes(1);
     expect(onChatChanged).toHaveBeenCalledWith(chatOf(5, 1, [1, 2, 3]));
-    expect(chip().textContent).toBe("HR Documents + 2");
+    expect(chip().textContent).toBe("All projects");
   });
 
   it("waits for a save in flight before asking", async () => {

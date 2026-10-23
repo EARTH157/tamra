@@ -5,7 +5,7 @@ import time
 import httpx
 import pytest
 
-from tamra.llm.base import THINKING_HEADROOM, Chunk, ProviderError
+from tamra.llm.base import THINKING_HEADROOM, Chunk, ProviderError, Usage
 from tamra.llm.openai_compat import LLMError, OpenAICompatibleLLM, normalise_base_url
 
 
@@ -413,6 +413,47 @@ def test_api_requests_do_not_send_server_specific_fields():
 
     list(make(handler, kind="api").generate(USER, think=True))
     assert "chat_template_kwargs" not in seen["body"]
+    assert "timings_per_token" not in seen["body"]
+
+
+def _timings(prompt_n, predicted_n, cache_n=0, per_second=20.0):
+    return {
+        "cache_n": cache_n,
+        "prompt_n": prompt_n,
+        "predicted_n": predicted_n,
+        "predicted_per_second": per_second,
+    }
+
+
+def test_local_timings_become_usage_chunks_after_the_text():
+    seen = {}
+    body = sse(
+        {"choices": [{"delta": {"content": "Hi"}}], "timings": _timings(30, 1, cache_n=5)},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        {"choices": [], "timings": _timings(30, 2, cache_n=5, per_second=41.5)},
+    )
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=body)
+
+    assert list(make(handler, kind="local").generate(USER)) == [
+        Chunk("text", "Hi"),
+        Chunk("usage", usage=Usage(35, 1, 20.0)),
+        Chunk("usage", usage=Usage(35, 2, 41.5)),
+    ]
+    assert seen["body"]["timings_per_token"] is True
+
+
+def test_api_streams_ignore_timings_and_malformed_timings_are_skipped():
+    body = sse(
+        {"choices": [{"delta": {"content": "Hi"}}], "timings": _timings(30, 1)},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}], "timings": {"prompt_n": "x"}},
+    )
+    api = make(lambda r: httpx.Response(200, content=body), kind="api")
+    assert list(api.generate(USER)) == [Chunk("text", "Hi")]
+    local = make(lambda r: httpx.Response(200, content=body), kind="local")
+    assert [c.kind for c in local.generate(USER)] == ["text", "usage"]  # the malformed one: none
 
 
 @pytest.mark.parametrize(

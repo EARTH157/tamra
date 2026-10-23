@@ -1,11 +1,12 @@
 import hashlib
 import time
 
+import numpy as np
 import pytest
 from docgen import make_pdf
 from fakes import FakeEmbedder, FakeLLM, FakeLocalLLM, FakeOcr, fake_spans
 
-from tamra.answer import AnswerSettings
+from tamra.answer import API_CONTEXT_TOKENS, AnswerSettings
 from tamra.core import (
     AnswerBusy,
     BadName,
@@ -208,8 +209,9 @@ def test_a_project_cannot_be_deleted_while_an_answer_streams(tmp_path):
         (project,) = c.projects()
         chat = c.store.create_chat("Asking", project["id"])
         stream = c.answers.ask(chat.id, "How long is the lease term?")
-        next(stream)
-        next(stream)
+        next(stream)  # sources
+        next(stream)  # context
+        next(stream)  # the first token: the model is open
         with pytest.raises(AnswerBusy):
             c.delete_project(project["id"])
         assert len(c.projects()) == 1
@@ -290,14 +292,11 @@ def test_folders_of_two_projects_may_not_overlap(core, tmp_path):
     assert len(core.projects()) == 2
 
 
-def test_the_first_project_adopts_the_chats_that_have_no_home(core, tmp_path):
-    homeless = core.store.create_chat("Old chat")
-    first = core.create_project("One", str(make_docs(tmp_path, "one")))
-    adopted = core.store.get_chat(homeless.id)
-    assert (adopted.collection_id, adopted.scope) == (first.id, [first.id])
-    later = core.store.create_chat("Later")
-    core.create_project("Two", str(make_docs(tmp_path, "two")))
-    assert core.store.get_chat(later.id).collection_id is None  # only the first project adopts
+def test_a_new_project_leaves_general_chats_without_a_home(core, tmp_path):
+    general = core.store.create_chat("Old chat")
+    core.create_project("One", str(make_docs(tmp_path, "one")))
+    kept = core.store.get_chat(general.id)
+    assert (kept.collection_id, kept.scope) == (None, [])
 
 
 def test_a_file_resolves_under_its_own_projects_folder(core, tmp_path):
@@ -518,6 +517,12 @@ def test_apply_settings_saves_validates_and_survives_a_restart(tmp_path):
         again.shutdown()
 
 
+def test_the_route_carries_the_models_context_window(core):
+    assert core._route().context_tokens == core.local.ctx_size
+    core.apply_settings({"mode": "api"})
+    assert core._route().context_tokens == API_CONTEXT_TOKENS
+
+
 def test_an_api_answer_uses_the_stored_key_and_is_saved_as_anthropic(tmp_path, monkeypatch):
     keys = Keys(monkeypatch, anthropic="test-key")
     factory = ApiFactory()
@@ -670,6 +675,7 @@ def test_a_provider_is_not_closed_under_an_answer_that_is_streaming(tmp_path, mo
         chat = c.store.create_chat("", c.store.list_collections()[0].id)
         stream = c.answers.ask(chat.id, "How long is the lease term?")
         assert next(stream)["type"] == "sources"
+        assert next(stream)["type"] == "context"
         assert next(stream) == {"type": "token", "text": "one "}
         c.apply_settings({"mode": "api"})  # in the middle of the local answer
         assert not local.closed
@@ -690,8 +696,9 @@ def test_switching_back_to_local_before_the_stream_ends_keeps_the_local_model(
     try:
         chat = c.store.create_chat("", c.store.list_collections()[0].id)
         stream = c.answers.ask(chat.id, "How long is the lease term?")
-        next(stream)
-        next(stream)
+        next(stream)  # sources
+        next(stream)  # context
+        next(stream)  # the first token: the model is open
         c.apply_settings({"mode": "api"})
         c.apply_settings({"mode": "local"})
         assert [e["type"] for e in stream][-1] == "done"
@@ -825,6 +832,54 @@ def test_a_broken_ocr_model_is_not_reloaded_until_it_is_installed_again(tmp_path
         c._model_installed("pp-ocrv5-mobile")  # downloaded again from Settings
         first = c.ocr_engine()
         assert first is not None and c.ocr_engine() is first and len(attempts) == 2
+    finally:
+        c.shutdown()
+
+
+class FakeReranker:
+    def __init__(self):
+        self.calls = []
+
+    def score(self, query, texts):
+        self.calls.append(texts)
+        return np.array([float(len(t)) for t in texts])  # longest passage first
+
+
+def test_the_reranker_is_not_loaded_while_it_is_not_installed(tmp_path):
+    c = make_core(tmp_path)  # the real factory: an empty models folder
+    try:
+        assert c.reranker() is None
+        assert c._rerank("q", ["a"]) is None
+    finally:
+        c.shutdown()
+
+
+def test_answers_use_the_reranker_once_it_is_installed(tmp_path):
+    reranker = FakeReranker()
+    c = make_core(tmp_path, reranker_factory=lambda: reranker)
+    try:
+        assert c._rerank("q", ["a", "bbb"]).tolist() == [1.0, 3.0]
+        assert reranker.calls == [["a", "bbb"]]
+        assert c.reranker() is reranker  # loaded once, then kept
+    finally:
+        c.shutdown()
+
+
+def test_a_broken_reranker_is_not_reloaded_until_it_is_installed_again(tmp_path):
+    attempts = []
+
+    def factory():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("damaged model file")
+        return FakeReranker()
+
+    c = make_core(tmp_path, reranker_factory=factory)
+    try:
+        assert c.reranker() is None
+        assert c._rerank("q", ["a"]) is None and len(attempts) == 1
+        c._model_installed("bge-reranker-v2-m3-int8")  # downloaded again from Settings
+        assert c.reranker() is not None and len(attempts) == 2
     finally:
         c.shutdown()
 

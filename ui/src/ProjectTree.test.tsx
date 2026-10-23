@@ -671,15 +671,15 @@ describe("The current project", () => {
 describe("Chats without a project", () => {
   const orphan: Chat = { ...chat(8, "Old question", 1), project_id: null, scope: [] };
 
-  it("lists them under Other chats, only when there are some", async () => {
+  it("lists them under Chats, only when there are some", async () => {
     boot({ projects: [contracts], chats: [lease] });
     view = await mount(<App />);
-    expect(view.container.textContent).not.toContain("Other chats");
+    expect(view.container.querySelector(".project-group")).toBeNull();
     await view.unmount();
     boot({ projects: [contracts], chats: [lease, orphan] });
     view = await mount(<App />);
     const group = view.container.querySelector(".project-group");
-    expect(group?.querySelector(".project-group-label")?.textContent).toBe("Other chats");
+    expect(group?.querySelector(".project-group-label")?.textContent).toBe("Chats");
     expect(group?.querySelector(".chat-title")?.textContent).toBe("Old question");
   });
 

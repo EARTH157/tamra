@@ -4,15 +4,16 @@
 
 Starts Tamra.exe in dev mode (API only on 127.0.0.1:8765; the packaged exe takes the token
 from TAMRA_DEV_TOKEN, and the smoke makes a fresh one that it never prints) with a scratch data
-folder and a scratch models folder that holds only the embedding and OCR models (hard-linked
-from .models), then:
+folder and a scratch models folder that holds only the embedding, reranker and OCR models
+(hard-linked from .models), then:
 
 1. Imports the dev GGUF that fetch_assets.py downloads (qwen2.5-0.5b-instruct) through
    POST /api/models/import, as an uncatalogued model, and selects it as the local model.
 2. Creates two projects, "Company" and "Contracts", from two sibling folders that hold six
    documents of the eval corpus, and waits for both to be indexed. Asks one question in each
    language and one off-topic question in chats that search both projects, and checks the
-   streamed answers and the saved chats (provider "local").
+   streamed answers and the saved chats (provider "local"). Checks that those answers were
+   reranked (the reranker is installed, the app log says it loaded, and nothing failed).
 3. Asks one question with "think" on; the 0.5B model cannot think, so this only checks that the
    request is accepted.
 4. Adds a file to the Company folder to check the folder watcher.
@@ -306,9 +307,9 @@ def check_source_viewer(
 
 
 def link_models(src: Path, dest: Path) -> None:
-    """Make the embedding and OCR model folders of src available under dest without copying
-    (a copy when hard links fail). The LLM is not linked: it comes from the import step."""
-    for folder in ("bge-m3", "ppocr-v5"):
+    """Make the embedding, reranker and OCR model folders of src available under dest without
+    copying (a copy when hard links fail). The LLM is not linked: it comes from the import step."""
+    for folder in ("bge-m3", "bge-reranker-v2-m3", "ppocr-v5"):
         if not (src / folder).is_dir():
             raise SystemExit(f"missing {src / folder}; run scripts/fetch_assets.py")
         for f in (src / folder).iterdir():
@@ -318,6 +319,22 @@ def link_models(src: Path, dest: Path) -> None:
                 os.link(f, target)
             except OSError:
                 shutil.copy2(f, target)
+
+
+def check_reranker(client: httpx.Client, data_dir: Path, report: dict, problems: list[str]) -> None:
+    """The answers above were reranked: the reranker is listed as installed, the app log says it
+    loaded, and no reranking failed (a failure falls back to the fused order silently)."""
+    listed = client.get("/api/models").json().get("reranker") or {}
+    log_text = (data_dir / "logs" / "tamra.log").read_text(encoding="utf-8", errors="replace")
+    report["reranker"] = {
+        "installed": listed.get("installed"),
+        "loaded": "the reranker is loaded" in log_text,
+        "failed": "reranking failed" in log_text or "reranker cannot be loaded" in log_text,
+    }
+    if not listed.get("installed"):
+        problems.append("reranker: not listed as installed")
+    if not report["reranker"]["loaded"] or report["reranker"]["failed"]:
+        problems.append(f"reranker: answers were not reranked: {report['reranker']}")
 
 
 def put_settings(client: httpx.Client, **fields) -> dict:
@@ -710,7 +727,7 @@ def main() -> int:
             for file in files:
                 shutil.copy2(corpus / file, folders[name] / file)
         shutil.rmtree(corpus)
-        models = Path(tmp) / "models"  # embedding + OCR models: the LLM comes from the import
+        models = Path(tmp) / "models"  # embedding, reranker, OCR: the LLM comes from the import
         link_models(ROOT / ".models", models)
         token = secrets.token_urlsafe(32)  # never printed or reported
         env = {
@@ -765,6 +782,7 @@ def main() -> int:
                     report["answers"].append(result)
                     if answers:
                         saved_answers[question_id] = answers[-1]
+                check_reranker(client, Path(tmp) / "data", report, problems)
                 check_source_viewer(
                     client,
                     saved_answers.get("en-lease-rent"),

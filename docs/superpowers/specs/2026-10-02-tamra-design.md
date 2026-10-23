@@ -17,13 +17,15 @@ answer can be checked against the exact passage it came from.
 - Runs on any Windows machine, from low-spec laptops to GPU desktops, by letting the user
   pick an LLM size suited to the hardware.
 - Every answer is verifiable: inline `[n]` citations, and selecting any text in an answer
-  shows the source passage that supports it.
+  shows the source passage that supports it. A Chat-mode reply, which searches nothing,
+  says that it is not from the documents instead (§6).
 
 **Non-goals for v1**
 - Platforms other than Windows 10/11 x64.
 - File types beyond PDF, DOCX, TXT, MD (no XLSX, PPTX, HTML, images-as-files).
-- Reranking model, LLM-based query rewriting, auto-update, code signing, multi-user or
-  server deployment, remote model catalog.
+- LLM-based query rewriting, auto-update, code signing, multi-user or server deployment,
+  remote model catalog. (A reranking model was a non-goal too; it was added later as an
+  optional download: see §6.)
 
 ## 2. Key decisions
 
@@ -85,8 +87,9 @@ which is started on demand in local mode and stopped when the app exits.
   point of `text` (x0, y0, x1, y1 as fractions of the page, top-left origin; a newline has zeros).
   Primary key (`file_id`, `page`); deleted with the file.
 - `chats(id, title, collection_id, created_at, updated_at, activity)` — `collection_id` is the
-  chat's **home** project, which sets where the sidebar lists it (null only for a chat made
-  before any project existed). `chat_collections(chat_id, collection_id)` is its **search
+  chat's **home** project, which sets where the sidebar lists it. It is null for a **general
+  chat** (§6): one started in Chat mode, or made before any project existed. A new project
+  never takes over a general chat; moving it to a project gives it a home. `chat_collections(chat_id, collection_id)` is its **search
   scope**: the projects a question searches. Deleting a collection deletes its home chats and
   removes it from the scope of the others. Collection names are unique, ignoring case.
 - `messages(id, chat_id, role, content, provider, model, created_at)`
@@ -145,31 +148,103 @@ stored in `ocr_pages`.
 
 ## 6. Retrieval and answering
 
+- **Modes:** the composer's mode chip picks how Tamra responds to a question:
+  - **Answer** (default): retrieve, then write an answer that cites its sources.
+  - **Search only:** retrieve and show the passages, with no model call.
+  - **Chat:** ask the model without searching the documents. The prompt has no sources and
+    tells the model it cannot see the user's documents and must not write `[n]` markers.
+    The conversation history and answer language follow the rules below. No project needs
+    to be indexed. The reply is saved with no sources and is never auto-cited. The UI says
+    it is a general answer that is not from the documents, hides "Check source" and the
+    "Search in" chip, and tells a saved Chat reply from the not-found reply because it has
+    model text and no sources.
+  - A new chat whose first question is asked in Chat mode is a **general chat**
+    (`POST /api/chats {general: true}`): it has no home project and the sidebar lists it under
+    "Chats", apart from the projects. The mode can still change in it. A general chat with
+    no scope that asks in Answer or Search only mode first saves the projects the chip shows
+    (the first project) as its scope, since it has no home to fall back on.
 - Each chat has a search scope of one or more projects (collections), chosen with the
   "Search in" chip in the composer. It defaults to the chat's home project and can change
   mid-chat. If a scope ends up empty (a project in it was deleted), it falls back to the
   home project; a chat with neither searches nothing. A project whose index was built with
   another embedding model (stale) is left out of the search and named in a notice; if every
   project in scope is stale, the question gets an error asking for a rebuild instead.
+  When there is more than one project, the menu starts with "All projects": it ticks every
+  project there is now (a project added later is not ticked by itself), and unticking it
+  leaves only the home project. The chip says "All projects" while every project is ticked.
   When an answer's sources come from more than one project, each source shows its project's
   name.
 - **Query text:** the latest user question plus the previous user question, so follow-ups
   like "what about item 2?" stay on topic without an extra LLM call.
-- **Conversation:** the last 4 exchanges of the chat go to the model, their citation markers
-  removed, each question and answer cut to 600 characters. Unanswered questions and
-  not-found replies are left out.
+- **Conversation (token budget):** earlier exchanges go to the model newest first, as many
+  as fit a token budget, then in order (oldest first). Their citation markers are removed.
+  Unanswered questions and not-found replies are left out. At most the last 50 are read.
+  - **Room:** the model's context window less the reply's budget. The budget is
+    `max_tokens` (1024), plus the 2048-token thinking headroom where the provider asks for
+    it: a local model with "Think longer" on, and every Anthropic request. The window is
+    the local model's context window (§9, 8k to 64k) and 32,000 tokens for API mode. 32,000
+    tokens is a size every supported endpoint has, including small OpenAI-compatible
+    servers.
+  - **Budget:** the room less the system prompt (with its sources), the question and a
+    256-token margin. In Answer mode history also gets at most a quarter of the room: the
+    sources come first, and a short prompt keeps small models on them. Their prompt also
+    changes with every question, so llama-server cannot reuse its cache. In Chat mode, which
+    has no sources, history gets the whole budget.
+  - **Fitting:** exchanges are kept whole and contiguous; the first one that does not fit
+    ends the history. The newest exchange is cut to fit instead of being dropped, because a
+    follow-up question needs it.
+  - **Counting:** tokens are estimated, not measured. Three letters or spaces of a
+    Latin-script text count one token. Any other character counts one: a Thai or CJK
+    character, CJK punctuation, a digit (Qwen splits numbers into digits) or a symbol. The
+    estimate errs high so that a prompt never overflows. Checked against Qwen3-8B's
+    tokenizer, the estimate is at or above the real count: Thai 102 vs 61, English 38 vs 28,
+    Chinese 30 vs 24, code 42 vs 31, an invoice line 46 vs 45. The cost is some unused room,
+    most of it for Thai.
 - **Hybrid search:** dense KNN (`sqlite-vec`) and keyword (FTS5 trigram, BM25), each top
   ~30, fused with Reciprocal Rank Fusion.
+- **Reranking (optional):** when the bge-reranker-v2-m3 cross-encoder is installed, the top 10
+  fused candidates (at least the context budget) are scored against the query and reordered
+  before the budget is taken. Without it, or if it fails, the fused order is kept. It only
+  reorders: the "not found" gate below stays on the dense similarity. On the eval set it
+  raises hit@4 from 0.92 to 1.00 (Thai 0.75 to 1.00) and costs about 0.45 s per full chunk
+  on a CPU (`docs/spikes/2026-10-reranker-results.md`).
 - **Context budget:** take the top chunks that fit the active model's context, about 4 for
   small local models and 8–10 for large local or API models. If over budget, drop the
   lowest-ranked chunks first.
 - **No relevant results:** if the best fused result is below threshold, reply "not found in
   the documents" without calling the LLM. The threshold is tuned on the eval set (§12).
+  The last reply of a chat, when it is not found, offers "Ask the model anyway (no
+  sources)". This asks the same question again in Chat mode as a new exchange. It never
+  happens without that click, and a draft in the question box is kept.
 - **Prompt:** numbered sources `[1]..[k]` with file name and location. Instructions: answer
   only from the sources, put `[n]` after each supported claim, answer in the language of
   the question, and say so plainly when the sources are insufficient.
 - **Streaming:** tokens go to the UI over SSE, and generation can be cancelled. `[n]`
   markers render as clickable chips that open the source popup (§7).
+- **Context and token counts:**
+  - Before the model is called (Answer and Chat modes), a `context` event gives:
+    - the context window and the room kept for the reply;
+    - the estimated prompt, part by part: instructions, passages (and how many), earlier
+      messages and the question;
+    - how many of the chat's answered exchanges the prompt kept.
+  - The local model is asked for llama-server's per-token timings (`timings_per_token`).
+    Its provider yields them as `usage` chunks: the whole prompt (including the part reused
+    from llama-server's cache), the tokens generated so far (thinking and answer) and the
+    speed. The answer service sends them as `usage` events at most every 0.25 s, and always
+    sends the final counts. API providers send none.
+  - Above the question box, each chat shows a bar and "Context ≈2.1k / 8.2k tokens". It
+    shows the estimate, then the local model's real count of prompt and generated tokens.
+    The bar turns amber at 90%. The line also says how many earlier exchanges the model
+    remembers, or how many older ones were left out. "Details" opens a stacked bar and a
+    list of what fills the window:
+    - instructions, passages, earlier messages and the question;
+    - what the model has written so far;
+    - the room kept for the reply, and what is free.
+
+    Once the local model has counted its prompt, the estimated parts are scaled to that
+    count. While the local
+    model writes, a line under the answer counts its tokens and speed. The saved answer's
+    meta line keeps them. These counts stay in memory only, for this session.
 - **Persistence:** after the answer completes, save the message and one `message_sources`
   row per `[n]`, including the text snapshot and the file hash at answer time. Old chats
   keep showing what the model actually saw, even if the document changes later.
@@ -222,7 +297,7 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 ## 9. Models and settings
 
 - **Catalog:** `catalog.json` shipped with the app. Each entry has `id`, `role`
-  (embedding|llm|ocr), `tier` (small|medium|large), `file_size`, `url` (Hugging Face or
+  (embedding|reranker|llm|ocr), `tier` (small|medium|large), `file_size`, `url` (Hugging Face or
   ModelScope), `sha256`, `license`, `languages`, `context_length`. It updates with app releases.
   The OCR entry's files come from ModelScope (RapidAI's ONNX conversion of PaddleOCR's
   Apache-2.0 models), pinned like the others.
@@ -237,12 +312,45 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
   use, stored in `models\`.
 - **Import:** pick a model file, which is hashed and matched against the catalog. An LLM file
   on a fixed or network drive is used where it is (linked, not copied) and selected. One on
-  a removable drive is copied into `models\`, and so is every embedding and OCR file. The
+  a removable drive is copied into `models\`, and so is every embedding, reranker and OCR file. The
   embedding model must match the catalog exactly. Uncatalogued GGUF files are allowed for
   the LLM role, with a warning.
 - **Other tools' models:** GGUF chat models that Ollama, LM Studio or the Hugging Face
   cache already hold are found and run in place. Tamra never writes to those stores. See
   `2026-10-23-external-models-design.md`.
+- **Local context window:** llama-server starts with `-c` set to the local model's context
+  window. Its KV cache is always q8_0 (`-ctk q8_0 -ctv q8_0`), which llama.cpp runs with
+  flash attention. At 32k tokens on Qwen2.5-0.5B (RTX 5060 Laptop), that cut the cache from
+  384 to 204 MiB.
+  - **Model shape:** read from the GGUF metadata (`tamra.models.gguf`):
+    - the trained context length;
+    - the KV bytes per token: Σ over full-attention layers of KV heads × (key + value length)
+      × 34/32;
+    - a fixed cache for sliding-window layers (`sliding_window_pattern`): their window in
+      each of llama-server's 4 slots, plus one 512-token batch.
+
+    Layers that reuse another's cache (`shared_kv_layers`, or zero KV heads) cost nothing.
+    A model whose file has no pattern counts every layer in full, which errs high. The
+    formula was checked against llama.cpp's own buffers:
+    - Gemma 4 E4B: 8,704 bytes per token (204 MiB more from 8k to 32k), and a 53 MiB
+      window cache;
+    - Qwen2.5-0.5B: 6,528 bytes per token.
+  - **Memory budget:**
+    - With a discrete GPU: the largest one's VRAM less 1 GiB of margin (llama-server's own
+      `--fit-target`), 512 MiB of compute buffers and the model file.
+    - Without one (an integrated GPU shares RAM): half the RAM less the buffers and the model.
+  - **Setting `local_context`:**
+    - `auto` (default) takes the largest of 32k and 16k whose cache fits the budget, else
+      8k. It is never above 32k, because long prompts get slow to read, and never below
+      8k, the size every machine ran before.
+    - A chosen size (8k, 16k, 32k or 64k) is used as it is.
+    - Either is capped at the model's trained length.
+  - **Settings page:** it shows "Auto (16k on this computer)". It warns when a chosen size
+    is more than "auto" (it may run slower or fall back to the CPU) or more than the model
+    reads.
+  - **Restart:** the size is worked out again on every answer. When it changes (another
+    model, the setting, or the hardware), llama-server restarts with it. The token budget
+    (§6) uses the same size.
 - **Settings:**
   - Mode: `local` or `api`.
   - API provider: Anthropic or OpenAI-compatible (base URL), plus model name. The default

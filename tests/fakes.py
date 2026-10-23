@@ -93,6 +93,7 @@ class FakeLocalLLM:
 
     label = "fake-model"
     gpu_offload: bool | None = None
+    ctx_size = 8192
 
     def __init__(self, llm: "FakeLLM | None" = None):
         self.llm = llm or FakeLLM()

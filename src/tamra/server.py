@@ -145,6 +145,7 @@ class FolderBody(BaseModel):
 
 class NewChatBody(BaseModel):
     project_id: int | None = None
+    general: bool = False  # a general chat (spec §6): no home project, listed under Chats
 
 
 class ChatChangeBody(BaseModel):
@@ -158,7 +159,7 @@ class ScopeBody(BaseModel):
 
 class QuestionBody(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
-    mode: Literal["answer", "search"] = "answer"
+    mode: Literal["answer", "search", "chat"] = "answer"
     think: bool = False
 
 
@@ -411,10 +412,14 @@ def _add_routes(app: FastAPI, core: Core) -> None:
 
     @app.post("/api/chats", status_code=201)
     def create_chat(body: NewChatBody | None = None) -> dict:
+        if body is not None and body.general:
+            if body.project_id is not None:
+                raise HTTPException(status_code=400, detail="A general chat has no project.")
+            return _chat_payload(core.store.create_chat("", None))
         project_id = body.project_id if body is not None else None
         if project_id is None:
             # No project named: the oldest one (lowest id) is home. Before any project the chat
-            # has no home; the first project created adopts it.
+            # has no home, so it is a general chat.
             projects = core.store.list_collections()
             project_id = min(p.id for p in projects) if projects else None
         try:
@@ -819,15 +824,21 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
                 }
             )
         embedding = catalog.embedding()
+        reranker = catalog.reranker()
         ocr = catalog.ocr()
         settings = core.settings
         # The local model that local mode would serve now; the same resolution LocalLLM uses.
         try:
             local_id: str | None
-            local_id, _, local_name = core.resolve_local_model()
+            local_id, local_path, local_name = core.resolve_local_model()
             local_label: str | None = local_name
+            # The local model's context window as set, and what "auto" picks on this computer.
+            context: dict | None = {
+                "tokens": core.local_context(local_path),
+                "auto": core.local_context(local_path, "auto"),
+            }
         except ProviderError:  # no local model is installed
-            local_id = local_label = None
+            local_id = local_label = context = None
         label = settings.api_model if settings.mode == "api" else local_label
         return {
             "hardware": {
@@ -839,10 +850,14 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
             },
             "recommended_tier": tier,
             "active": {"mode": settings.mode, "label": label, "id": local_id},
+            "context": context,
             "gpu_offload": core.local.gpu_offload,
             "local": local,
             "uncatalogued": uncatalogued,
             "embedding": _entry_payload(embedding, embedding.id in installed, status[embedding.id]),
+            "reranker": None
+            if reranker is None
+            else _entry_payload(reranker, reranker.id in installed, status[reranker.id]),
             "ocr": None
             if ocr is None
             else _entry_payload(ocr, ocr.id in installed, status[ocr.id]),

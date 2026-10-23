@@ -39,6 +39,7 @@ def test_every_field_round_trips(store):
     changes = {
         "mode": "api",
         "local_model_id": "import:my-model.gguf",
+        "local_context": "32768",
         "api_provider": "openai",
         "api_model": "gpt-x",
         "api_base_url": "https://example.test/v1",
@@ -76,6 +77,8 @@ def test_local_model_id_can_be_cleared(store):
         ("mode", "cloud"),
         ("local_model_id", ""),
         ("local_model_id", 5),
+        ("local_context", "12345"),
+        ("local_context", 8192),
         ("api_provider", "gemini"),
         ("api_model", ""),
         ("api_model", 3),

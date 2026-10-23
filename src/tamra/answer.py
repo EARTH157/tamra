@@ -3,6 +3,7 @@
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -10,10 +11,10 @@ from typing import Literal
 import numpy as np
 
 from tamra.embedder import EmbedderUnavailable
-from tamra.llm.base import LLMError, Message, Provider
+from tamra.llm.base import THINKING_HEADROOM, LLMError, Message, Provider, Usage
 from tamra.llm.llama_server import LlamaServerError
 from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
-from tamra.store import Collection, SourceRecord, Store
+from tamra.store import ChunkRecord, Collection, SourceRecord, Store
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +39,15 @@ Sources:
 {sources}
 
 Example answer format: The rent is 10,000 baht [1]."""
+# Chat mode (spec §6): no retrieval, so the reply must not pass for a cited answer.
+CHAT_PROMPT = """You are a helpful assistant. In this conversation you cannot see the user's
+documents.
+Rules:
+- Answer from general knowledge. Never say a fact comes from the user's documents, and do not
+  write citation markers like [1].
+- If you are not sure, say so plainly.
+- Write the whole answer in {language}, the language of the question.
+- Be concise."""
 
 AUTO_CITE_MIN_OVERLAP = 0.5  # share of the answer's trigrams found in one source
 # One citation marker: [1], [12] or a group such as [1, 2]. tamra.attribution and the UI
@@ -47,7 +57,14 @@ _MARKER = re.compile(MARKER_GROUP)
 # A marker with the spaces before it, so "years [1]." becomes "years." without a double space.
 _SPACED_MARKER = re.compile(r"[ \t]*" + MARKER_GROUP)
 _NOT_FOUND_REPLIES = frozenset(NOT_FOUND.values())
-HISTORY_TURNS = 4  # earlier exchanges sent to the model: fits beside the 4-source local budget
+MAX_HISTORY_TURNS = 50  # earlier exchanges read for the prompt; the token budget picks from them
+LOCAL_CONTEXT_TOKENS = 8192  # llama-server's -c (tamra.llm.runtime.LocalLLM)
+# API endpoints: a window every supported model has, including small OpenAI-compatible servers
+API_CONTEXT_TOKENS = 32_000
+ANSWER_HISTORY_SHARE = 0.25  # Answer mode: history gets at most this share of the prompt room
+PROMPT_MARGIN = 256  # chat-template tokens and estimate error
+MESSAGE_TOKENS = 8  # chat-template tokens around one message
+USAGE_INTERVAL = 0.25  # seconds between usage events: the UI's counter, not every token
 _DIGITS = re.compile(r"\d+")
 
 
@@ -63,6 +80,7 @@ class Route:
 
     name: str
     open: Callable[[], Provider]
+    context_tokens: int = LOCAL_CONTEXT_TOKENS  # the model's context window: prompt and reply
 
 
 @dataclass(frozen=True)
@@ -72,6 +90,10 @@ class AnswerSettings:
     # below this best dense similarity: "not found" (M1 eval; docs/spikes/2026-10-m1-results.md)
     min_similarity: float = 0.43
     max_tokens: int = 1024
+    # fused candidates the reranker reorders before the top k are taken: each full chunk costs
+    # ~0.45 s on a CPU, and every eval hit was in the fused top 10
+    # (docs/spikes/2026-10-reranker-results.md)
+    rerank_candidates: int = 10
 
 
 def detect_language(text: str) -> str:
@@ -165,27 +187,136 @@ def build_messages(
     history: Sequence[tuple[str, str | None]],
     sources: list[SourceRecord],
     language: str,
+    room: int = LOCAL_CONTEXT_TOKENS - AnswerSettings.max_tokens,
 ) -> list[Message]:
     """The prompt: system with the sources, the answered earlier exchanges (oldest first), then
-    the question. Earlier answers lose their markers: their sources are no longer in the prompt."""
-    blocks = "\n\n".join(
+    the question. Earlier answers lose their markers: their sources are no longer in the prompt.
+
+    room is the prompt's share of the context window (the window less the reply's max tokens).
+    History gets what the sources and question leave, at most ANSWER_HISTORY_SHARE of room: the
+    sources come first, and a short prompt keeps a small model on them (spec §6)."""
+    system = SYSTEM_PROMPT.format(language=LANGUAGE_NAMES[language], sources=_blocks(sources))
+    budget = min(_left(room, system, question), int(room * ANSWER_HISTORY_SHARE))
+    return _with_history(system, history, question, budget)
+
+
+def _blocks(sources: list[SourceRecord]) -> str:
+    """The numbered sources as the system prompt lists them."""
+    return "\n\n".join(
         f"[{s.n}] {s.rel_path} ({location_label(s.location)})\n{s.text}" for s in sources
     )
-    messages: list[Message] = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT.format(language=LANGUAGE_NAMES[language], sources=blocks),
-        }
-    ]
-    for earlier_question, earlier_answer in history:
-        answer = _SPACED_MARKER.sub("", earlier_answer or "").strip()[:600]
-        # Cancelled, failed and search-mode questions have no answer; a not-found reply would only
-        # teach the model to say "not found" again.
-        if answer and answer not in _NOT_FOUND_REPLIES:
-            messages.append({"role": "user", "content": earlier_question[:600]})
-            messages.append({"role": "assistant", "content": answer})
-    messages.append({"role": "user", "content": question})
-    return messages
+
+
+def chat_messages(
+    question: str,
+    history: Sequence[tuple[str, str | None]],
+    language: str,
+    room: int = LOCAL_CONTEXT_TOKENS - AnswerSettings.max_tokens,
+) -> list[Message]:
+    """The chat-mode prompt: no sources, the earlier exchanges in all the room the system prompt
+    and question leave, then the question."""
+    system = CHAT_PROMPT.format(language=LANGUAGE_NAMES[language])
+    return _with_history(system, history, question, _left(room, system, question))
+
+
+def _is_light(c: str) -> bool:
+    """A Latin-script letter or a space: tokenizers merge about three or four into one token.
+    Thai and CJK characters (and CJK punctuation), digits (Qwen splits numbers into single
+    digits) and symbols cost about one token each."""
+    o = ord(c)
+    wide = 0x0E00 <= o <= 0x0E7F or 0x3000 <= o <= 0x9FFF or 0xFF00 <= o <= 0xFFEF
+    return not wide and (c.isalpha() or c.isspace())
+
+
+def estimate_tokens(text: str) -> int:
+    """A token count that errs high for the models Tamra runs: three letters or spaces of a
+    Latin-script text count one; any other character counts one."""
+    light = sum(1 for c in text if _is_light(c))
+    return len(text) - light + -(-light // 3)
+
+
+def _cut(text: str, tokens: int) -> str:
+    """The longest start of text whose estimate fits in tokens."""
+    cost = 0.0
+    for i, c in enumerate(text):
+        cost += 1 / 3 if _is_light(c) else 1
+        if cost > tokens:
+            return text[:i]
+    return text
+
+
+def _left(room: int, system: str, question: str) -> int:
+    """The tokens room leaves for history beside the system prompt and the question."""
+    return room - estimate_tokens(system) - estimate_tokens(question) - PROMPT_MARGIN
+
+
+def _earlier_answer(answer: str | None) -> str | None:
+    """An earlier answer as the prompt repeats it, without markers; None when it is left out.
+
+    Cancelled, failed and search-mode questions have no answer; a not-found reply would only
+    teach the model to say "not found" again."""
+    text = _SPACED_MARKER.sub("", answer or "").strip()
+    return text if text and text not in _NOT_FOUND_REPLIES else None
+
+
+def context_event(
+    messages: list[Message],
+    history: Sequence[tuple[str, str | None]],
+    sources: list[SourceRecord],
+    context_tokens: int,
+    reply_tokens: int,
+) -> dict:
+    """What the prompt puts in the context window, part by part (estimated), what is kept for
+    the reply, and how many of the chat's answered exchanges the prompt kept (spec §6)."""
+
+    def tokens(message: Message) -> int:
+        return estimate_tokens(message["content"]) + MESSAGE_TOKENS
+
+    source_tokens = estimate_tokens(_blocks(sources)) if sources else 0
+    parts = {
+        "instructions": tokens(messages[0]) - source_tokens,
+        "sources": source_tokens,
+        "history": sum(tokens(m) for m in messages[1:-1]),
+        "question": tokens(messages[-1]),
+    }
+    return {
+        "type": "context",
+        "prompt_tokens": sum(parts.values()),
+        "context_tokens": context_tokens,
+        "reply_tokens": reply_tokens,
+        "parts": parts,
+        "source_count": len(sources),
+        "history_kept": (len(messages) - 2) // 2,
+        "history_total": sum(1 for _, answer in history if _earlier_answer(answer) is not None),
+    }
+
+
+def _with_history(
+    system: str, history: Sequence[tuple[str, str | None]], question: str, budget: int
+) -> list[Message]:
+    """system, the newest earlier exchanges that fit in budget tokens (oldest first), then the
+    question. The newest exchange is cut to fit rather than dropped: a follow-up needs it."""
+    kept: list[Message] = []
+    for earlier_question, earlier_answer in reversed(history):
+        answer = _earlier_answer(earlier_answer)
+        if answer is None:
+            continue
+        asked = estimate_tokens(earlier_question) + MESSAGE_TOKENS
+        cost = asked + estimate_tokens(answer) + MESSAGE_TOKENS
+        if cost > budget:
+            room_for_answer = budget - asked - MESSAGE_TOKENS
+            if not kept and room_for_answer > 0:
+                kept = [
+                    {"role": "user", "content": earlier_question},
+                    {"role": "assistant", "content": _cut(answer, room_for_answer)},
+                ]
+            break
+        budget -= cost
+        kept[:0] = [
+            {"role": "user", "content": earlier_question},
+            {"role": "assistant", "content": answer},
+        ]
+    return [{"role": "system", "content": system}, *kept, {"role": "user", "content": question}]
 
 
 class StaleIndex(Exception):
@@ -215,11 +346,16 @@ class AnswerService:
         model_id: str,
         settings: AnswerSettings | None = None,
         on_saved: Callable[[int], None] | None = None,
+        rerank: Callable[[str, list[str]], np.ndarray | None] | None = None,
     ):
         """on_saved(message_id) runs after a generated answer is saved, on the answering thread:
-        it must return quickly (start a thread for slow work). Its failures are only logged."""
+        it must return quickly (start a thread for slow work). Its failures are only logged.
+
+        rerank(query, texts) scores passages for the query, higher is better; it returns None
+        while the reranker is not installed, and the fused order is kept."""
         self._store = store
         self._embed_query = embed_query
+        self._rerank = rerank
         self._route = route
         self._model_id = model_id
         self._settings = settings or AnswerSettings()
@@ -275,25 +411,48 @@ class AnswerService:
         self, collection_ids: Sequence[int], vector: np.ndarray, query: str, k: int
     ) -> list[SourceRecord]:
         """The best k passages of these projects for the query, numbered from 1, best first.
-        None when even the best is not close enough: the "not found" gate of spec §6."""
+        None when even the best is not close enough: the "not found" gate of spec §6.
+
+        The gate uses the dense similarity of the fused hits; the reranker, when installed, only
+        reorders the top candidates."""
         hits = hybrid_search(self._store, collection_ids, vector, fts_query(query))
         if best_similarity(hits) < self._settings.min_similarity:
             return []
-        chunks = self._store.get_chunks([hit.chunk_id for hit in hits[:k]])
+        if self._rerank is None:
+            chunks = self._store.get_chunks([hit.chunk_id for hit in hits[:k]])
+        else:
+            n = max(k, self._settings.rerank_candidates)
+            chunks = self._reranked(query, self._store.get_chunks([h.chunk_id for h in hits[:n]]))
+            chunks = chunks[:k]
         return [
             SourceRecord(n, c.id, c.file_id, c.rel_path, c.text, c.location, c.file_hash)
             for n, c in enumerate(chunks, start=1)
         ]
+
+    def _reranked(self, query: str, chunks: list[ChunkRecord]) -> list[ChunkRecord]:
+        """chunks reordered by reranker score, best first; unchanged when the reranker is not
+        installed or fails (an answer from the fused order beats no answer)."""
+        try:
+            scores = self._rerank(query, [c.text for c in chunks]) if chunks else None
+        except Exception:
+            log.exception("reranking failed; the fused order is kept")
+            return chunks
+        if scores is None:
+            return chunks
+        order = sorted(range(len(chunks)), key=lambda i: -scores[i])  # stable: ties keep RRF order
+        return [chunks[i] for i in order]
 
     def ask(
         self,
         chat_id: int,
         question: str,
         *,
-        mode: Literal["answer", "search"] = "answer",
+        mode: Literal["answer", "search", "chat"] = "answer",
         think: bool = False,
     ) -> Iterator[dict]:
-        if mode not in ("answer", "search"):
+        """Stream the reply as events. "answer" cites the passages found, "search" returns only
+        the passages, and "chat" asks the model without searching (its reply has no sources)."""
+        if mode not in ("answer", "search", "chat"):
             raise ValueError(f"unknown mode: {mode!r}")
         with self._state:
             busy = self._answering
@@ -317,6 +476,9 @@ class AnswerService:
                     _run(action)
 
     def _ask(self, chat_id: int, question: str, mode: str, think: bool) -> Iterator[dict]:
+        if mode == "chat":
+            yield from self._chat(chat_id, question, think)
+            return
         collections = self._store.list_collections()
         if not collections:
             yield {"type": "error", "message": "Choose a folder of documents first."}
@@ -347,7 +509,7 @@ class AnswerService:
             }
             return
         route = self._route()
-        history = self._store.recent_exchanges(chat_id, HISTORY_TURNS)
+        history = self._store.recent_exchanges(chat_id, MAX_HISTORY_TURNS)
         language = detect_language(question)
         query = query_text(question, history[-1][0] if history else None)
         try:
@@ -380,7 +542,44 @@ class AnswerService:
             )
             yield {"type": "done", "message_id": message_id}
             return
-        messages = build_messages(question, history, sources, language)
+        reply = self._reply_tokens(route, think)
+        room = route.context_tokens - reply
+        messages = build_messages(question, history, sources, language, room)
+        yield context_event(messages, history, sources, route.context_tokens, reply)
+        yield from self._write(chat_id, route, messages, sources, think)
+
+    def _reply_tokens(self, route: Route, think: bool) -> int:
+        """The part of the context window kept for the reply; the prompt gets the rest. It grows
+        by THINKING_HEADROOM where the provider adds it: a local model that thinks, and every
+        Anthropic request (tamra.llm.openai_compat, .anthropic_api)."""
+        reply = self._settings.max_tokens
+        if think or route.name == "anthropic":
+            reply += THINKING_HEADROOM
+        return reply
+
+    def _chat(self, chat_id: int, question: str, think: bool) -> Iterator[dict]:
+        """A chat-mode reply: no project is searched, so none needs to be indexed."""
+        if self._store.get_chat(chat_id) is None:
+            yield {"type": "error", "message": f"Chat {chat_id} not found."}
+            return
+        route = self._route()
+        history = self._store.recent_exchanges(chat_id, MAX_HISTORY_TURNS)
+        reply = self._reply_tokens(route, think)
+        room = route.context_tokens - reply
+        messages = chat_messages(question, history, detect_language(question), room)
+        self._store.add_user_message(chat_id, question)
+        yield context_event(messages, history, [], route.context_tokens, reply)
+        yield from self._write(chat_id, route, messages, [], think)
+
+    def _write(
+        self,
+        chat_id: int,
+        route: Route,
+        messages: list[Message],
+        sources: list[SourceRecord],
+        think: bool,
+    ) -> Iterator[dict]:
+        """Stream the model's reply to messages and save it with its sources."""
         parts: list[str] = []
         error: str | None = None
         reason = "other"
@@ -391,15 +590,25 @@ class AnswerService:
                 llm = route.open()
                 label = llm.label
                 cancelled = False
+                unsent: Usage | None = None  # the newest counts not yet sent
+                sent_at = 0.0
                 for chunk in llm.generate(messages, self._settings.max_tokens, think=think):
                     if self._cancel.is_set():
                         cancelled = True
                         break
+                    if chunk.kind == "usage":  # the local model's live token counts
+                        unsent = chunk.usage
+                        if unsent is not None and time.monotonic() - sent_at >= USAGE_INTERVAL:
+                            yield _usage_event(unsent)
+                            unsent, sent_at = None, time.monotonic()
+                        continue
                     if chunk.kind == "thinking":  # shown live, never saved with the answer
                         yield {"type": "thinking", "text": chunk.text}
                         continue
                     parts.append(chunk.text)
                     yield {"type": "token", "text": chunk.text}
+                if unsent is not None:  # the final counts
+                    yield _usage_event(unsent)
                 if not cancelled and not parts:  # e.g. only thinking came back
                     error = "The model returned no answer."
                 if not cancelled:
@@ -423,6 +632,15 @@ class AnswerService:
             yield {"type": "error", "message": error, "reason": reason}
         if message_id is not None:
             yield {"type": "done", "message_id": message_id}
+
+
+def _usage_event(usage: Usage) -> dict:
+    return {
+        "type": "usage",
+        "prompt_tokens": usage.prompt_tokens,
+        "generated_tokens": usage.generated_tokens,
+        "tokens_per_second": round(usage.tokens_per_second, 1),
+    }
 
 
 def _run(action: Callable[[], None]) -> None:

@@ -1,5 +1,6 @@
 import { ArrowUp, Lightbulb, Square } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, useLayoutEffect, useRef } from "react";
+import ContextMeter, { type ContextUse } from "./ContextMeter";
 import { useT } from "./i18n";
 import ModeMenu from "./ModeMenu";
 import ModelMenu from "./ModelMenu";
@@ -35,6 +36,8 @@ type Props = {
     homeId: number | null;
     onChange: (scope: number[]) => void;
   };
+  /** How full this chat's last prompt made the context window; absent before its first answer. */
+  context?: ContextUse;
 };
 
 /** The question box with its chips (mode, model, Think longer) and the send or stop button. */
@@ -57,6 +60,7 @@ export default function Composer({
   onChooseModel,
   onManageModels,
   scope,
+  context,
 }: Props) {
   const t = useT();
   const box = useRef<HTMLTextAreaElement>(null);
@@ -84,6 +88,7 @@ export default function Composer({
   const thinkOn = think && thinkAvailable;
   return (
     <form className={narrow ? "composer narrow" : "composer"} onSubmit={submit}>
+      {context && <ContextMeter use={context} />}
       <div className="composer-card">
         <textarea
           ref={box}

@@ -44,6 +44,7 @@ The modules follow the RAG pipeline. Each owns one stage:
 - `ingest`: watch folders, parse files, and chunk them with locations.
 - `embedder`: bge-m3 ONNX embeddings.
 - `retriever`: hybrid search.
+- `reranker`: optional bge-reranker-v2-m3 ONNX cross-encoder that reorders the top fused hits.
 - `llm`: generation providers.
 - `answer`: the prompt, `[n]` citations, and persisted sources.
 - `attribution`: maps a selected answer span to its source passage.
@@ -71,7 +72,8 @@ Not all of these modules exist yet. Plans add them milestone by milestone.
   child process and is called through the OpenAI-compatible client. Do not add Python
   llama.cpp bindings. Every LLM provider exposes
   `generate(messages, max_tokens, *, think=False) -> Iterator[Chunk]` (`tamra.llm.base`; a
-  chunk is answer text or thinking), plus `close()`, `label`, and `kind`.
+  chunk is answer text, thinking, or the local model's token `usage`), plus `close()`, `label`,
+  and `kind`.
 - **Licenses:** every dependency must be Apache-2.0-compatible. No AGPL or GPL. For
   example, use `pypdfium2`, never PyMuPDF.
 - **Assets:** model weights and llama.cpp binaries are pinned with sha256. They are never

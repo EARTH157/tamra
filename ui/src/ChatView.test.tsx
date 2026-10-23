@@ -2,7 +2,17 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ChatView from "./ChatView";
 import { fileName, folderOf } from "./SourcePanel";
-import { click, json, type Mounted, mockFetch, mount, settle, sse, typeInto } from "./test-utils";
+import {
+  buttonByText,
+  click,
+  json,
+  type Mounted,
+  mockFetch,
+  mount,
+  settle,
+  sse,
+  typeInto,
+} from "./test-utils";
 
 let view: Mounted | undefined;
 
@@ -286,6 +296,174 @@ describe("ChatView", () => {
     );
     finish();
     await settle();
+  });
+
+  it("starts a general chat when the first question is asked in Chat mode", async () => {
+    const createChat = vi.fn(async () => 9);
+    mockFetch({
+      "POST /api/chats/9/messages": () =>
+        sse([
+          { type: "token", text: "Hello!" },
+          { type: "done", message_id: 2 },
+        ]),
+      "GET /api/chats/9": () => json({ ...chat, id: 9, project_id: null, scope: [], messages: [] }),
+    });
+    view = await mount(<ChatView {...base} chatId={null} createChat={createChat} />);
+    await click(view.container.querySelector('button[aria-label^="How Tamra responds"]'));
+    await click(
+      [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((el) =>
+        el.textContent?.startsWith("Chat"),
+      ),
+    );
+    await typeInto(view.container.querySelector("textarea"), "hello");
+    await click(view.container.querySelector('button[type="submit"]'));
+    expect(createChat).toHaveBeenCalledWith(true);
+  });
+
+  it("shows the context meter and the local model's token counts", async () => {
+    let saved = false;
+    const answer = {
+      id: 2,
+      role: "assistant",
+      content: "Hello!",
+      provider: "local",
+      model: "qwen",
+      created_at: "t",
+      sources: [],
+    };
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({ ...chat, messages: saved ? [{ ...answer, id: 1, role: "user", content: "hi" }, answer] : [] }),
+      "POST /api/chats/5/messages": () => {
+        saved = true;
+        return sse([
+          {
+            type: "context",
+            prompt_tokens: 900,
+            context_tokens: 8192,
+            reply_tokens: 1024,
+            parts: { instructions: 100, sources: 0, history: 700, question: 100 },
+            source_count: 0,
+            history_kept: 3,
+            history_total: 5,
+          },
+          { type: "token", text: "Hello!" },
+          { type: "usage", prompt_tokens: 620, generated_tokens: 42, tokens_per_second: 18.5 },
+          { type: "done", message_id: 2 },
+        ]);
+      },
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    expect(view.container.querySelector('[role="meter"]')).toBeNull(); // nothing asked yet
+    await typeInto(view.container.querySelector("textarea"), "hi");
+    await click(view.container.querySelector('button[type="submit"]'));
+    const summary = view.container.querySelector(".context-summary");
+    expect(summary?.textContent).toContain("Context 662 / 8.2k tokens"); // the model's own count
+    expect(summary?.textContent).toContain("2 older left out");
+    expect(view.container.querySelector(".context-details")).toBeNull();
+    await click(buttonByText(view.container, "Details"));
+    const rows = [...view.container.querySelectorAll(".context-parts li")].map((li) => li.textContent);
+    // The estimated parts (900) are scaled to the model's count of the prompt (620).
+    expect(rows).toEqual([
+      "Instructions≈69",
+      "Earlier messages3 of 5 exchanges≈482",
+      "Your question≈69",
+      "Written by the model42",
+      "Kept for the reply982",
+      "Free6,548",
+    ]);
+    expect(view.container.querySelector(".context-foot")?.textContent).toContain(
+      "3 of 5 earlier exchanges are in the model's memory; older ones are left out.",
+    );
+    expect(view.container.querySelector(".answer-meta")?.textContent).toBe(
+      "qwen · local · 42 tokens · 18.5 tokens/s",
+    );
+  });
+
+  it("asks a not-found question again in chat mode, and keeps a draft in the box", async () => {
+    const question = {
+      id: 1,
+      role: "user",
+      content: "notice period?",
+      provider: null,
+      model: null,
+      created_at: "t",
+      sources: [],
+    };
+    const notFound = { ...question, id: 2, role: "assistant", content: "Not found in the documents." };
+    const calls = mockFetch({
+      "GET /api/chats/5": () => json({ ...chat, messages: [question, notFound] }),
+      "POST /api/chats/5/messages": () =>
+        sse([
+          { type: "token", text: "Often 30 days." },
+          { type: "done", message_id: 3 },
+        ]),
+    });
+    view = await mount(<ChatView {...base} chatId={5} collectionName="Contracts" />);
+    await typeInto(view.container.querySelector("textarea"), "a draft");
+    await click(buttonByText(view.container, "Ask the model anyway (no sources)"));
+    const asked = calls.find((c) => c.key === "POST /api/chats/5/messages");
+    expect(asked?.body).toEqual({ content: "notice period?", mode: "chat", think: false });
+    expect(view.container.querySelector("textarea")?.value).toBe("a draft");
+  });
+
+  it("offers to ask again only on the last reply, when it is not found", async () => {
+    const message = (id: number, role: string, content: string, sources: unknown[] = []) => ({
+      id,
+      role,
+      content,
+      provider: null,
+      model: null,
+      created_at: "t",
+      sources,
+    });
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [
+            message(1, "user", "notice period?"),
+            message(2, "assistant", "Not found in the documents."),
+            message(3, "user", "How long?"),
+            message(4, "assistant", "Three years [1].", [source]),
+          ],
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    expect(buttonByText(view.container, "Ask the model anyway (no sources)")).toBeUndefined();
+  });
+
+  it("says a chat-mode reply is not from the documents", async () => {
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [
+            {
+              id: 2,
+              role: "assistant",
+              content: "Paris is the capital of France.",
+              provider: "local",
+              model: "qwen",
+              created_at: "t",
+              sources: [],
+            },
+            {
+              id: 4,
+              role: "assistant",
+              content: "Three years [1].",
+              provider: "local",
+              model: "qwen",
+              created_at: "t",
+              sources: [source],
+            },
+          ],
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    const notes = view.container.querySelectorAll(".answer-general");
+    expect(notes).toHaveLength(1); // the cited answer has none
+    expect(notes[0].textContent).toContain("not from your documents");
   });
 
   it("keeps a source opened while streaming open once the answer is saved", async () => {

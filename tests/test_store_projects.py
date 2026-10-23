@@ -226,25 +226,6 @@ def test_a_chat_left_with_an_empty_scope_falls_back_to_its_home(store):
 # Chats ----------------------------------------------------------------------------------------
 
 
-def test_homeless_chats_are_adopted_by_a_project(store):
-    one = store.create_collection("One", "D:/one", MODEL)
-    two = store.create_collection("Two", "D:/two", MODEL)
-    homed = store.create_chat("Homed", two.id)
-    first = store.create_chat("First")
-    second = store.create_chat("Second")
-    assert store.adopt_homeless_chats(one.id) == 2
-    for chat_id in (first.id, second.id):
-        adopted = store.get_chat(chat_id)
-        assert (adopted.collection_id, adopted.scope) == (one.id, [one.id])
-    assert (store.get_chat(homed.id).collection_id, store.get_chat(homed.id).scope) == (
-        two.id,
-        [two.id],
-    )
-    assert store.adopt_homeless_chats(one.id) == 0
-    with pytest.raises(ValueError):
-        store.adopt_homeless_chats(999)
-
-
 def test_a_chats_scope_is_read_for_that_chat_only(store):
     one = store.create_collection("One", "D:/one", MODEL)
     two = store.create_collection("Two", "D:/two", MODEL)

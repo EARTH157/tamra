@@ -1,4 +1,4 @@
-"""Detect RAM and GPUs, and recommend a model tier."""
+"""Detect RAM and GPUs, and recommend a model tier and a context size."""
 
 import ctypes
 import re
@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from tamra.models.catalog import Catalog
+from tamra.models.gguf import ModelShape
 
 # "  Vulkan0: AMD Radeon(TM) 780M Graphics (8094 MiB, 7689 MiB free)"
 _DEVICE = re.compile(r"^\s*\S+\d:\s+(?P<name>.+?)\s+\((?P<mib>\d+)\s*MiB(?:,[^)]*)?\)\s*$")
@@ -86,6 +87,51 @@ def _is_integrated(gpu: Gpu) -> bool:
     if "Radeon(TM)" in name and "Graphics" in name:
         return not _AMD_DISCRETE.search(name)
     return False
+
+
+MIB = 1024 * 1024
+# The local model's context window, in tokens (spec §9). "auto" fits it to this computer.
+CONTEXT_CHOICES = ("auto", "8192", "16384", "32768", "65536")
+CONTEXT_FLOOR = 8192  # auto never goes below what every machine ran before it existed
+AUTO_CONTEXTS = (32768, 16384)  # tried largest first; past 32k a long prompt is slow to read
+FIT_MARGIN_MB = 1024  # VRAM left free, as llama-server's own --fit-target default
+COMPUTE_MB = 512  # llama.cpp's compute buffers for the 4-8B models
+RAM_SHARE = 0.5  # without a discrete GPU the model may take half the RAM; the rest is Windows'
+
+
+def memory_budget(hardware: Hardware, model_bytes: int) -> int:
+    """Bytes left for the KV cache once the model is loaded: in the largest discrete GPU's VRAM,
+    or, without one, in the share of RAM the model may use. Negative when the model alone does
+    not fit."""
+    discrete = [g.vram_mb for g in hardware.gpus if not _is_integrated(g)]
+    if discrete:
+        room = (max(discrete) - FIT_MARGIN_MB - COMPUTE_MB) * MIB
+    else:  # an integrated GPU shares the system RAM
+        room = int(hardware.ram_gb * 1024 * MIB * RAM_SHARE) - COMPUTE_MB * MIB
+    return room - model_bytes
+
+
+def context_size(
+    choice: str, shape: ModelShape | None, model_bytes: int, hardware: Hardware
+) -> int:
+    """The context window to start llama-server with. "auto" takes the largest of AUTO_CONTEXTS
+    whose q8_0 KV cache fits the memory budget, else CONTEXT_FLOOR. A size the user chose is
+    taken as it is. Neither goes past what the model was trained for."""
+    if choice == "auto":
+        size = CONTEXT_FLOOR
+        if shape is not None:
+            budget = memory_budget(hardware, model_bytes)
+            fits = [
+                c
+                for c in AUTO_CONTEXTS
+                if c * shape.kv_bytes_per_token + shape.kv_fixed_bytes <= budget
+            ]
+            size = fits[0] if fits else CONTEXT_FLOOR
+    else:
+        size = int(choice)
+    if shape is not None and shape.context_length:
+        size = min(size, shape.context_length)
+    return size
 
 
 def recommend(hardware: Hardware, catalog: Catalog) -> str:

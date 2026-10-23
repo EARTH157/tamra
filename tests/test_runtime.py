@@ -11,6 +11,7 @@ class FakeServer:
 
     def __init__(self, exe, model, log_file, ctx_size, api_key):
         self.model = model
+        self.ctx_size = ctx_size
         self.api_key = api_key
         self.gpu_offload = True
         self.base_url = "http://127.0.0.1:9"
@@ -163,3 +164,30 @@ def test_the_real_server_requires_the_key(llama_exe, qwen_gguf, tmp_path):
         assert anonymous.status_code == 401
     finally:
         llm.close()
+
+
+def test_a_changed_context_size_restarts_the_server_with_it(model, tmp_path):
+    sizes = {"ctx": 16384}
+    llm = LocalLLM(
+        tmp_path / "x.exe",
+        lambda: model,
+        tmp_path / "l.log",
+        ctx_size=lambda path: sizes["ctx"],
+        server_factory=FakeServer,
+    )
+    assert llm.ctx_size == 16384
+    llm.client()
+    llm.client()
+    assert [s.ctx_size for s in FakeServer.instances] == [16384]
+    sizes["ctx"] = 32768
+    llm.client()
+    first, second = FakeServer.instances
+    assert first.stopped and second.ctx_size == 32768
+
+
+def test_ctx_size_without_a_model_is_the_default(tmp_path):
+    def no_model():
+        raise ProviderError("No local model is installed.", "model_missing")
+
+    llm = LocalLLM(tmp_path / "x.exe", no_model, tmp_path / "l.log", server_factory=FakeServer)
+    assert llm.ctx_size == 8192

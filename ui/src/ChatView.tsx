@@ -1,10 +1,11 @@
-import { FileText, Info, Lightbulb, SearchX, X } from "lucide-react";
+import { FileText, Info, Lightbulb, MessageCircle, SearchX, X } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import AnswerText, { type Highlight } from "./AnswerText";
 import { api, attribute, streamAnswer } from "./api";
 import { attributionErrorText, errorText, projectErrorText } from "./apiErrors";
 import CheckSourceButton from "./CheckSourceButton";
 import Composer from "./Composer";
+import type { ContextUse } from "./ContextMeter";
 import DocumentViewer from "./DocumentViewer";
 import { useT } from "./i18n";
 import logo from "./logo.svg";
@@ -39,12 +40,16 @@ import type {
 /** A message for the user, with the reason the model call failed when the core gave one. */
 type Notice = { message: string; reason?: ErrorReason };
 
+/** The local model's generated tokens and speed for one answer. */
+type Generated = { count: number; rate: number };
+
 type Pending = {
   question: string;
   mode: AnswerMode;
   sources: Source[];
   text: string;
   thought: Thought | null;
+  generated: Generated | null;
   error: Notice | null;
   done: boolean;
   messageId: number | null;
@@ -61,7 +66,8 @@ type Opened = { owner: number | "pending"; source: Source };
 type Props = {
   chatId: number | null;
   collectionName?: string;
-  createChat: () => Promise<number>;
+  /** Create the chat for its first question; `general` for a Chat-mode one (no home project). */
+  createChat: (general: boolean) => Promise<number>;
   onBusyChange: (busy: boolean) => void;
   onAnswered: () => void;
   /** Open Settings on a tab: "Manage models…" and the "no model" error lead to "model". */
@@ -126,6 +132,10 @@ export default function ChatView({
   // The reasoning of the answers given in this chat since it was opened, by message id. The core
   // does not save it, so a chat that is loaded again shows none.
   const [thoughts, setThoughts] = useState<Record<number, Thought>>({});
+  // Likewise the local model's token counts of those answers, by message id.
+  const [generated, setGenerated] = useState<Record<number, Generated>>({});
+  // How full each chat's last prompt made the context window, by chat id, while the app is open.
+  const [contexts, setContexts] = useState<Record<number, ContextUse>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [viewer, setViewer] = useState<ViewerRequest | null>(null);
@@ -165,6 +175,7 @@ export default function ChatView({
     scopeSeq.current++;
     setChosenScope(null);
     setThoughts({});
+    setGenerated({});
     setDetail(null);
     if (chatId === null) return;
     let current = true;
@@ -192,11 +203,13 @@ export default function ChatView({
     if (el) el.scrollTop = el.scrollHeight;
   }, [detail, pending, notice]);
 
-  async function ask() {
-    const text = question.trim();
+  /** Ask the question in the box, or `again` (the question of a not-found reply) in chat mode. */
+  async function ask(again?: string) {
+    const text = again ?? question.trim();
+    const askMode: AnswerMode = again === undefined ? mode : "chat";
     if (!text || asking.current) return;
     asking.current = true;
-    setQuestion("");
+    if (again === undefined) setQuestion(""); // a draft in the box stays when asking again
     setNotice(null);
     setSkipped([]);
     setOpened(null);
@@ -204,10 +217,11 @@ export default function ChatView({
     setCheck(null);
     let state: Pending = {
       question: text,
-      mode,
+      mode: askMode,
       sources: [],
       text: "",
       thought: null,
+      generated: null,
       error: null,
       done: false,
       messageId: null,
@@ -218,7 +232,7 @@ export default function ChatView({
     let streaming = false;
     try {
       await scopeSaves.current; // the question is asked over the scope the chip shows
-      usedId = chatId ?? (await createChat());
+      usedId = chatId ?? (await createChat(askMode === "chat"));
       // A new chat searches its home project; a different choice is saved before the question.
       if (chatId === null && chosenScope) {
         try {
@@ -226,8 +240,12 @@ export default function ChatView({
         } finally {
           setChosenScope(null); // the chip shows what the core has, saved or not
         }
+      } else if (askMode !== "chat" && chatId !== null && homeId === null && !known?.scope.length) {
+        // A general chat has no home to fall back on: it searches what the chip shows.
+        await saveScope(usedId, searched);
       }
       streaming = true;
+      const id = usedId;
       await streamAnswer(
         usedId,
         text,
@@ -236,6 +254,21 @@ export default function ChatView({
             state = { ...state, sources: e.sources };
           } else if (e.type === "notice") {
             setSkipped(e.names);
+          } else if (e.type === "context") {
+            const use: ContextUse = {
+              window: e.context_tokens,
+              reply: e.reply_tokens,
+              parts: e.parts,
+              sourceCount: e.source_count,
+              kept: e.history_kept,
+              total: e.history_total,
+              measured: null,
+            };
+            setContexts((all) => ({ ...all, [id]: use }));
+          } else if (e.type === "usage") {
+            state = { ...state, generated: { count: e.generated_tokens, rate: e.tokens_per_second } };
+            const measured = { prompt: e.prompt_tokens, generated: e.generated_tokens };
+            setContexts((all) => (all[id] ? { ...all, [id]: { ...all[id], measured } } : all));
           } else if (e.type === "thinking") {
             const thought = state.thought ?? { text: "", startedAt: Date.now(), endedAt: null };
             state = { ...state, thought: { ...thought, text: thought.text + e.text } };
@@ -257,7 +290,7 @@ export default function ChatView({
           }
           setPending(state);
         },
-        { mode, think: think && thinkAvailable },
+        { mode: askMode, think: think && thinkAvailable },
       );
     } catch (e) {
       // Before the stream (creating the chat or saving its scope) the core's refusals are known.
@@ -272,6 +305,8 @@ export default function ChatView({
       const thought = endThought(state.thought);
       const savedId = state.messageId;
       if (thought && savedId !== null) setThoughts((all) => ({ ...all, [savedId]: thought }));
+      const counts = state.generated;
+      if (counts && savedId !== null) setGenerated((all) => ({ ...all, [savedId]: counts }));
       setNotice(state.error);
       // The core saves nothing for this question: give the text back so it can be asked again.
       if (state.error?.reason === "embedding_missing") setQuestion((current) => current || text);
@@ -401,7 +436,8 @@ export default function ChatView({
   // The projects searched: what was chosen and not yet confirmed, else the open chat's scope (from
   // the app's list, which a move or a deleted project keeps current), else its home project.
   const known = chat && chat.id === chatId ? chat : detail;
-  const homeId = chatId === null ? defaultProjectId : (known?.project_id ?? defaultProjectId);
+  // A general chat has no home project.
+  const homeId = chatId === null || !known ? defaultProjectId : known.project_id;
   const inProjects = (ids: number[]) => ids.filter((id) => projects?.some((p) => p.id === id));
   const searched = [chosenScope ?? known?.scope ?? [], homeId === null ? [] : [homeId]]
     .map(inProjects)
@@ -411,6 +447,13 @@ export default function ChatView({
   const ready = chatId === null || detail !== null;
   const empty = ready && messages.length === 0 && !pending && !notice;
   const lastAnswer = [...messages].reverse().find((message) => message.role === "assistant");
+  // The question a not-found reply answered: the last one can be asked again in chat mode.
+  const lastIndex = lastAnswer ? messages.indexOf(lastAnswer) : -1;
+  const lastQuestion = messages.slice(0, lastIndex).reverse().find((m) => m.role === "user");
+  const askAgain =
+    lastAnswer && lastQuestion && !pending && isNotFound(lastAnswer.content, lastAnswer.sources.length)
+      ? () => void ask(lastQuestion.content)
+      : undefined;
   // The chips of the source being shown are drawn filled.
   const activeFor = (owner: number | "pending") => {
     if (check?.messageId === owner) {
@@ -449,13 +492,15 @@ export default function ChatView({
                 thinking={
                   thoughts[message.id] && <Thinking thought={thoughts[message.id]} />
                 }
-                meta={metaOf(message, thoughts[message.id], t)}
+                meta={metaOf(message, thoughts[message.id], generated[message.id], t)}
                 hint={message === lastAnswer}
+                general={isGeneral(message.content, message.sources)}
                 collectionName={collection}
                 active={activeFor(message.id)}
                 highlight={highlightFor(message.id)}
                 onOpen={(source) => openSource(message.id, source)}
                 onCheck={(selected, n) => startCheck(message.id, selected, n)}
+                onAskAnyway={message === lastAnswer ? askAgain : undefined}
               />
             ),
           )}
@@ -471,6 +516,7 @@ export default function ChatView({
                   thinking={pending.thought && <Thinking thought={pending.thought} />}
                   meta={null}
                   hint={false}
+                  general={pending.mode === "chat"}
                   collectionName={collection}
                   done={pending.done}
                   active={activeFor("pending")}
@@ -484,11 +530,19 @@ export default function ChatView({
                     ) : (
                       <p className="searching">
                         <Lightbulb size={16} />
-                        {t("chat.searching")}
+                        {pending.mode === "chat" ? t("chat.writing") : t("chat.searching")}
                       </p>
                     )}
                   </div>
                 )
+              )}
+              {pending.generated && (
+                <p className="answer-meta live-tokens">
+                  {t("chat.tokens", {
+                    count: pending.generated.count,
+                    rate: pending.generated.rate,
+                  })}
+                </p>
               )}
             </>
           )}
@@ -557,10 +611,12 @@ export default function ChatView({
           onChooseModel={chooseModel}
           onManageModels={() => onOpenSettings("model")}
           scope={
-            projects && searched.length > 0
+            // a chat-mode question searches nothing, so there is no scope to choose
+            projects && searched.length > 0 && mode !== "chat"
               ? { projects, selected: searched, homeId, onChange: changeScope }
               : undefined
           }
+          context={chatId !== null ? contexts[chatId] : undefined}
         />
       </div>
       {(check || opened) && (
@@ -622,10 +678,19 @@ function noticeText(notice: Notice, t: ReturnType<typeof useT>): string {
 
 const PROVIDER_NAMES: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI" };
 
-/** "Qwen3-4B · local", "claude-sonnet-5-5 · Anthropic", plus "· thought for 18 s" when it thought. */
+/** A saved chat-mode reply: model text with no sources that is not the not-found reply. */
+function isGeneral(content: string, sources: Source[]): boolean {
+  return content !== "" && sources.length === 0 && !isNotFound(content, 0);
+}
+
+/**
+ * "Qwen3-4B · local", "claude-sonnet-5-5 · Anthropic", plus "· thought for 18 s" when it thought
+ * and "· 460 tokens · 21 tokens/s" when the local model counted them in this session.
+ */
 function metaOf(
   message: Message,
   thought: Thought | undefined,
+  counts: Generated | undefined,
   t: ReturnType<typeof useT>,
 ): string | null {
   if (!message.model) return null;
@@ -638,6 +703,7 @@ function metaOf(
     );
   }
   if (thought) parts.push(t("chat.thoughtMeta", { seconds: thoughtSeconds(thought) }));
+  if (counts) parts.push(t("chat.tokens", { count: counts.count, rate: counts.rate }));
   return parts.join(" · ");
 }
 
@@ -649,6 +715,8 @@ type AnswerProps = {
   thinking?: ReactNode;
   meta: string | null;
   hint: boolean;
+  /** A chat-mode reply: it says it is not from the documents, and has nothing to check. */
+  general: boolean;
   collectionName: string;
   done?: boolean;
   active: number | null;
@@ -657,11 +725,14 @@ type AnswerProps = {
   onOpen: (source: Source) => void;
   /** Check a part of the saved answer: a selection, or the sentence of a clicked chip (with `n`). */
   onCheck?: (selected: Selected, n: number | null) => void;
+  /** Shown on a not-found reply: ask its question again in chat mode. */
+  onAskAnyway?: () => void;
 };
 
 /**
  * An assistant answer: the thinking block, text with citation chips, source cards, model, and the
  * hint. A reply that has sources but no text is a search-only result: the passages are the reply.
+ * A general (chat-mode) reply has text and no sources.
  */
 function Answer({
   messageId,
@@ -670,12 +741,14 @@ function Answer({
   thinking,
   meta,
   hint,
+  general,
   collectionName,
   done = true,
   active,
   highlight = null,
   onOpen,
   onCheck,
+  onAskAnyway,
 }: AnswerProps) {
   const t = useT();
   const textRoot = useRef<HTMLDivElement>(null);
@@ -689,6 +762,12 @@ function Answer({
           <div>
             <h3>{t("chat.notFoundTitle", { name: collectionName })}</h3>
             <p>{t("chat.notFoundText")}</p>
+            {onAskAnyway && (
+              <button type="button" className="btn not-found-action" onClick={onAskAnyway}>
+                <MessageCircle size={14} />
+                {t("chat.askAnyway")}
+              </button>
+            )}
           </div>
         </div>
         {meta && <p className="answer-meta">{meta}</p>}
@@ -721,6 +800,12 @@ function Answer({
   return (
     <div className="message assistant">
       {thinking}
+      {general && (
+        <p className="answer-general">
+          <Info size={14} />
+          {t("chat.general")}
+        </p>
+      )}
       <AnswerText
         ref={textRoot}
         text={text}
@@ -737,7 +822,7 @@ function Answer({
           onCheck({ text: text.slice(start, end), start, end }, n);
         }}
       />
-      {messageId !== undefined && onCheck && (
+      {messageId !== undefined && onCheck && !general && (
         <CheckSourceButton rootRef={textRoot} content={text} onCheck={(selected) => onCheck(selected, null)} />
       )}
       {sources.length > 0 && (

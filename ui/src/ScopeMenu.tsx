@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Folder } from "lucide-react";
+import { Check, ChevronDown, Folder, Folders } from "lucide-react";
 import { useEffect, useState } from "react";
 import { type TranslationKey, useT } from "./i18n";
 import PopMenu from "./PopMenu";
@@ -23,21 +23,29 @@ function searched(projects: Project[], scope: number[], homeId: number | null): 
   return [...chosen.filter((p) => p.id === homeId), ...chosen.filter((p) => p.id !== homeId)];
 }
 
-/** "HR Documents" for one project, "HR Documents + 1" when the scope is wider. */
+/** True when the scope holds every project, and there is more than one. */
+function allOf(projects: Project[], scope: number[]): boolean {
+  return projects.length > 1 && projects.every((project) => scope.includes(project.id));
+}
+
+/** "HR Documents" for one project, "HR Documents + 1" when the scope is wider, "All projects"
+ * when it holds every project. */
 export function scopeLabel(
   projects: Project[],
   scope: number[],
   homeId: number | null,
   t: Translate,
 ): string {
+  if (allOf(projects, scope)) return t("chat.scope.all");
   const [first, ...rest] = searched(projects, scope, homeId);
   if (!first) return "";
   return rest.length === 0 ? first.name : t("chat.scope.more", { name: first.name, count: rest.length });
 }
 
 /**
- * The "Search in" chip and its menu: a checkbox per project, home first. The menu stays open while
- * projects are ticked; the last ticked project cannot be unticked.
+ * The "Search in" chip and its menu: "All projects", then a checkbox per project, home first. The
+ * menu stays open while projects are ticked; the last ticked project cannot be unticked.
+ * "All projects" ticks the projects there are now; unticking it leaves the home project.
  */
 export default function ScopeMenu({ projects, scope, homeId, disabled, onChange }: Props) {
   const t = useT();
@@ -49,6 +57,7 @@ export default function ScopeMenu({ projects, scope, homeId, disabled, onChange 
   const label = scopeLabel(projects, scope, homeId, t);
   const home = projects.find((project) => project.id === homeId);
   const ordered = home ? [home, ...projects.filter((project) => project !== home)] : projects;
+  const all = allOf(projects, scope);
 
   function toggle(id: number) {
     if (scope.includes(id)) {
@@ -84,6 +93,21 @@ export default function ScopeMenu({ projects, scope, homeId, disabled, onChange 
           }}
         >
           <div className="menu-heading">{t("chat.scope.menu")}</div>
+          {projects.length > 1 && (
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={all}
+              className="menu-entry"
+              onClick={() => onChange(all ? [ordered[0].id] : ordered.map((project) => project.id))}
+            >
+              <Folders size={16} className="entry-icon" />
+              <span className="entry-text">
+                <span className="entry-name">{t("chat.scope.all")}</span>
+              </span>
+              {all && <Check size={16} className="entry-check" />}
+            </button>
+          )}
           {ordered.map((project) => {
             const on = scope.includes(project.id);
             const last = on && scope.length === 1;

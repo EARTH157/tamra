@@ -6,7 +6,15 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from tamra.llm.base import THINKING_HEADROOM, Chunk, ErrorReason, LLMError, Message, ProviderError
+from tamra.llm.base import (
+    THINKING_HEADROOM,
+    Chunk,
+    ErrorReason,
+    LLMError,
+    Message,
+    ProviderError,
+    Usage,
+)
 
 __all__ = ["LLMError", "Message", "OpenAICompatibleLLM", "normalise_base_url"]
 
@@ -53,6 +61,20 @@ def _http_reason(status: int) -> ErrorReason:
     return "other"
 
 
+def _usage(timings: object) -> Usage | None:
+    """llama-server's per-chunk timings as token counts; None when absent or malformed."""
+    if not isinstance(timings, dict):
+        return None
+    try:
+        return Usage(
+            int(timings.get("cache_n", 0)) + int(timings["prompt_n"]),
+            int(timings["predicted_n"]),
+            float(timings.get("predicted_per_second", 0.0)),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 class _MaxTokensRejected(Exception):
     """The server does not know `max_tokens` (newer OpenAI models want max_completion_tokens)."""
 
@@ -96,6 +118,7 @@ class OpenAICompatibleLLM:
         }
         if self.kind == "local":  # llama-server and Qwen3 honour this; strict clouds may reject it
             body["chat_template_kwargs"] = {"enable_thinking": think}
+            body["timings_per_token"] = True  # token counts on every chunk: yielded as usage
         try:
             yield from self._stream(body)
         except _MaxTokensRejected:
@@ -167,6 +190,10 @@ class OpenAICompatibleLLM:
                                 content = delta.get("content")
                                 if isinstance(content, str) and content:
                                     yield Chunk("text", content)
+
+                    usage = _usage(payload.get("timings")) if self.kind == "local" else None
+                    if usage is not None:
+                        yield Chunk("usage", usage=usage)
 
                 # Stream ended: verify we saw completion
                 if not found_completion:

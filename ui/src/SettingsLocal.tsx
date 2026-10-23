@@ -6,8 +6,16 @@ import ConfirmDialog from "./ConfirmDialog";
 import { type TranslationKey, useT } from "./i18n";
 import { isDownloading, type ModelsApi, percent, SOURCE_KEYS } from "./models";
 import { useSettings } from "./settings";
-import { RadioMark, Section } from "./SettingsControls";
-import type { Gpu, ImportResult, LocalModel, ModelsInfo, ModelStatus, UncataloguedModel } from "./types";
+import { RadioMark, Row, Section, Select } from "./SettingsControls";
+import type {
+  Gpu,
+  ImportResult,
+  LocalContext,
+  LocalModel,
+  ModelsInfo,
+  ModelStatus,
+  UncataloguedModel,
+} from "./types";
 
 const POLL_MS = 1000;
 
@@ -39,6 +47,67 @@ function detected(hardware: ModelsInfo["hardware"], t: Translate): string {
     ? t("settings.gpu", { name: best.name, vram: Math.round(best.vram_mb / 1024) })
     : t("settings.noGpu");
   return t("settings.detected", { ram: Math.round(hardware.ram_gb), gpu });
+}
+
+/** "8k", "16k", "41k": a context size as the Settings page names it. */
+export function contextSize(tokens: number): string {
+  return `${Math.round(tokens / 1024)}k`;
+}
+
+const CONTEXT_SIZES: LocalContext[] = ["8192", "16384", "32768", "65536"];
+
+/** The context window choice, with what "auto" picks here and why a choice may not apply. */
+export function ContextSetting({ context }: { context: NonNullable<ModelsInfo["context"]> }) {
+  const t = useT();
+  const { settings, update } = useSettings();
+  const [error, setError] = useState<string | null>(null);
+  const chosen = settings.local_context;
+  const options = [
+    {
+      value: "auto" as LocalContext,
+      label: t("settings.contextAuto", { size: contextSize(context.auto) }),
+    },
+    ...CONTEXT_SIZES.map((value) => ({
+      value,
+      label: t("settings.contextTokens", { size: contextSize(Number(value)) }),
+    })),
+  ];
+  const capped = chosen !== "auto" && context.tokens < Number(chosen);
+  const tooBig = chosen !== "auto" && context.tokens > context.auto;
+  return (
+    <Section title={t("settings.contextSection")}>
+      <div className="card">
+        <Row title={t("settings.context")} hint={t("settings.contextHint")}>
+          <Select
+            label={t("settings.context")}
+            value={chosen}
+            options={options}
+            onChange={(local_context) => {
+              setError(null);
+              update({ local_context }).catch((e: Error) => setError(e.message));
+            }}
+          />
+        </Row>
+      </div>
+      {capped && (
+        <p className="settings-cpu-note" role="status">
+          <Info size={14} />
+          {t("settings.contextCapped", { size: contextSize(context.tokens) })}
+        </p>
+      )}
+      {tooBig && (
+        <p className="settings-cpu-note" role="status">
+          <AlertTriangle size={14} />
+          {t("settings.contextTooBig", { size: contextSize(context.auto) })}
+        </p>
+      )}
+      {error && (
+        <p className="field-error settings-error" role="alert">
+          {error}
+        </p>
+      )}
+    </Section>
+  );
 }
 
 function baseName(path: string): string {

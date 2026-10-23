@@ -10,6 +10,8 @@ from tamra.llm.base import ProviderError
 from tamra.llm.llama_server import LlamaServer
 from tamra.llm.openai_compat import OpenAICompatibleLLM
 
+DEFAULT_CTX_SIZE = 8192
+
 
 class LocalLLM:
     kind: Literal["local", "api"] = "local"
@@ -19,18 +21,30 @@ class LocalLLM:
         exe: Path,
         model_path: Callable[[], Path],
         log_file: Path,
-        ctx_size: int = 8192,
+        ctx_size: int | Callable[[Path], int] = DEFAULT_CTX_SIZE,
         server_factory: Callable[..., LlamaServer] = LlamaServer,
         label_for: Callable[[Path], str] | None = None,
     ):
         self._exe, self._model_path, self._log_file = exe, model_path, log_file
-        self._ctx_size = ctx_size
+        # The context window for a model file: fixed, or worked out per model (tamra.core).
+        self._ctx_for = ctx_size if callable(ctx_size) else (lambda _model: ctx_size)
+        self._running_ctx: int | None = None
         self._factory = server_factory
         self._label_for = label_for or (lambda path: path.stem)  # what answers record as the model
         self._lock = threading.Lock()
         self._server: LlamaServer | None = None
         self._client: OpenAICompatibleLLM | None = None
         self._running_model: Path | None = None
+
+    @property
+    def ctx_size(self) -> int:
+        """The context window, in tokens, that llama-server runs (or would start) the current
+        model with: the prompt and the reply share it. DEFAULT_CTX_SIZE when no model is
+        available."""
+        try:
+            return self._ctx_for(self._model_path())
+        except ProviderError:
+            return DEFAULT_CTX_SIZE
 
     @property
     def label(self) -> str:
@@ -54,12 +68,16 @@ class LocalLLM:
     def client(self) -> OpenAICompatibleLLM:
         """A client for the running server, starting (or restarting) llama-server if needed.
 
-        The model is read on every call: when it has changed, the server restarts on it.
+        The model and its context size are read on every call: when either has changed, the
+        server restarts on them.
         """
         with self._lock:
             model = self._model_path()
+            ctx_size = self._ctx_for(model)
             if self._server is not None and (
-                not self._server.alive() or self._running_model != model
+                not self._server.alive()
+                or self._running_model != model
+                or self._running_ctx != ctx_size
             ):
                 self._close_locked()
             if self._client is None:
@@ -67,11 +85,12 @@ class LocalLLM:
                     raise ProviderError("The local model file is missing.", "model_missing")
                 key = secrets.token_urlsafe(32)
                 server = self._factory(
-                    self._exe, model, self._log_file, ctx_size=self._ctx_size, api_key=key
+                    self._exe, model, self._log_file, ctx_size=ctx_size, api_key=key
                 )
                 server.start()
                 self._server = server
                 self._running_model = model
+                self._running_ctx = ctx_size
                 self._client = OpenAICompatibleLLM(
                     server.base_url,
                     "local",
@@ -93,3 +112,4 @@ class LocalLLM:
             self._server.stop()
             self._server = None
         self._running_model = None
+        self._running_ctx = None

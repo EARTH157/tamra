@@ -492,13 +492,22 @@ def test_a_chat_can_be_created_in_a_chosen_project(api):
     assert len(client.get("/api/chats", headers=AUTH).json()["chats"]) == 1
 
 
-def test_a_chat_before_any_project_is_homeless_and_the_first_project_adopts_it(api):
+def test_a_chat_before_any_project_is_general_and_stays_so(api):
     client, tmp_path = api
     chat = client.post("/api/chats", headers=AUTH).json()
     assert (chat["project_id"], chat["scope"]) == (None, [])
-    created = add_project(client, "Docs", folder(tmp_path, "docs"))
-    adopted = client.get(f"/api/chats/{chat['id']}", headers=AUTH).json()
-    assert (adopted["project_id"], adopted["scope"]) == (created["id"], [created["id"]])
+    add_project(client, "Docs", folder(tmp_path, "docs"))
+    kept = client.get(f"/api/chats/{chat['id']}", headers=AUTH).json()
+    assert (kept["project_id"], kept["scope"]) == (None, [])
+
+
+def test_a_general_chat_has_no_project_even_when_there_are_projects(api):
+    client, tmp_path = api
+    add_project(client, "Docs", folder(tmp_path, "docs"))
+    chat = client.post("/api/chats", headers=AUTH, json={"general": True}).json()
+    assert (chat["project_id"], chat["scope"]) == (None, [])
+    both = client.post("/api/chats", headers=AUTH, json={"general": True, "project_id": 1})
+    assert both.status_code == 400
 
 
 def test_chats_list_and_detail_carry_home_and_scope(api):

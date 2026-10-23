@@ -458,6 +458,36 @@ describe("AI model tab: local", () => {
     expect(text()).not.toContain("Text recognition (OCR)");
   });
 
+  it("shows the reranker row between search and OCR and downloads it after confirming", async () => {
+    const { calls } = await mountPage({
+      tab: "model",
+      models: modelsInfo({
+        reranker: embeddingModel({
+          id: "bge-reranker-v2-m3-int8",
+          name: "bge-reranker-v2-m3 (int8)",
+          size: 587_809_994,
+          installed: false,
+        }),
+      }),
+      routes: {
+        "POST /api/models/bge-reranker-v2-m3-int8/download": () =>
+          json({ status: "downloading" }, 202),
+      },
+    });
+    const heading = [...view!.container.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(heading.indexOf("Search model")).toBeLessThan(heading.indexOf("Result ranking"));
+    expect(heading.indexOf("Result ranking")).toBeLessThan(heading.indexOf("Text recognition (OCR)"));
+    await click(find('button[aria-label="Download bge-reranker-v2-m3 (int8)"]'));
+    expect(dialog()?.querySelector("h2")?.textContent).toBe("Download bge-reranker-v2-m3 (588 MB)?");
+    await click(buttonByText(dialog()!, "Download"));
+    expect(keys(calls)).toContain("POST /api/models/bge-reranker-v2-m3-int8/download");
+  });
+
+  it("shows no reranker row when the core has no reranker", async () => {
+    await mountPage({ tab: "model" });
+    expect(text()).not.toContain("Result ranking");
+  });
+
   it("says so when there is no dedicated GPU", async () => {
     await mountPage({
       tab: "model",
@@ -760,6 +790,40 @@ describe("AI model tab: local", () => {
     expect(radio("Cloud API").getAttribute("aria-checked")).toBe("true");
     expect(text()).toContain("the passages found for each question are sent to the provider");
     expect(text()).not.toContain("Detected");
+  });
+});
+
+describe("AI model tab: context window", () => {
+  const select = () => find<HTMLSelectElement>('select[aria-label="Context window"]');
+
+  it("offers auto with what it picks here, and saves a chosen size", async () => {
+    const { calls, core } = await mountPage({ tab: "model" });
+    expect([...select().options].map((o) => o.textContent)).toEqual([
+      "Auto (16k on this computer)",
+      "8k tokens",
+      "16k tokens",
+      "32k tokens",
+      "64k tokens",
+    ]);
+    expect(select().value).toBe("auto");
+    core.models = { ...core.models, context: { tokens: 32768, auto: 16384 } };
+    await choose(select(), "32768");
+    expect(calls).toContainEqual({ key: "PUT /api/settings", body: { local_context: "32768" } });
+  });
+
+  it("warns when a chosen size is more than this computer fits, or more than the model reads", async () => {
+    await mountPage({
+      tab: "model",
+      settings: { local_context: "65536" },
+      models: modelsInfo({ context: { tokens: 40960, auto: 16384 } }),
+    });
+    expect(text()).toContain("This model reads at most 40k tokens, so it gets 40k.");
+    expect(text()).toContain("More than this computer's memory fits well (16k)");
+  });
+
+  it("is not shown in API mode or without a local model", async () => {
+    await mountPage({ tab: "model", models: modelsInfo({ context: null }) });
+    expect(view!.container.querySelector('select[aria-label="Context window"]')).toBeNull();
   });
 });
 

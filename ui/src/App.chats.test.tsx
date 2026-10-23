@@ -71,9 +71,9 @@ describe("The chat list and the Search in chip", () => {
         el.textContent?.includes("Eval corpus"),
       ),
     );
-    expect(chip().textContent).toBe("Contracts + 1");
+    expect(chip().textContent).toBe("All projects"); // both projects
     release(json({ chats: [chat([1])] })); // the old list arrives late
     await settle();
-    expect(chip().textContent).toBe("Contracts + 1");
+    expect(chip().textContent).toBe("All projects"); // both projects
   });
 });

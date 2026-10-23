@@ -21,6 +21,26 @@
       ]
     },
     {
+      "id": "bge-reranker-v2-m3-int8",
+      "role": "reranker",
+      "name": "bge-reranker-v2-m3 (int8)",
+      "license": "apache-2.0",
+      "files": [
+        {
+          "path": "bge-reranker-v2-m3/model.onnx",
+          "size": 570727094,
+          "sha256": "912fc1215c2dbff6499700534bd8d31253af01573861abbfc43afd1fab6cce5d",
+          "url": "https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/resolve/6f5ff65298512715a1e669753bc754d2bc8f367b/onnx/model_int8.onnx"
+        },
+        {
+          "path": "bge-reranker-v2-m3/tokenizer.json",
+          "size": 17082900,
+          "sha256": "8bf8afbfd11306bd872018c53bfdf2e160a56f8edbcf49933324404791c148d3",
+          "url": "https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/resolve/6f5ff65298512715a1e669753bc754d2bc8f367b/tokenizer.json"
+        }
+      ]
+    },
+    {
       "id": "pp-ocrv5-mobile",
       "role": "ocr",
       "name": "PP-OCRv5 mobile",

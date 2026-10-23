@@ -120,7 +120,7 @@ function openStream() {
 }
 
 describe("mode menu", () => {
-  it("offers Answer and Search only, and no later ideas", async () => {
+  it("offers Answer, Search only and Chat, and no later ideas", async () => {
     await mountChat();
     expect(chip("How Tamra responds").textContent).toContain("Answer");
     await click(chip("How Tamra responds"));
@@ -129,9 +129,11 @@ describe("mode menu", () => {
     expect(items.map((item) => item.querySelector(".entry-name")?.textContent)).toEqual([
       "Answer",
       "Search only",
+      "Chat",
     ]);
     expect(menu()?.textContent).toContain("Writes an answer and cites every passage it used.");
     expect(menu()?.textContent).toContain("Shows the matching passages. No AI-written text.");
+    expect(menu()?.textContent).toContain("without searching your documents. No sources.");
     expect(menu()?.textContent).not.toContain("Summarise");
     expect(menu()?.textContent).not.toContain("Check my draft");
     expect(entry("Answer")?.getAttribute("aria-checked")).toBe("true");
@@ -147,6 +149,17 @@ describe("mode menu", () => {
     expect(chip("How Tamra responds").textContent).toContain("Search only");
     await ask();
     expect(questionBody(calls)).toEqual({ content: "How long?", mode: "search", think: false });
+  });
+
+  it("switches to Chat and sends it with the question", async () => {
+    const calls = await mountChat({
+      routes: { "POST /api/chats/5/messages": () => sse([{ type: "done", message_id: 1 }]) },
+    });
+    await click(chip("How Tamra responds"));
+    await click(entry("Chat"));
+    expect(chip("How Tamra responds").textContent).toContain("Chat");
+    await ask();
+    expect(questionBody(calls)).toEqual({ content: "How long?", mode: "chat", think: false });
   });
 
   it("closes on Escape and when its chip is clicked again", async () => {
@@ -189,9 +202,11 @@ describe("mode menu", () => {
     await press(menu(), "ArrowDown");
     expect(document.activeElement).toBe(entry("Search only"));
     await press(menu(), "ArrowDown");
+    expect(document.activeElement).toBe(entry("Chat"));
+    await press(menu(), "ArrowDown");
     expect(document.activeElement).toBe(entry("Answer")); // wraps to the first
     await press(menu(), "ArrowUp");
-    expect(document.activeElement).toBe(entry("Search only")); // and back to the last
+    expect(document.activeElement).toBe(entry("Chat")); // and back to the last
   });
 
   it("closes on Tab and puts focus back on the chip", async () => {

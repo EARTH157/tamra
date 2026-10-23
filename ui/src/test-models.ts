@@ -45,6 +45,7 @@ export function modelsInfo(over: Partial<ModelsInfo> = {}): ModelsInfo {
     hardware: { ram_gb: 15.9, gpus: [{ name: "NVIDIA RTX 3060", vram_mb: 12282, integrated: false }] },
     recommended_tier: "small",
     active: { mode: "local", label: "Qwen3-4B", id: "qwen3-4b" },
+    context: { tokens: 16384, auto: 16384 },
     gpu_offload: null,
     local: [
       localModel({}),
@@ -72,6 +73,7 @@ export function modelsInfo(over: Partial<ModelsInfo> = {}): ModelsInfo {
       },
     ],
     embedding: embeddingModel({}),
+    reranker: null,
     ocr: embeddingModel({ id: "pp-ocrv5-mobile", name: "PP-OCRv5 mobile", size: 29_366_176 }),
     ...over,
   };

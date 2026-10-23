@@ -510,24 +510,6 @@ class Store:
         scope = [] if collection_id is None else [collection_id]
         return Chat(cursor.lastrowid, title, created, created, collection_id, scope)
 
-    def adopt_homeless_chats(self, collection_id: int) -> int:
-        """Give every chat that has no home project this one as its home and its search scope;
-        returns how many were adopted. ValueError if the project is unknown."""
-        with self._lock, self._conn:
-            self._require_collections([collection_id])
-            chat_ids = [
-                row[0]
-                for row in self._conn.execute("SELECT id FROM chats WHERE collection_id IS NULL")
-            ]
-            self._conn.execute(
-                "UPDATE chats SET collection_id = ? WHERE collection_id IS NULL", (collection_id,)
-            )
-            self._conn.executemany(
-                "INSERT OR IGNORE INTO chat_collections (chat_id, collection_id) VALUES (?, ?)",
-                [(chat_id, collection_id) for chat_id in chat_ids],
-            )
-        return len(chat_ids)
-
     def get_chat(self, chat_id: int) -> Chat | None:
         with self._lock:
             chats = self._chats(" WHERE id = ?", (chat_id,))
