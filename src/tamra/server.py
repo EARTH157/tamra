@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import anyio
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +20,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import tamra
 from tamra import secrets as key_store
-from tamra.answer import location_label, source_payloads
+from tamra.answer import NothingIndexed, StaleIndex, location_label, source_payloads
 from tamra.core import (
     MAX_PROJECT_NAME,
     AnswerBusy,
@@ -30,6 +30,8 @@ from tamra.core import (
     FolderMissing,
     FolderNotAllowed,
     FolderUsed,
+    NoProjects,
+    UnknownProject,
 )
 from tamra.ingest.parsers import SUPPORTED
 from tamra.llm.base import LLMError, ProviderError
@@ -180,6 +182,19 @@ class ImportBody(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
 
 
+ProjectName = Annotated[str, StringConstraints(min_length=1, max_length=MAX_PROJECT_NAME)]
+
+
+class McpSearchBody(BaseModel):
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)]
+    # Left out: every project. Given: 1 to 50 names.
+    projects: Annotated[list[ProjectName], Field(min_length=1, max_length=50)] | None = None
+    k: int = Field(default=8, ge=1, le=20)
+
+
+MCP_OFF_DETAIL = "AI access is off. Turn it on in Tamra: Settings > General > AI apps."
+
+
 def create_app(
     token: str,
     ui_dir: Path | None,
@@ -239,6 +254,7 @@ def create_app(
         _add_viewer_routes(app, core, open_external)
         _add_settings_routes(app, core)
         _add_model_routes(app, core)
+        _add_mcp_routes(app, core)
     if ui_dir is not None:
         if not (ui_dir / "index.html").is_file():
             raise RuntimeError(
@@ -850,3 +866,68 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
             raise HTTPException(status_code=404, detail="Model not found.") from e
         core.models.cancel_download(model_id)
         return Response(status_code=204)
+
+
+def _add_mcp_routes(app: FastAPI, core: Core) -> None:
+    """The read-only routes `Tamra.exe mcp` calls for AI apps (MCP spec §5). The TokenGate lets
+    only the MCP token in; the switch is read on every request, so turning it off applies at
+    once. Every detail is fixed text: no path or query goes back."""
+
+    def require_access() -> None:
+        if not core.settings.mcp_enabled:
+            raise HTTPException(status_code=403, detail=MCP_OFF_DETAIL)
+
+    @app.get("/api/mcp/projects", dependencies=[Depends(require_access)])
+    def mcp_projects() -> dict:
+        return {
+            "projects": [
+                {"name": v["name"], "indexed_files": v["counts"]["indexed"], "stale": v["stale"]}
+                for v in core.projects()
+            ]
+        }
+
+    @app.post("/api/mcp/search", dependencies=[Depends(require_access)])
+    def mcp_search(body: McpSearchBody) -> dict:
+        try:
+            sources, skipped = core.search(body.query, body.projects, body.k)
+        except NoProjects as e:
+            raise HTTPException(status_code=409, detail="Tamra has no projects yet.") from e
+        except UnknownProject as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown project: {e.name}. Call list_projects for the names.",
+            ) from e
+        except StaleIndex as e:
+            raise HTTPException(
+                status_code=409,
+                detail=f"The index of {', '.join(e.names)} was built with a different embedding "
+                "model. Rebuild it in Tamra.",
+            ) from e
+        except NothingIndexed as e:
+            raise HTTPException(
+                status_code=409,
+                detail="No documents are indexed yet. Wait for indexing to finish in Tamra.",
+            ) from e
+        except EmbedderUnavailable as e:
+            raise HTTPException(
+                status_code=503,
+                detail="The search model is not installed. Download it in Tamra: "
+                "Settings > AI model.",
+            ) from e
+        notices = []
+        if skipped:
+            notices.append(f"Not searched (rebuild needed): {', '.join(skipped)}")
+        if not sources:
+            notices.append("No passage matches this query closely enough.")
+        return {
+            "passages": [
+                {
+                    "project": s["project"],
+                    "file": s["file"],
+                    "location": s["label"],
+                    "text": s["text"],
+                }
+                for s in sources
+            ],
+            "notices": notices,
+        }
