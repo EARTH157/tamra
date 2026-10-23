@@ -166,6 +166,21 @@ Paste your API key and press **Test connection**.
   or logs. To remove it, press **Remove key** next to the key field in **Settings > AI model**
   and confirm, or delete the `Tamra` entry in Credential Manager.
 
+## AI apps (MCP)
+
+Claude Desktop, Claude Code and other [MCP](https://modelcontextprotocol.io) apps can search your
+projects while Tamra is open. It is off until you turn it on.
+
+1. In Tamra, open **Settings > General > AI apps (MCP)** and turn on **Let AI apps search my
+   documents**.
+2. Click **Copy setup**, then paste it into Claude Desktop's `claude_desktop_config.json`, or into
+   `.mcp.json` in a project folder for Claude Code.
+3. Restart the app you connected. It gets two read-only tools: `list_projects` and `search`.
+
+The passages these apps find are sent to their AI model, which may run in the cloud. Your files and
+the search index stay on this computer. Turning the switch off stops access at once. While it is on,
+the sidebar shows **AI apps can search**.
+
 ## Thai interface
 
 Choose **Settings > General > Interface language > ไทย** to switch every screen between
@@ -192,7 +207,8 @@ Python (FastAPI, ONNX Runtime, SQLite + sqlite-vec) · React + TypeScript (Vite)
 pywebview · [llama.cpp](https://github.com/ggml-org/llama.cpp) ·
 [bge-m3](https://huggingface.co/BAAI/bge-m3) embeddings ·
 [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5 models, with detection geometry
-adapted from [RapidOCR](https://github.com/RapidAI/RapidOCR) (see [NOTICE](NOTICE))
+adapted from [RapidOCR](https://github.com/RapidAI/RapidOCR) (see [NOTICE](NOTICE)) ·
+the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 
 ## ภาษาไทย
 
