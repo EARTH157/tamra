@@ -431,7 +431,7 @@ describe("opening the document viewer from the source panel", () => {
       "GET /api/chats/5": () =>
         json({ ...chat, messages: [message(1, "user", "Leave?"), message(2, "assistant", content, sources)] }),
       "POST /api/attribution": () => json({ matches: [match(2, sources[1].text)] }),
-      "GET /api/sources/2/2/locate?start=0&end=29": () =>
+      "GET /api/sources/2/2/locate?start=0&end=29&focus=The+notice+period+is+30+days": () =>
         json({ file_id: 4, kind: "text", changed: false, found: true, start: 3, end: 4 }),
       "GET /api/files/4/text": () => json({ kind: "text", lines: ["Terms", "Notice", "30 days"] }),
     });

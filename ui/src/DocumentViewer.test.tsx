@@ -62,7 +62,8 @@ const request: ViewerRequest = {
   selection: "The lease runs three years",
 };
 
-const locateUrl = `GET /api/sources/4/1/locate?start=${start}&end=${end}`;
+// The request's selection goes along, so the page can mark just those words.
+const locateUrl = `GET /api/sources/4/1/locate?start=${start}&end=${end}&focus=The+lease+runs+three+years`;
 const locatePdf: Locate = {
   file_id: 7,
   kind: "pdf",
@@ -419,7 +420,7 @@ describe("DocumentViewer, left pane", () => {
       text: "😀😀 The lease term. Rent.",
       location: {},
     };
-    mockFetch({ "GET /api/sources/4/1/locate?start=3&end=18": () => json(locatePdf), [pageRoute(2)]: png });
+    mockFetch({ "GET /api/sources/4/1/locate?start=3&end=18&focus=The+lease+runs+three+years": () => json(locatePdf), [pageRoute(2)]: png });
     view = await mount(
       <DocumentViewer request={{ ...request, start: 3, end: 18 }} sources={[emoji]} onClose={onClose} />,
     );
@@ -471,7 +472,7 @@ describe("DocumentViewer, text files", () => {
 
   it("numbers the lines, marks the located lines and scrolls to them", async () => {
     mockFetch({
-      "GET /api/sources/4/2/locate?start=0&end=18": () =>
+      "GET /api/sources/4/2/locate?start=0&end=18&focus=The+lease+runs+three+years": () =>
         json({ file_id: 8, kind: "text", changed: false, found: true, start: 3, end: 5 }),
       "GET /api/files/8/text": () => json({ kind: "text", lines }),
     });
@@ -500,7 +501,7 @@ describe("DocumentViewer, text files", () => {
 
   it("shows a docx by paragraph with its headings bold and the located paragraphs marked", async () => {
     mockFetch({
-      "GET /api/sources/4/2/locate?start=0&end=18": () =>
+      "GET /api/sources/4/2/locate?start=0&end=18&focus=The+lease+runs+three+years": () =>
         json({ file_id: 8, kind: "docx", changed: false, found: true, start: 1, end: 2 }),
       "GET /api/files/8/text": () =>
         json({
@@ -523,7 +524,7 @@ describe("DocumentViewer, text files", () => {
 
   it("shows the text with no mark when the passage is not found, and says so", async () => {
     mockFetch({
-      "GET /api/sources/4/2/locate?start=0&end=18": () =>
+      "GET /api/sources/4/2/locate?start=0&end=18&focus=The+lease+runs+three+years": () =>
         json({ file_id: 8, kind: "text", changed: true, found: false }),
       "GET /api/files/8/text": () => json({ kind: "text", lines }),
     });
@@ -537,7 +538,7 @@ describe("DocumentViewer, text files", () => {
 
   it("says when a long file was cut", async () => {
     mockFetch({
-      "GET /api/sources/4/2/locate?start=0&end=18": () =>
+      "GET /api/sources/4/2/locate?start=0&end=18&focus=The+lease+runs+three+years": () =>
         json({ file_id: 8, kind: "text", changed: false, found: true, start: 1, end: 2 }),
       "GET /api/files/8/text": () => json({ kind: "text", lines, truncated: true }),
     });
@@ -548,7 +549,7 @@ describe("DocumentViewer, text files", () => {
   it("shows a long file as a window around the passage that the buttons widen", async () => {
     const long = Array.from({ length: 6000 }, (_, i) => `row ${i + 1}`);
     mockFetch({
-      "GET /api/sources/4/2/locate?start=0&end=18": () =>
+      "GET /api/sources/4/2/locate?start=0&end=18&focus=The+lease+runs+three+years": () =>
         json({ file_id: 8, kind: "text", changed: false, found: true, start: 3000, end: 3001 }),
       "GET /api/files/8/text": () => json({ kind: "text", lines: long }),
     });
@@ -573,7 +574,7 @@ describe("DocumentViewer, text files", () => {
 
   it("shows a short file whole, with no buttons to widen it", async () => {
     mockFetch({
-      "GET /api/sources/4/2/locate?start=0&end=18": () =>
+      "GET /api/sources/4/2/locate?start=0&end=18&focus=The+lease+runs+three+years": () =>
         json({ file_id: 8, kind: "text", changed: false, found: true, start: 1, end: 2 }),
       "GET /api/files/8/text": () => json({ kind: "text", lines: ["a", "b"] }),
     });
@@ -583,7 +584,7 @@ describe("DocumentViewer, text files", () => {
 
   it("shows why a file cannot be read", async () => {
     mockFetch({
-      "GET /api/sources/4/2/locate?start=0&end=18": () => json({ detail: "This file could not be read." }, 422),
+      "GET /api/sources/4/2/locate?start=0&end=18&focus=The+lease+runs+three+years": () => json({ detail: "This file could not be read." }, 422),
     });
     view = await mount(viewer(textRequest));
     expect(document.querySelector('[role="alert"]')?.textContent).toBe("This file could not be read.");

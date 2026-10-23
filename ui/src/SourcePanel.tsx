@@ -2,13 +2,19 @@ import { ChevronLeft, ChevronRight, FileText, Minus, Plus, TriangleAlert, X } fr
 import { useEffect, useRef, useState } from "react";
 import { MathText, TextWithParagraphs } from "./AnswerText";
 import { locateSource } from "./api";
+import { MARKER_SOURCE } from "./citations";
 import { type TranslationKey, useT } from "./i18n";
 import { cpToUtf16 } from "./offsets";
-import PdfPage from "./PdfPage";
+import PdfPage, { useDragScroll, useWheelZoom } from "./PdfPage";
+import { MAX_SELECTION } from "./selection";
+import Splitter from "./Splitter";
 import type { Locate, Match, Source, ViewerRequest } from "./types";
 
 /** The zoom steps of the panel's PDF page, in percent of the panel width. */
 export const PANEL_ZOOM_STEPS = [100, 125, 150, 200, 300];
+
+/** How short Compare can be dragged, in CSS pixels. */
+const COMPARE_MIN = 100;
 
 /** The file name of a collection-relative path ("a/b/c.pdf" -> "c.pdf"). */
 export function fileName(path: string): string {
@@ -24,6 +30,11 @@ export function folderOf(path: string): string {
 /** Where a source is: its page or section, then its folder ("p. 2 · Contracts/2026"). */
 export function sourceLabel(source: Source): string {
   return [source.label, folderOf(source.file)].filter(Boolean).join(" · ");
+}
+
+/** Selected answer text as it can be found in a passage: without its [n] citations. */
+export function answerFocus(selection: string | null | undefined): string | undefined {
+  return selection?.replace(new RegExp(MARKER_SOURCE, "g"), " ").trim() || undefined;
 }
 
 /** True when an answer's sources come from more than one project: then each names its project. */
@@ -117,7 +128,9 @@ export default function SourcePanel({
     : !check && source
       ? { n: source.n, start: null, end: null }
       : null;
-  const located = useLocated(messageId, target); // undefined while loading, null when it failed
+  // Undefined while loading, null when it failed. The selected answer text goes along, so the page
+  // can mark just those words where the passage has them word for word.
+  const located = useLocated(messageId, target, match ? answerFocus(check?.selection) : undefined);
   // Without the answer's sources there is no snapshot to offset into: show none.
   const snapshot = match ? (sources.find((s) => s.n === match.n)?.text ?? null) : null;
 
@@ -141,6 +154,38 @@ export default function SourcePanel({
   const zoom = zoomed.fileId === fileId ? zoomed.zoom : PANEL_ZOOM_STEPS[0];
   const zoomAt = PANEL_ZOOM_STEPS.indexOf(zoom);
   const zoomTo = (at: number) => setZoomed({ fileId, zoom: PANEL_ZOOM_STEPS[at] });
+  const body = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLElement>(null);
+  const compare = useRef<HTMLElement>(null);
+  // Null: Compare is as tall as its text; once dragged, this many pixels, the Document text filling it.
+  const [compareHeight, setCompareHeight] = useState<number | null>(null);
+  useDragScroll(body);
+  useWheelZoom(body, (by) => {
+    if (preview) zoomTo(Math.min(PANEL_ZOOM_STEPS.length - 1, Math.max(0, zoomAt + by)));
+  });
+  // Words selected in Compare are marked on the page instead, for the passage they were selected at.
+  const targetKey = match ? `${check?.id}:${match.n}:${match.start}:${match.end}` : "";
+  const [focus, setFocus] = useState<{ key: string; text: string } | null>(null);
+  const focusText = focus?.key === targetKey && match && preview ? focus.text : null;
+  const focused = useLocated(messageId, focusText ? target : null, focusText ?? undefined);
+  const focusRects = focusText ? focused?.focus_rects : undefined;
+  // The words selected in Compare, else the answer's selection, else the whole passage.
+  const marks = focusRects?.length
+    ? focusRects
+    : preview?.focus_rects?.length
+      ? preview.focus_rects
+      : (preview?.rects ?? []);
+
+  function selectFocus(section: HTMLElement) {
+    const selection = window.getSelection();
+    if (!selection || !section.contains(selection.anchorNode) || !section.contains(selection.focusNode)) {
+      return;
+    }
+    const text = selection.toString().trim();
+    // A click without a selection goes back to the answer's selection.
+    setFocus(text && text.length <= MAX_SELECTION ? { key: targetKey, text } : null);
+  }
+
   const previewPage =
     preview?.page !== undefined && fileId !== null && fileId !== undefined && title ? (
       <PdfPage
@@ -150,7 +195,7 @@ export default function SourcePanel({
         file={fileName(title)}
         page={preview.page}
         zoom={zoom}
-        highlight={{ page: preview.page, rects: preview.rects ?? [] }}
+        highlight={{ page: preview.page, rects: marks }}
       />
     ) : null;
   const canOpen = messageId !== null && fileId !== null && fileId !== undefined && !!title;
@@ -181,7 +226,7 @@ export default function SourcePanel({
   }
 
   return (
-    <aside className="source-panel" aria-label={t("chat.sourcePanel")}>
+    <aside className="source-panel" ref={panel} aria-label={t("chat.sourcePanel")}>
       <header>
         <FileText size={20} />
         <div className="source-title">
@@ -203,19 +248,28 @@ export default function SourcePanel({
         </button>
       </header>
       {check && (
-        <section className="compare" aria-label={t("source.compare")}>
+        <section
+          ref={compare}
+          className={compareHeight === null ? "compare" : "compare sized"}
+          style={compareHeight === null ? undefined : { height: compareHeight }}
+          aria-label={t("source.compare")}
+          onMouseUp={(event) => selectFocus(event.currentTarget)}
+          onKeyUp={(event) => selectFocus(event.currentTarget)}
+        >
           <h3 className="compare-title">{t("source.compare")}</h3>
           <div className="compare-row">
             <span className="compare-pill">{t("source.answer")}</span>
-            <p className="compare-text">
+            <p className="compare-text" title={preview ? t("source.selectHint") : undefined}>
               <MathText text={check.selection} />
             </p>
           </div>
           {match && (
             <>
-              <div className="compare-row">
+              <div className="compare-row document">
                 <span className="compare-pill">{t("source.document")}</span>
-                <p className="compare-text">{match.text}</p>
+                <p className="compare-text" title={preview ? t("source.selectHint") : undefined}>
+                  {match.text}
+                </p>
               </div>
               <div className="compare-bar">
                 <span className={`match-badge ${match.label}`}>
@@ -249,6 +303,18 @@ export default function SourcePanel({
           )}
         </section>
       )}
+      {check && previewPage && (
+        <Splitter
+          label={t("source.resizeCompare")}
+          orientation="horizontal"
+          size={compareHeight ?? compare.current?.offsetHeight ?? 0}
+          min={COMPARE_MIN}
+          // Leave room for the zoom buttons and some of the page.
+          max={() => (panel.current?.clientHeight ?? 600) - 200}
+          grow={1}
+          onResize={setCompareHeight}
+        />
+      )}
       {previewPage && (
         <div className="source-zoom">
           <div className="viewer-control">
@@ -274,7 +340,7 @@ export default function SourcePanel({
           </div>
         </div>
       )}
-      <div className="source-body">
+      <div className="source-body" ref={body}>
         {check?.status === "loading" && (
           <p className="source-state" role="status">
             {t("source.checking")}
@@ -319,6 +385,11 @@ export default function SourcePanel({
                 <TriangleAlert size={16} />
                 <span>{t("source.changed")}</span>
               </div>
+            )}
+            {focusRects?.length === 0 && (
+              <p className="source-state" role="status">
+                {t("source.focusNotFound")}
+              </p>
             )}
             {previewPage ?? (
               <div className="paper">
@@ -376,16 +447,17 @@ function pdfLocated(located: Locate | null | undefined): Locate | null {
 function useLocated(
   messageId: number | null,
   target: { n: number; start: number | null; end: number | null } | null,
+  focus?: string,
 ): Locate | null | undefined {
   const [result, setResult] = useState<{ key: string; located: Locate | null } | null>(null);
   const n = target?.n;
   const start = target?.start;
   const end = target?.end;
-  const key = `${messageId}:${n}:${start}:${end}`;
+  const key = `${messageId}:${n}:${start}:${end}:${focus}`;
   useEffect(() => {
     if (messageId === null || n === undefined) return;
     let current = true;
-    locateSource(messageId, n, start == null || end == null ? undefined : { start, end })
+    locateSource(messageId, n, start == null || end == null ? undefined : { start, end }, focus)
       .then((located) => {
         if (current) setResult({ key, located });
       })
@@ -396,6 +468,6 @@ function useLocated(
     return () => {
       current = false;
     };
-  }, [messageId, n, start, end, key]);
+  }, [messageId, n, start, end, focus, key]);
   return result?.key === key ? result.located : undefined;
 }
