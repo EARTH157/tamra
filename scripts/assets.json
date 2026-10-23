@@ -34,5 +34,15 @@
     "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile.onnx",
     "sha256": "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5",
     "dest": ".models/ppocr-v5/ch_PP-OCRv5_rec_mobile.onnx"
+  },
+  "bge-reranker-model": {
+    "url": "https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/resolve/6f5ff65298512715a1e669753bc754d2bc8f367b/onnx/model_int8.onnx",
+    "sha256": "912fc1215c2dbff6499700534bd8d31253af01573861abbfc43afd1fab6cce5d",
+    "dest": ".models/bge-reranker-v2-m3/model.onnx"
+  },
+  "bge-reranker-tokenizer": {
+    "url": "https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/resolve/6f5ff65298512715a1e669753bc754d2bc8f367b/tokenizer.json",
+    "sha256": "8bf8afbfd11306bd872018c53bfdf2e160a56f8edbcf49933324404791c148d3",
+    "dest": ".models/bge-reranker-v2-m3/tokenizer.json"
   }
 }
