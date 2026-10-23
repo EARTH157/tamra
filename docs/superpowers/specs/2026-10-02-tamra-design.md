@@ -22,8 +22,9 @@ answer can be checked against the exact passage it came from.
 **Non-goals for v1**
 - Platforms other than Windows 10/11 x64.
 - File types beyond PDF, DOCX, TXT, MD (no XLSX, PPTX, HTML, images-as-files).
-- Reranking model, LLM-based query rewriting, auto-update, code signing, multi-user or
-  server deployment, remote model catalog.
+- LLM-based query rewriting, auto-update, code signing, multi-user or server deployment,
+  remote model catalog. (A reranking model was a non-goal too; it was added later as an
+  optional download: see §6.)
 
 ## 2. Key decisions
 
@@ -160,6 +161,12 @@ stored in `ocr_pages`.
   not-found replies are left out.
 - **Hybrid search:** dense KNN (`sqlite-vec`) and keyword (FTS5 trigram, BM25), each top
   ~30, fused with Reciprocal Rank Fusion.
+- **Reranking (optional):** when the bge-reranker-v2-m3 cross-encoder is installed, the top 10
+  fused candidates (at least the context budget) are scored against the query and reordered
+  before the budget is taken. Without it, or if it fails, the fused order is kept. It only
+  reorders: the "not found" gate below stays on the dense similarity. On the eval set it
+  raises hit@4 from 0.92 to 1.00 (Thai 0.75 to 1.00) and costs about 0.45 s per full chunk
+  on a CPU (`docs/spikes/2026-10-reranker-results.md`).
 - **Context budget:** take the top chunks that fit the active model's context, about 4 for
   small local models and 8–10 for large local or API models. If over budget, drop the
   lowest-ranked chunks first.
@@ -222,7 +229,7 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 ## 9. Models and settings
 
 - **Catalog:** `catalog.json` shipped with the app. Each entry has `id`, `role`
-  (embedding|llm|ocr), `tier` (small|medium|large), `file_size`, `url` (Hugging Face or
+  (embedding|reranker|llm|ocr), `tier` (small|medium|large), `file_size`, `url` (Hugging Face or
   ModelScope), `sha256`, `license`, `languages`, `context_length`. It updates with app releases.
   The OCR entry's files come from ModelScope (RapidAI's ONNX conversion of PaddleOCR's
   Apache-2.0 models), pinned like the others.
@@ -237,7 +244,7 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
   use, stored in `models\`.
 - **Import:** pick a model file, which is hashed and matched against the catalog. An LLM file
   on a fixed or network drive is used where it is (linked, not copied) and selected. One on
-  a removable drive is copied into `models\`, and so is every embedding and OCR file. The
+  a removable drive is copied into `models\`, and so is every embedding, reranker and OCR file. The
   embedding model must match the catalog exactly. Uncatalogued GGUF files are allowed for
   the LLM role, with a warning.
 - **Other tools' models:** GGUF chat models that Ollama, LM Studio or the Hugging Face

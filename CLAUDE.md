@@ -44,6 +44,7 @@ The modules follow the RAG pipeline. Each owns one stage:
 - `ingest`: watch folders, parse files, and chunk them with locations.
 - `embedder`: bge-m3 ONNX embeddings.
 - `retriever`: hybrid search.
+- `reranker`: optional bge-reranker-v2-m3 ONNX cross-encoder that reorders the top fused hits.
 - `llm`: generation providers.
 - `answer`: the prompt, `[n]` citations, and persisted sources.
 - `attribution`: maps a selected answer span to its source passage.
