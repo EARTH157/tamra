@@ -27,9 +27,11 @@ export const DEFAULT_SETTINGS: Settings = {
   text_size: "default",
   spacing: "comfortable",
   ask_before_delete: true,
+  mcp_enabled: false,
   api_key_set: false,
   api_key_hint: null,
   data_dir: "", // unknown until the core answers
+  mcp_command: [], // unknown until the core answers
 };
 
 const RETRY_MS = 3000; // wait before asking again when the core did not answer

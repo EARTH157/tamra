@@ -2039,6 +2039,43 @@ svg.lucide {
   border-color: var(--border-strong);
 }
 
+/* Shown while AI apps (MCP) may search the documents; opens Settings > General. */
+.sidebar-mcp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.sidebar-mcp:hover {
+  background: var(--primary-soft-hover);
+}
+
+/* The MCP setup, shown to copy by hand when the clipboard refuses it. */
+.mcp-setup {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  resize: none;
+}
+
 .settings {
   flex: 1;
   min-height: 0;

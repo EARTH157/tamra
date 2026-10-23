@@ -34,7 +34,11 @@ from .models), then:
    committed tests/fixtures/ocr/th_0.pdf. It must be indexed through OCR, a Thai question about
    it must cite it with an " · OCR" label, and locating that source must find an OCR page with
    highlight boxes.
-9. Ends the exe by PID and checks that its llama-server ended with it.
+9. AI apps (MCP): turns AI access on, launches `Tamra.exe mcp` with the scratch data folder as a
+   stdio MCP server, checks that it offers list_projects and search, that list_projects names the
+   same projects as GET /api/projects, and that the Thai leave question finds hr-leave-policy.docx;
+   then turns access off and checks that the next search is refused with "AI access is off".
+10. Ends the exe by PID and checks that its llama-server ended with it.
 """
 
 import argparse
@@ -50,10 +54,12 @@ import tempfile
 import time
 from pathlib import Path
 
+import anyio
 import httpx
 from build_eval_corpus import build  # also puts tests/ on sys.path for docgen
 from docgen import image_pdf
 from eval_retrieval import load_questions
+from mcp import Client, StdioServerParameters
 
 from tamra import secrets as key_store
 from tamra.answer import NOT_FOUND
@@ -625,6 +631,59 @@ def check_scanned(client: httpx.Client, folder: Path, report: dict, problems: li
         problems.append(f"scanned: the OCR source did not locate with boxes: {step['locate']}")
 
 
+async def _mcp_session(exe: Path, data_dir: Path, query: str, turn_off) -> dict:
+    """One stdio session with `Tamra.exe mcp`: the tools, both calls, then a search after
+    turn_off() switched AI access off."""
+    server = StdioServerParameters(
+        command=str(exe), args=["mcp"], env={"TAMRA_DATA_DIR": str(data_dir)}
+    )
+    async with Client(server) as mcp:
+        tools = sorted(tool.name for tool in (await mcp.list_tools()).tools)
+        projects = await mcp.call_tool("list_projects", {})
+        found = await mcp.call_tool("search", {"query": query, "k": 3})
+        turn_off()
+        refused = await mcp.call_tool("search", {"query": query})
+    return {"tools": tools, "projects": projects, "found": found, "refused": refused}
+
+
+def check_mcp(
+    client: httpx.Client,
+    exe: Path,
+    data_dir: Path,
+    question: dict,
+    report: dict,
+    problems: list[str],
+) -> None:
+    """MCP (docs/superpowers/specs/2026-10-22-tamra-mcp-design.md): the packaged exe as a stdio
+    MCP server, with AI access on and then off."""
+    put_settings(client, mcp_enabled=True)
+    started = time.monotonic()
+    calls = anyio.run(
+        _mcp_session,
+        exe,
+        data_dir,
+        question["question"],
+        lambda: put_settings(client, mcp_enabled=False),
+    )
+    report["mcp_s"] = round(time.monotonic() - started, 1)
+    if calls["tools"] != ["list_projects", "search"]:
+        problems.append(f"mcp: unexpected tools {calls['tools']}")
+    listed = sorted(
+        p["name"] for p in (calls["projects"].structured_content or {}).get("projects", [])
+    )
+    expected = sorted(p["name"] for p in client.get("/api/projects").json()["projects"])
+    if listed != expected:
+        problems.append(f"mcp: list_projects gave {listed}, the app has {expected}")
+    passages = (calls["found"].structured_content or {}).get("passages", [])
+    report["mcp_files"] = [p["file"] for p in passages]
+    if calls["found"].is_error or not any(p["file"] == question["file"] for p in passages):
+        problems.append(f"mcp: search did not find {question['file']}")
+    refused = calls["refused"]
+    text = refused.content[0].text if refused.content else ""
+    if not refused.is_error or "AI access is off" not in text:
+        problems.append(f"mcp: a search with access off was not refused: {text!r}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="End-to-end check of the packaged Tamra.exe")
     parser.add_argument("--exe", type=Path, default=ROOT / "dist" / "Tamra" / "Tamra.exe")
@@ -733,6 +792,16 @@ def main() -> int:
                 )
                 check_projects(client, ids, folders, questions[SMOKE_IDS[1]], report, problems)
                 check_scanned(client, Path(tmp) / "Scans", report, problems)
+                check_mcp(
+                    client,
+                    args.exe,
+                    Path(tmp) / "data",
+                    questions[
+                        SMOKE_IDS[0]
+                    ],  # th-leave-annual: hr-leave-policy.docx, Company folder
+                    report,
+                    problems,
+                )
         finally:
             proc.kill()  # a hard kill: llama-server must still end with Tamra (Job Object)
             proc.wait(timeout=30)

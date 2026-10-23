@@ -4,12 +4,13 @@ import dataclasses
 import json
 import logging
 import secrets
+import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import anyio
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +20,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import tamra
 from tamra import secrets as key_store
-from tamra.answer import location_label, source_payloads
+from tamra.answer import NothingIndexed, StaleIndex, location_label, source_payloads
 from tamra.core import (
     MAX_PROJECT_NAME,
     AnswerBusy,
@@ -29,6 +30,8 @@ from tamra.core import (
     FolderMissing,
     FolderNotAllowed,
     FolderUsed,
+    NoProjects,
+    UnknownProject,
 )
 from tamra.ingest.parsers import SUPPORTED
 from tamra.llm.base import LLMError, ProviderError
@@ -66,16 +69,20 @@ CONTENT_SECURITY_POLICY = (
 
 
 class TokenGate:
-    """Reject /api requests, HTTP and WebSocket, that lack the per-launch token."""
+    """Reject /api requests, HTTP and WebSocket, that lack the right per-launch token: the MCP
+    token for /api/mcp/* (AI apps), the UI token for every other /api path. Without an MCP
+    token the /api/mcp routes stay closed."""
 
-    def __init__(self, app: ASGIApp, token: str):
+    def __init__(self, app: ASGIApp, token: str, mcp_token: str | None = None):
         self.app = app
         self.token = token.encode()
+        self.mcp_token = mcp_token.encode() if mcp_token else None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] in ("http", "websocket") and _is_api(scope["path"]):
+            expected = self.mcp_token if _is_mcp(scope["path"]) else self.token
             supplied = dict(scope["headers"]).get(b"x-tamra-token", b"")
-            if not secrets.compare_digest(supplied, self.token):
+            if expected is None or not secrets.compare_digest(supplied, expected):
                 if scope["type"] == "http":
                     response = JSONResponse({"detail": "invalid token"}, status_code=401)
                     await response(scope, receive, send)
@@ -89,6 +96,11 @@ class TokenGate:
 def _is_api(path: str) -> bool:
     path = "/" + path.lstrip("/")
     return path == "/api" or path.startswith("/api/")
+
+
+def _is_mcp(path: str) -> bool:
+    path = "/" + path.lstrip("/")
+    return path == "/api/mcp" or path.startswith("/api/mcp/")
 
 
 class SecurityHeaders:
@@ -171,6 +183,19 @@ class ImportBody(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
 
 
+ProjectName = Annotated[str, StringConstraints(min_length=1, max_length=MAX_PROJECT_NAME)]
+
+
+class McpSearchBody(BaseModel):
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)]
+    # Left out: every project. Given: 1 to 50 names.
+    projects: Annotated[list[ProjectName], Field(min_length=1, max_length=50)] | None = None
+    k: int = Field(default=8, ge=1, le=20)
+
+
+MCP_OFF_DETAIL = "AI access is off. Turn it on in Tamra: Settings > General > AI apps."
+
+
 def create_app(
     token: str,
     ui_dir: Path | None,
@@ -179,6 +204,7 @@ def create_app(
     pick_file: Callable[[], str | None] | None = None,
     open_data_folder: Callable[[], None] | None = None,
     open_external: Callable[[Path], None] | None = None,
+    mcp_token: str | None = None,
 ) -> FastAPI:
     if not token:
         raise ValueError("the API token must not be empty")  # an empty token would match ""
@@ -229,6 +255,7 @@ def create_app(
         _add_viewer_routes(app, core, open_external)
         _add_settings_routes(app, core)
         _add_model_routes(app, core)
+        _add_mcp_routes(app, core)
     if ui_dir is not None:
         if not (ui_dir / "index.html").is_file():
             raise RuntimeError(
@@ -237,7 +264,7 @@ def create_app(
             )
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
     # The last one added runs first: response headers, then the host check, then the token.
-    app.add_middleware(TokenGate, token=token)
+    app.add_middleware(TokenGate, token=token, mcp_token=mcp_token)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
     app.add_middleware(SecurityHeaders)
     return app
@@ -645,6 +672,13 @@ def _stored_key(provider: str) -> str | None:
         return None
 
 
+def _mcp_command() -> list[str]:
+    """How an AI app starts Tamra's MCP server: this exe, or this Python when run from source."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "mcp"]
+    return [sys.executable, "-m", "tamra", "mcp"]
+
+
 def _settings_payload(core: Core) -> dict:
     """The settings, plus whether a key is saved for the selected provider and its last 4
     characters (only for a key longer than 8, so a short key is never nearly revealed)."""
@@ -655,6 +689,7 @@ def _settings_payload(core: Core) -> dict:
         "data_dir": str(core.data_dir),  # read-only: shown in Settings, never a setting
         "api_key_set": key is not None,
         "api_key_hint": key[-4:] if key is not None and len(key) > 8 else None,
+        "mcp_command": _mcp_command(),  # read-only: for the "Copy setup" button
     }
 
 
@@ -845,3 +880,68 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
             raise HTTPException(status_code=404, detail="Model not found.") from e
         core.models.cancel_download(model_id)
         return Response(status_code=204)
+
+
+def _add_mcp_routes(app: FastAPI, core: Core) -> None:
+    """The read-only routes `Tamra.exe mcp` calls for AI apps (MCP spec §5). The TokenGate lets
+    only the MCP token in; the switch is read on every request, so turning it off applies at
+    once. Every detail is fixed text: no path or query goes back."""
+
+    def require_access() -> None:
+        if not core.settings.mcp_enabled:
+            raise HTTPException(status_code=403, detail=MCP_OFF_DETAIL)
+
+    @app.get("/api/mcp/projects", dependencies=[Depends(require_access)])
+    def mcp_projects() -> dict:
+        return {
+            "projects": [
+                {"name": v["name"], "indexed_files": v["counts"]["indexed"], "stale": v["stale"]}
+                for v in core.projects()
+            ]
+        }
+
+    @app.post("/api/mcp/search", dependencies=[Depends(require_access)])
+    def mcp_search(body: McpSearchBody) -> dict:
+        try:
+            sources, skipped = core.search(body.query, body.projects, body.k)
+        except NoProjects as e:
+            raise HTTPException(status_code=409, detail="Tamra has no projects yet.") from e
+        except UnknownProject as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown project: {e.name}. Call list_projects for the names.",
+            ) from e
+        except StaleIndex as e:
+            raise HTTPException(
+                status_code=409,
+                detail=f"The index of {', '.join(e.names)} was built with a different embedding "
+                "model. Rebuild it in Tamra.",
+            ) from e
+        except NothingIndexed as e:
+            raise HTTPException(
+                status_code=409,
+                detail="No documents are indexed yet. Wait for indexing to finish in Tamra.",
+            ) from e
+        except EmbedderUnavailable as e:
+            raise HTTPException(
+                status_code=503,
+                detail="The search model is not installed. Download it in Tamra: "
+                "Settings > AI model.",
+            ) from e
+        notices = []
+        if skipped:
+            notices.append(f"Not searched (rebuild needed): {', '.join(skipped)}")
+        if not sources:
+            notices.append("No passage matches this query closely enough.")
+        return {
+            "passages": [
+                {
+                    "project": s["project"],
+                    "file": s["file"],
+                    "location": s["label"],
+                    "text": s["text"],
+                }
+                for s in sources
+            ],
+            "notices": notices,
+        }

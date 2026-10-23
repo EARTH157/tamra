@@ -21,6 +21,7 @@ uv run pytest tests/test_paths.py::test_data_dir_uses_override_and_creates_it -v
 uv run pytest -m assets                   # tests needing downloaded models/binaries
 uv run ruff check; uv run ruff format     # lint, format
 uv run tamra --dev                        # core API only on :8765, token "dev"
+uv run tamra mcp                          # MCP server over stdio for AI apps (needs the app or --dev core running)
 npm --prefix ui run dev                   # UI with hot reload → http://localhost:5173/#token=dev
 npm --prefix ui test                      # UI unit tests (Vitest)
 uv run scripts/make_icon.py               # re-render packaging/tamra.ico after changing ui/src/logo.svg
@@ -54,6 +55,8 @@ The modules follow the RAG pipeline. Each owns one stage:
 - `download`: resumable downloads that check the sha256.
 - `store`: the only module that touches SQL.
 - `core`: owns the store, the indexer and watcher, the answer service, and the local LLM's lifecycle.
+- `mcp_server`: `Tamra.exe mcp`, the stdio MCP server for AI apps. It finds the running core
+  through `discovery` (`mcp.json`) and calls its read-only `/api/mcp` routes.
 
 Not all of these modules exist yet. Plans add them milestone by milestone.
 

@@ -258,6 +258,19 @@ export const th: Record<TranslationKey, string> = {
   "settings.deleteAllText.one":
     "แชทนี้จะถูกลบออกจากคอมพิวเตอร์เครื่องนี้ เอกสารของคุณจะไม่ถูกแก้ไข",
   "settings.footer": "Tamra · pre-alpha · สัญญาอนุญาต Apache-2.0",
+  "settings.mcp": "แอป AI (MCP)",
+  "settings.mcpEnable": "ให้แอป AI ค้นหาเอกสารของฉัน",
+  "settings.mcpHint":
+    "Claude Desktop, Claude Code และแอป MCP อื่น ๆ ค้นหาได้ทุกโปรเจกต์ขณะที่ Tamra เปิดอยู่",
+  "settings.mcpWarning":
+    "ข้อความที่แอปเหล่านี้ค้นพบจะถูกส่งให้โมเดล AI ของแอปนั้น ซึ่งอาจทำงานบนคลาวด์ ไฟล์ของคุณและดัชนีการค้นหายังอยู่ในคอมพิวเตอร์เครื่องนี้",
+  "settings.mcpSetup": "เชื่อมต่อแอป",
+  "settings.mcpSetupHint":
+    "วางใน claude_desktop_config.json ของ Claude Desktop หรือใน .mcp.json ในโฟลเดอร์งานสำหรับ Claude Code",
+  "settings.mcpCopy": "คัดลอกการตั้งค่า",
+  "settings.mcpCopied": "คัดลอกแล้ว",
+  "settings.mcpCopyFailed": "คัดลอกไปยังคลิปบอร์ดไม่ได้ คัดลอกการตั้งค่าด้านล่างแทน",
+  "mcp.badge": "แอป AI ค้นหาได้",
 
   "settings.aiMode": "โหมด AI",
   "settings.modeLocal": "โมเดลในเครื่อง",

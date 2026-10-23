@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import sys
 import threading
 import time
 from pathlib import Path
@@ -215,9 +216,11 @@ def test_get_settings_has_every_setting_and_the_key_state(env):
         "text_size": "default",
         "spacing": "comfortable",
         "ask_before_delete": True,
+        "mcp_enabled": False,
         "api_key_set": False,
         "api_key_hint": None,
         "data_dir": str(tmp_path / "data"),
+        "mcp_command": [sys.executable, "-m", "tamra", "mcp"],
     }
 
 
@@ -884,3 +887,24 @@ def test_a_question_passes_its_mode_and_thinking_flag_on(env, monkeypatch):
     ]
     bad = client.post("/api/chats/1/messages", headers=AUTH, json={"content": "q", "mode": "x"})
     assert bad.status_code == 422
+
+
+def test_mcp_command_is_this_exe_when_packaged(env, monkeypatch):
+    client, _, _ = env
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    body = client.get("/api/settings", headers=AUTH).json()
+    assert body["mcp_command"] == [sys.executable, "mcp"]
+
+
+def test_put_settings_refuses_the_read_only_mcp_command(env):
+    client, _, _ = env
+    response = client.put("/api/settings", headers=AUTH, json={"mcp_command": ["evil.exe"]})
+    assert response.status_code == 400
+
+
+def test_mcp_enabled_is_saved_through_the_settings_route(env):
+    client, core, _ = env
+    response = client.put("/api/settings", headers=AUTH, json={"mcp_enabled": True})
+    assert response.status_code == 200
+    assert response.json()["mcp_enabled"] is True
+    assert core.settings.mcp_enabled is True

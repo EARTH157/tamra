@@ -1,4 +1,4 @@
-import { AlertTriangle, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { AlertTriangle, Plug, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { projectErrorText } from "./apiErrors";
@@ -258,6 +258,12 @@ export default function App() {
             onRebuild={() => void rebuildProject(activeProject.id)}
             onOpenModelSettings={() => openSettings("model")}
           />
+        )}
+        {settings.mcp_enabled && (
+          <button type="button" className="sidebar-mcp" onClick={() => openSettings("general")}>
+            <Plug size={14} />
+            {t("mcp.badge")}
+          </button>
         )}
         <button
           type="button"

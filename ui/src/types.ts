@@ -208,10 +208,14 @@ export type Settings = {
   text_size: TextSize;
   spacing: Spacing;
   ask_before_delete: boolean;
+  /** AI apps (MCP) may search every project while Tamra is open. */
+  mcp_enabled: boolean;
   api_key_set: boolean;
   api_key_hint: string | null;
   /** Where Tamra keeps its data (read-only; the core's `data_dir`). */
   data_dir: string;
+  /** How an AI app starts Tamra's MCP server: the command, then its arguments (read-only). */
+  mcp_command: string[];
 };
 
 /** The answer of POST /api/settings/test-connection (always 200). */
@@ -221,4 +225,6 @@ export type ConnectionTest = { ok: boolean; reason: ErrorReason | null; message:
 export type ImportResult = { id: string; path: string; catalogued: boolean; warning: string | null };
 
 /** What PUT /api/settings accepts: any of the saved settings (never the key state or data_dir). */
-export type SettingsChanges = Partial<Omit<Settings, "api_key_set" | "api_key_hint" | "data_dir">>;
+export type SettingsChanges = Partial<
+  Omit<Settings, "api_key_set" | "api_key_hint" | "data_dir" | "mcp_command">
+>;

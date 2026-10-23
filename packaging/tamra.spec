@@ -22,7 +22,7 @@ a = Analysis(
     # Windows Credential Manager backend.
     + collect_submodules("keyring.backends")
     + ["keyring.backends.Windows", "anthropic", "truststore"]
-    + ["tamra.app", "tamra.selfcheck", "tamra.embedder"],
+    + ["tamra.app", "tamra.selfcheck", "tamra.embedder", "tamra.mcp_server"],
 )
 pyz = PYZ(a.pure)
 exe = EXE(

@@ -30,6 +30,8 @@ class Settings:
     text_size: TextSize = "default"
     spacing: Spacing = "comfortable"
     ask_before_delete: bool = True
+    # AI apps (MCP) may search every project while Tamra is open; checked on every MCP request.
+    mcp_enabled: bool = False
 
 
 _CHOICES: dict[str, tuple[str, ...]] = {
@@ -72,7 +74,7 @@ def _is_valid_base_url(value: object) -> bool:
 def _is_valid(field: str, value: object) -> bool:
     if field in _CHOICES:
         return isinstance(value, str) and value in _CHOICES[field]
-    if field == "ask_before_delete":
+    if field in ("ask_before_delete", "mcp_enabled"):
         return isinstance(value, bool)
     if field == "local_model_id":
         return value is None or (isinstance(value, str) and value != "")

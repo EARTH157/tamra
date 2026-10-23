@@ -13,6 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--embed-model-dir", type=Path)
     sc.add_argument("--llm-model", type=Path)
     sc.add_argument("--report", type=Path, help="also write the JSON report here")
+    sub.add_parser("mcp", help="MCP server over stdio for AI apps (Tamra must be running)")
     args = parser.parse_args(argv)
 
     dev_token = os.environ.get("TAMRA_DEV_TOKEN", "").strip() or None
@@ -37,6 +38,11 @@ def main(argv: list[str] | None = None) -> int:
         text = json.dumps(report, indent=2)  # default ensure_ascii=True
         print(text)  # no-op in the windowed exe (stdout is None); use --report there
         return 0 if report["ok"] else 1
+
+    if args.command == "mcp":
+        from tamra.mcp_server import main as mcp_main  # light: no core, no window
+
+        return mcp_main()
 
     from tamra.app import run
 
