@@ -690,7 +690,8 @@ def test_a_finished_download_shows_as_installed(env):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         entry = client.get("/api/models", headers=AUTH).json()["local"][1]
-        if entry["installed"]:
+        # the file lands (installed) a moment before the download thread marks the state idle
+        if entry["installed"] and entry["state"] == "idle":
             break
         time.sleep(0.01)
     assert (entry["installed"], entry["state"]) == (True, "idle")
