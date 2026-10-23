@@ -28,6 +28,7 @@
   --overlay: rgba(31, 29, 24, 0.45);
   --tooltip: #1f1d18;
   --on-tooltip: #ffffff;
+  --logo-t: #2563eb; /* the T in the sidebar logo, from the Figma lockup */
   --row-hover: rgba(255, 255, 255, 0.55);
 
   --radius-sm: 6px;
@@ -130,6 +131,7 @@
   --overlay: rgba(0, 0, 0, 0.6);
   --tooltip: #f2efe7;
   --on-tooltip: #1c1b19;
+  --logo-t: #60a5fa; /* the logo tile's lighter T, readable on dark surfaces */
   --row-hover: rgba(255, 255, 255, 0.06);
   --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-dialog: 0 16px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
@@ -343,9 +345,9 @@ svg.lucide {
   height: 28px;
 }
 
-.logo-tile {
-  width: 28px;
-  height: 28px;
+.brand-mark {
+  width: 24px;
+  height: 24px;
 }
 
 .brand-name {

@@ -7,7 +7,6 @@ import ConfirmDialog from "./ConfirmDialog";
 import DeleteChatDialog from "./DeleteChatDialog";
 import { useT } from "./i18n";
 import IndexStatus from "./IndexStatus";
-import logo from "./logo.svg";
 import { NewProjectDialog, ProjectSettingsDialog } from "./ProjectDialog";
 import ProjectTree from "./ProjectTree";
 import { useProjects } from "./projects";
@@ -209,7 +208,11 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <img className="logo-tile" src={logo} alt="" />
+          {/* The logo's glyph (no tile), as in the Figma lockup; the brackets follow the theme's text. */}
+          <svg className="brand-mark" viewBox="-6.41 -6.41 76 76" fill="none" strokeWidth={6.65} aria-hidden="true">
+            <path d="M18.29 3.33H3.33V59.85H18.29M44.89 3.33H59.85V59.85H44.89" stroke="currentColor" />
+            <path d="M19.95 19.95H43.23M31.59 19.95V48.21" stroke="var(--logo-t)" />
+          </svg>
           <span className="brand-name">Tamra</span>
           <span className="brand-thai" lang="th">
             ตำรา
