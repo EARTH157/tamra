@@ -793,6 +793,40 @@ describe("AI model tab: local", () => {
   });
 });
 
+describe("AI model tab: context window", () => {
+  const select = () => find<HTMLSelectElement>('select[aria-label="Context window"]');
+
+  it("offers auto with what it picks here, and saves a chosen size", async () => {
+    const { calls, core } = await mountPage({ tab: "model" });
+    expect([...select().options].map((o) => o.textContent)).toEqual([
+      "Auto (16k on this computer)",
+      "8k tokens",
+      "16k tokens",
+      "32k tokens",
+      "64k tokens",
+    ]);
+    expect(select().value).toBe("auto");
+    core.models = { ...core.models, context: { tokens: 32768, auto: 16384 } };
+    await choose(select(), "32768");
+    expect(calls).toContainEqual({ key: "PUT /api/settings", body: { local_context: "32768" } });
+  });
+
+  it("warns when a chosen size is more than this computer fits, or more than the model reads", async () => {
+    await mountPage({
+      tab: "model",
+      settings: { local_context: "65536" },
+      models: modelsInfo({ context: { tokens: 40960, auto: 16384 } }),
+    });
+    expect(text()).toContain("This model reads at most 40k tokens, so it gets 40k.");
+    expect(text()).toContain("More than this computer's memory fits well (16k)");
+  });
+
+  it("is not shown in API mode or without a local model", async () => {
+    await mountPage({ tab: "model", models: modelsInfo({ context: null }) });
+    expect(view!.container.querySelector('select[aria-label="Context window"]')).toBeNull();
+  });
+});
+
 describe("AI model tab: import", () => {
   const imported = {
     id: "import:mine.gguf",

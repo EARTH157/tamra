@@ -5,7 +5,17 @@ import pytest
 
 from tamra.models import hardware
 from tamra.models.catalog import Catalog, load_catalog
-from tamra.models.hardware import Gpu, Hardware, detect, parse_devices, recommend
+from tamra.models.gguf import ModelShape
+from tamra.models.hardware import (
+    MIB,
+    Gpu,
+    Hardware,
+    context_size,
+    detect,
+    memory_budget,
+    parse_devices,
+    recommend,
+)
 
 SAMPLE = """\
 Available devices:
@@ -154,3 +164,53 @@ def test_detect_with_the_real_llama_server(llama_exe):
     assert result.gpus, "llama-server --list-devices reported no GPU on this machine"
     assert all(g.name and g.vram_mb > 0 for g in result.gpus)
     assert recommend(result, load_catalog()) in {"small", "medium", "large"}
+
+
+# Context size (spec §9) ------------------------------------------------------------------------
+
+QWEN3_8B = ModelShape(context_length=40960, kv_bytes_per_token=78336)
+QWEN3_8B_BYTES = 4795 * MIB
+
+
+def _gpu(vram_gb: float, name="NVIDIA GeForce RTX 5060 Laptop GPU") -> Hardware:
+    return Hardware(ram_gb=32, gpus=[Gpu(name, int(vram_gb * 1024))])
+
+
+def test_auto_context_on_an_8gb_card_fits_16k_beside_qwen3_8b():
+    # 8 GB - 1.5 GB of margin and buffers - 4.7 GB of model leaves ~1.8 GB: 16k needs 1.2 GB
+    assert context_size("auto", QWEN3_8B, QWEN3_8B_BYTES, _gpu(8)) == 16384
+
+
+def test_auto_context_on_a_large_card_is_32k_and_never_more():
+    assert context_size("auto", QWEN3_8B, QWEN3_8B_BYTES, _gpu(24)) == 32768
+
+
+def test_auto_context_falls_back_to_8k_when_nothing_larger_fits():
+    assert context_size("auto", QWEN3_8B, QWEN3_8B_BYTES, _gpu(6)) == 8192
+    assert context_size("auto", None, 0, _gpu(24)) == 8192  # a file that does not tell
+
+
+def test_auto_context_without_a_discrete_gpu_uses_half_the_ram():
+    igpu = Gpu("AMD Radeon(TM) 780M Graphics", 8094)
+    small = ModelShape(32768, 6528)  # qwen2.5-0.5b
+    assert context_size("auto", small, 469 * MIB, Hardware(ram_gb=16, gpus=[igpu])) == 32768
+    assert context_size("auto", QWEN3_8B, QWEN3_8B_BYTES, Hardware(ram_gb=8)) == 8192
+
+
+def test_a_chosen_context_is_kept_but_never_past_the_models_limit():
+    assert context_size("32768", QWEN3_8B, QWEN3_8B_BYTES, _gpu(6)) == 32768
+    assert context_size("65536", QWEN3_8B, QWEN3_8B_BYTES, _gpu(24)) == 40960
+    tiny = ModelShape(4096, 6528)
+    assert context_size("auto", tiny, 0, _gpu(24)) == 4096
+
+
+def test_auto_context_counts_a_sliding_window_cache_once():
+    gemma4 = ModelShape(131072, 8704, 53 * MIB)  # Gemma 4 E4B, as read from its file
+    assert context_size("auto", gemma4, 5088 * MIB, _gpu(8)) == 32768
+    windowed = ModelShape(131072, 8704, 2000 * MIB)  # a window cache that leaves no room
+    assert context_size("auto", windowed, 5088 * MIB, _gpu(8)) == 8192
+
+
+def test_memory_budget_counts_the_largest_discrete_gpu():
+    hw = Hardware(ram_gb=64, gpus=[Gpu("Intel(R) UHD Graphics", 32000), Gpu("NVIDIA RTX", 8192)])
+    assert memory_budget(hw, 0) == (8192 - 1536) * MIB

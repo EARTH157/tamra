@@ -195,12 +195,16 @@ def build_messages(
     room is the prompt's share of the context window (the window less the reply's max tokens).
     History gets what the sources and question leave, at most ANSWER_HISTORY_SHARE of room: the
     sources come first, and a short prompt keeps a small model on them (spec §6)."""
-    blocks = "\n\n".join(
-        f"[{s.n}] {s.rel_path} ({location_label(s.location)})\n{s.text}" for s in sources
-    )
-    system = SYSTEM_PROMPT.format(language=LANGUAGE_NAMES[language], sources=blocks)
+    system = SYSTEM_PROMPT.format(language=LANGUAGE_NAMES[language], sources=_blocks(sources))
     budget = min(_left(room, system, question), int(room * ANSWER_HISTORY_SHARE))
     return _with_history(system, history, question, budget)
+
+
+def _blocks(sources: list[SourceRecord]) -> str:
+    """The numbered sources as the system prompt lists them."""
+    return "\n\n".join(
+        f"[{s.n}] {s.rel_path} ({location_label(s.location)})\n{s.text}" for s in sources
+    )
 
 
 def chat_messages(
@@ -256,14 +260,32 @@ def _earlier_answer(answer: str | None) -> str | None:
 
 
 def context_event(
-    messages: list[Message], history: Sequence[tuple[str, str | None]], context_tokens: int
+    messages: list[Message],
+    history: Sequence[tuple[str, str | None]],
+    sources: list[SourceRecord],
+    context_tokens: int,
+    reply_tokens: int,
 ) -> dict:
-    """How full the prompt makes the context window (estimated), and how many of the chat's
-    answered exchanges it kept (spec §6)."""
+    """What the prompt puts in the context window, part by part (estimated), what is kept for
+    the reply, and how many of the chat's answered exchanges the prompt kept (spec §6)."""
+
+    def tokens(message: Message) -> int:
+        return estimate_tokens(message["content"]) + MESSAGE_TOKENS
+
+    source_tokens = estimate_tokens(_blocks(sources)) if sources else 0
+    parts = {
+        "instructions": tokens(messages[0]) - source_tokens,
+        "sources": source_tokens,
+        "history": sum(tokens(m) for m in messages[1:-1]),
+        "question": tokens(messages[-1]),
+    }
     return {
         "type": "context",
-        "prompt_tokens": sum(estimate_tokens(m["content"]) + MESSAGE_TOKENS for m in messages),
+        "prompt_tokens": sum(parts.values()),
         "context_tokens": context_tokens,
+        "reply_tokens": reply_tokens,
+        "parts": parts,
+        "source_count": len(sources),
         "history_kept": (len(messages) - 2) // 2,
         "history_total": sum(1 for _, answer in history if _earlier_answer(answer) is not None),
     }
@@ -520,18 +542,20 @@ class AnswerService:
             )
             yield {"type": "done", "message_id": message_id}
             return
-        messages = build_messages(question, history, sources, language, self._room(route, think))
-        yield context_event(messages, history, route.context_tokens)
+        reply = self._reply_tokens(route, think)
+        room = route.context_tokens - reply
+        messages = build_messages(question, history, sources, language, room)
+        yield context_event(messages, history, sources, route.context_tokens, reply)
         yield from self._write(chat_id, route, messages, sources, think)
 
-    def _room(self, route: Route, think: bool) -> int:
-        """The prompt's share of the route's context window: the rest is kept for the reply.
-        The reply's budget grows by THINKING_HEADROOM where the provider adds it: a local model
-        that thinks, and every Anthropic request (tamra.llm.openai_compat, .anthropic_api)."""
+    def _reply_tokens(self, route: Route, think: bool) -> int:
+        """The part of the context window kept for the reply; the prompt gets the rest. It grows
+        by THINKING_HEADROOM where the provider adds it: a local model that thinks, and every
+        Anthropic request (tamra.llm.openai_compat, .anthropic_api)."""
         reply = self._settings.max_tokens
         if think or route.name == "anthropic":
             reply += THINKING_HEADROOM
-        return route.context_tokens - reply
+        return reply
 
     def _chat(self, chat_id: int, question: str, think: bool) -> Iterator[dict]:
         """A chat-mode reply: no project is searched, so none needs to be indexed."""
@@ -540,10 +564,11 @@ class AnswerService:
             return
         route = self._route()
         history = self._store.recent_exchanges(chat_id, MAX_HISTORY_TURNS)
-        room = self._room(route, think)
+        reply = self._reply_tokens(route, think)
+        room = route.context_tokens - reply
         messages = chat_messages(question, history, detect_language(question), room)
         self._store.add_user_message(chat_id, question)
-        yield context_event(messages, history, route.context_tokens)
+        yield context_event(messages, history, [], route.context_tokens, reply)
         yield from self._write(chat_id, route, messages, [], think)
 
     def _write(

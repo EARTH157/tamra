@@ -576,10 +576,24 @@ def test_the_context_event_tells_the_prompt_size_window_and_history_kept(env):
     events = list(service.ask(chat.id, "and parking?", mode="chat"))
     context = events[0]
     assert context["type"] == "context"
-    assert context["context_tokens"] == 8192
+    assert (context["context_tokens"], context["reply_tokens"]) == (8192, 1024)
     assert (context["history_kept"], context["history_total"]) == (1, 1)
     sent = llm.calls[-1]
     assert context["prompt_tokens"] == sum(estimate_tokens(m["content"]) + 8 for m in sent)
+    parts = context["parts"]
+    assert parts["sources"] == 0 and context["source_count"] == 0  # chat mode: none
+    assert parts["history"] == sum(estimate_tokens(m["content"]) + 8 for m in sent[1:-1])
+    assert parts["question"] == estimate_tokens("and parking?") + 8
+    assert sum(parts.values()) == context["prompt_tokens"]
+
+
+def test_the_context_event_counts_the_sources_apart_from_the_instructions(env):
+    store, make, chat = env
+    events = list(make(FakeLLM()).ask(chat.id, "How long is the lease term?", think=True))
+    context = next(e for e in events if e["type"] == "context")
+    assert context["source_count"] == 2
+    assert context["parts"]["sources"] > 0 and context["parts"]["instructions"] > 0
+    assert context["reply_tokens"] == 1024 + THINKING_HEADROOM
 
 
 def test_usage_chunks_become_throttled_usage_events_ending_with_the_final_counts(env):

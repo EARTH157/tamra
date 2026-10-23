@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal, TypedDict
 from urllib.parse import urlparse
 
+from tamra.models.hardware import CONTEXT_CHOICES
 from tamra.store import Store
 
 Mode = Literal["local", "api"]
@@ -34,6 +35,8 @@ class Settings:
     # A catalog id, "import:<file name>" for an uncatalogued file in Tamra's models folder, or
     # "file:<absolute path>" for an uncatalogued linked or scanned file.
     local_model_id: str | None = None
+    # The local model's context window in tokens, or "auto" to fit this computer (spec §9).
+    local_context: str = "auto"
     # Files the user imported without copying. Only the import and unlink routes change it.
     linked_models: tuple[LinkedModel, ...] = ()
     api_provider: ApiProvider = "anthropic"
@@ -51,6 +54,7 @@ class Settings:
 
 _CHOICES: dict[str, tuple[str, ...]] = {
     "mode": ("local", "api"),
+    "local_context": CONTEXT_CHOICES,
     "api_provider": ("anthropic", "openai"),
     "language": ("en", "th"),
     "theme": ("light", "dark", "system"),

@@ -57,10 +57,11 @@ def test_free_port_is_usable_int():
 
 def test_args_gpu_and_cpu(tmp_path):
     srv = LlamaServer(Path("llama-server.exe"), Path("m.gguf"), tmp_path / "log.txt", ctx_size=2048)
-    base = ["llama-server.exe", "-m", "m.gguf", "-c", "2048", "--host", "127.0.0.1"]
-    assert srv.args(gpu=True)[:7] == base
-    assert srv.args(gpu=True)[7:9] == ["--port", str(srv.port)]
-    assert srv.args(gpu=True)[9:11] == ["-lv", "4"]  # makes llama-server report layer offload
+    base = ["llama-server.exe", "-m", "m.gguf", "-c", "2048"]
+    assert srv.args(gpu=True)[:5] == base
+    assert srv.args(gpu=True)[5:9] == ["-ctk", "q8_0", "-ctv", "q8_0"]  # a half-size KV cache
+    assert srv.args(gpu=True)[9:13] == ["--host", "127.0.0.1", "--port", str(srv.port)]
+    assert srv.args(gpu=True)[13:15] == ["-lv", "4"]  # makes llama-server report layer offload
     assert srv.args(gpu=True)[-2:] == ["-ngl", "99"]
     assert srv.args(gpu=False)[-2:] == ["--device", "none"]
 

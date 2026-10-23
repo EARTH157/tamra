@@ -208,6 +208,7 @@ def test_get_settings_has_every_setting_and_the_key_state(env):
     assert response.json() == {
         "mode": "local",
         "local_model_id": None,
+        "local_context": "auto",
         "api_provider": "anthropic",
         "api_model": "claude-sonnet-5-5",
         "api_base_url": "",
@@ -502,6 +503,7 @@ def test_get_models_lists_the_catalog_hardware_and_active_model(env):
         },
         "recommended_tier": "medium",
         "active": {"mode": "local", "label": "Small", "id": "small"},
+        "context": {"tokens": 8192, "auto": 8192},  # the test file is no real GGUF
         "gpu_offload": None,
         "local": [
             {

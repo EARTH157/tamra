@@ -142,11 +142,14 @@ export type AnswerEvent =
   | { type: "notice"; code: "stale_projects"; names: string[] }
   | { type: "thinking"; text: string }
   | { type: "token"; text: string }
-  // How full the prompt makes the context window (an estimate), and the history it kept.
+  // What the prompt puts in the context window, part by part (estimated), and the reply room.
   | {
       type: "context";
       prompt_tokens: number;
       context_tokens: number;
+      reply_tokens: number;
+      parts: { instructions: number; sources: number; history: number; question: number };
+      source_count: number;
       history_kept: number;
       history_total: number;
     }
@@ -207,6 +210,8 @@ export type ModelsInfo = {
   recommended_tier: "small" | "medium" | "large";
   /** `id` is the local model that local mode would use, in either mode. */
   active: { mode: Mode; label: string | null; id: string | null };
+  /** The local model's context window as set, and what "auto" picks; null with no local model. */
+  context: { tokens: number; auto: number } | null;
   /** Whether the running local model uses the GPU; null when none is running or it is unknown. */
   gpu_offload: boolean | null;
   local: LocalModel[];
@@ -229,9 +234,13 @@ export type Accent = "green" | "blue" | "orange" | "purple" | "slate";
 export type TextSize = "small" | "default" | "large";
 export type Spacing = "comfortable" | "compact";
 
+/** The local model's context window in tokens, or "auto" to fit this computer. */
+export type LocalContext = "auto" | "8192" | "16384" | "32768" | "65536";
+
 export type Settings = {
   mode: Mode;
   local_model_id: string | null;
+  local_context: LocalContext;
   api_provider: ApiProvider;
   api_model: string;
   api_base_url: string;

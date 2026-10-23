@@ -830,10 +830,15 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
         # The local model that local mode would serve now; the same resolution LocalLLM uses.
         try:
             local_id: str | None
-            local_id, _, local_name = core.resolve_local_model()
+            local_id, local_path, local_name = core.resolve_local_model()
             local_label: str | None = local_name
+            # The local model's context window as set, and what "auto" picks on this computer.
+            context: dict | None = {
+                "tokens": core.local_context(local_path),
+                "auto": core.local_context(local_path, "auto"),
+            }
         except ProviderError:  # no local model is installed
-            local_id = local_label = None
+            local_id = local_label = context = None
         label = settings.api_model if settings.mode == "api" else local_label
         return {
             "hardware": {
@@ -845,6 +850,7 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
             },
             "recommended_tier": tier,
             "active": {"mode": settings.mode, "label": label, "id": local_id},
+            "context": context,
             "gpu_offload": core.local.gpu_offload,
             "local": local,
             "uncatalogued": uncatalogued,

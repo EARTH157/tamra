@@ -30,7 +30,8 @@ from tamra.llm.runtime import LocalLLM
 from tamra.models.catalog import Catalog, load_catalog
 from tamra.models.external import ExternalModel
 from tamra.models.external import scan as scan_external
-from tamra.models.hardware import Hardware, detect
+from tamra.models.gguf import read_shape
+from tamra.models.hardware import Hardware, context_size, detect
 from tamra.models.manager import ImportResult, ModelManager
 from tamra.ocr import MODEL_DIR as OCR_MODEL_DIR
 from tamra.ocr import OcrEngine
@@ -227,6 +228,7 @@ class Core:
             llama_exe,
             self._local_model_path,
             data_dir / "logs" / "llama-server.log",
+            ctx_size=self.local_context,
             label_for=self._local_label,
         )
         self._ocr_factory = ocr_factory or self._load_ocr
@@ -444,6 +446,17 @@ class Core:
         if chosen is None:
             raise ProviderError("No local model is installed.", "model_missing")
         return chosen.id, chosen.path, chosen.label
+
+    def local_context(self, model: Path, choice: str | None = None) -> int:
+        """The context window for the model file: the setting (or `choice`), where "auto" fits
+        it to this computer's memory and the model's own limit (spec §9)."""
+        try:
+            size = model.stat().st_size
+        except OSError:
+            size = 0
+        return context_size(
+            choice or self._settings.local_context, read_shape(model), size, self.hardware()
+        )
 
     def _local_model_path(self) -> Path:
         return self.resolve_local_model()[1]

@@ -5,7 +5,7 @@ import { useModels } from "./models";
 import { useSettings } from "./settings";
 import SettingsCloud from "./SettingsCloud";
 import { RadioMark, Section } from "./SettingsControls";
-import SettingsLocal from "./SettingsLocal";
+import SettingsLocal, { ContextSetting } from "./SettingsLocal";
 import SettingsSearchModel from "./SettingsSearchModel";
 import type { Mode } from "./types";
 
@@ -59,6 +59,9 @@ export default function SettingsModel() {
       <SettingsSearchModel {...modelsApi} kind="reranker" />
       <SettingsSearchModel {...modelsApi} kind="ocr" />
       {settings.mode === "api" ? <SettingsCloud /> : <SettingsLocal {...modelsApi} />}
+      {settings.mode === "local" && modelsApi.models?.context && (
+        <ContextSetting context={modelsApi.models.context} />
+      )}
     </>
   );
 }

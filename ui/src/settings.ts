@@ -18,6 +18,7 @@ import type { Settings, SettingsChanges } from "./types";
 export const DEFAULT_SETTINGS: Settings = {
   mode: "local",
   local_model_id: null,
+  local_context: "auto",
   api_provider: "anthropic",
   api_model: "claude-sonnet-5-5",
   api_base_url: "",

@@ -79,6 +79,9 @@ class LlamaServer:
 
     def args(self, gpu: bool) -> list[str]:
         args = [str(self.exe), "-m", str(self.model), "-c", str(self.ctx_size)]
+        # A q8_0 KV cache takes about half the memory of f16 for no visible loss; llama.cpp turns
+        # flash attention on for it, which quantized values need (spec §9).
+        args += ["-ctk", "q8_0", "-ctv", "q8_0"]
         args += ["--host", "127.0.0.1", "--port", str(self.port)]
         args += ["-lv", LOG_VERBOSITY]  # the default level hides the layer-offload report
         if self.api_key:

@@ -337,7 +337,16 @@ describe("ChatView", () => {
       "POST /api/chats/5/messages": () => {
         saved = true;
         return sse([
-          { type: "context", prompt_tokens: 900, context_tokens: 8192, history_kept: 3, history_total: 5 },
+          {
+            type: "context",
+            prompt_tokens: 900,
+            context_tokens: 8192,
+            reply_tokens: 1024,
+            parts: { instructions: 100, sources: 0, history: 700, question: 100 },
+            source_count: 0,
+            history_kept: 3,
+            history_total: 5,
+          },
           { type: "token", text: "Hello!" },
           { type: "usage", prompt_tokens: 620, generated_tokens: 42, tokens_per_second: 18.5 },
           { type: "done", message_id: 2 },
@@ -348,10 +357,22 @@ describe("ChatView", () => {
     expect(view.container.querySelector('[role="meter"]')).toBeNull(); // nothing asked yet
     await typeInto(view.container.querySelector("textarea"), "hi");
     await click(view.container.querySelector('button[type="submit"]'));
-    const meter = view.container.querySelector('[role="meter"]');
-    expect(meter?.textContent).toContain("Context 662 / 8.2k tokens"); // the model's own count
-    expect(meter?.textContent).toContain("2 older left out");
-    expect(meter?.getAttribute("title")).toBe(
+    const summary = view.container.querySelector(".context-summary");
+    expect(summary?.textContent).toContain("Context 662 / 8.2k tokens"); // the model's own count
+    expect(summary?.textContent).toContain("2 older left out");
+    expect(view.container.querySelector(".context-details")).toBeNull();
+    await click(buttonByText(view.container, "Details"));
+    const rows = [...view.container.querySelectorAll(".context-parts li")].map((li) => li.textContent);
+    // The estimated parts (900) are scaled to the model's count of the prompt (620).
+    expect(rows).toEqual([
+      "Instructions≈69",
+      "Earlier messages3 of 5 exchanges≈482",
+      "Your question≈69",
+      "Written by the model42",
+      "Kept for the reply982",
+      "Free6,548",
+    ]);
+    expect(view.container.querySelector(".context-foot")?.textContent).toContain(
       "3 of 5 earlier exchanges are in the model's memory; older ones are left out.",
     );
     expect(view.container.querySelector(".answer-meta")?.textContent).toBe(

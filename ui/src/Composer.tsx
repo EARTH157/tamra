@@ -88,6 +88,7 @@ export default function Composer({
   const thinkOn = think && thinkAvailable;
   return (
     <form className={narrow ? "composer narrow" : "composer"} onSubmit={submit}>
+      {context && <ContextMeter use={context} />}
       <div className="composer-card">
         <textarea
           ref={box}
@@ -147,10 +148,7 @@ export default function Composer({
           )}
         </div>
       </div>
-      <p className="composer-hint">
-        {t("chat.composerHint")}
-        {context && <ContextMeter use={context} />}
-      </p>
+      <p className="composer-hint">{t("chat.composerHint")}</p>
     </form>
   );
 }

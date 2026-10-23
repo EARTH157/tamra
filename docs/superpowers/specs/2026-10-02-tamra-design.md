@@ -182,7 +182,7 @@ stored in `ocr_pages`.
   - **Room:** the model's context window less the reply's budget. The budget is
     `max_tokens` (1024), plus the 2048-token thinking headroom where the provider asks for
     it: a local model with "Think longer" on, and every Anthropic request. The window is
-    llama-server's `-c` (8192) for the local model and 32,000 tokens for API mode. 32,000
+    the local model's context window (§9, 8k to 64k) and 32,000 tokens for API mode. 32,000
     tokens is a size every supported endpoint has, including small OpenAI-compatible
     servers.
   - **Budget:** the room less the system prompt (with its sources), the question and a
@@ -222,17 +222,27 @@ stored in `ocr_pages`.
 - **Streaming:** tokens go to the UI over SSE, and generation can be cancelled. `[n]`
   markers render as clickable chips that open the source popup (§7).
 - **Context and token counts:**
-  - Before the model is called (Answer and Chat modes), a `context` event gives the
-    estimated prompt size, the context window, and how many of the chat's answered exchanges
-    the prompt kept.
+  - Before the model is called (Answer and Chat modes), a `context` event gives:
+    - the context window and the room kept for the reply;
+    - the estimated prompt, part by part: instructions, passages (and how many), earlier
+      messages and the question;
+    - how many of the chat's answered exchanges the prompt kept.
   - The local model is asked for llama-server's per-token timings (`timings_per_token`).
     Its provider yields them as `usage` chunks: the whole prompt (including the part reused
     from llama-server's cache), the tokens generated so far (thinking and answer) and the
     speed. The answer service sends them as `usage` events at most every 0.25 s, and always
     sends the final counts. API providers send none.
-  - Under the composer, each chat shows a meter such as "Context ≈2.1k / 8.2k tokens". It
+  - Above the question box, each chat shows a bar and "Context ≈2.1k / 8.2k tokens". It
     shows the estimate, then the local model's real count of prompt and generated tokens.
-    It turns amber at 90% and says how many older exchanges were left out. While the local
+    The bar turns amber at 90%. The line also says how many earlier exchanges the model
+    remembers, or how many older ones were left out. "Details" opens a stacked bar and a
+    list of what fills the window:
+    - instructions, passages, earlier messages and the question;
+    - what the model has written so far;
+    - the room kept for the reply, and what is free.
+
+    Once the local model has counted its prompt, the estimated parts are scaled to that
+    count. While the local
     model writes, a line under the answer counts its tokens and speed. The saved answer's
     meta line keeps them. These counts stay in memory only, for this session.
 - **Persistence:** after the answer completes, save the message and one `message_sources`
@@ -308,6 +318,39 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
 - **Other tools' models:** GGUF chat models that Ollama, LM Studio or the Hugging Face
   cache already hold are found and run in place. Tamra never writes to those stores. See
   `2026-10-23-external-models-design.md`.
+- **Local context window:** llama-server starts with `-c` set to the local model's context
+  window. Its KV cache is always q8_0 (`-ctk q8_0 -ctv q8_0`), which llama.cpp runs with
+  flash attention. At 32k tokens on Qwen2.5-0.5B (RTX 5060 Laptop), that cut the cache from
+  384 to 204 MiB.
+  - **Model shape:** read from the GGUF metadata (`tamra.models.gguf`):
+    - the trained context length;
+    - the KV bytes per token: Σ over full-attention layers of KV heads × (key + value length)
+      × 34/32;
+    - a fixed cache for sliding-window layers (`sliding_window_pattern`): their window in
+      each of llama-server's 4 slots, plus one 512-token batch.
+
+    Layers that reuse another's cache (`shared_kv_layers`, or zero KV heads) cost nothing.
+    A model whose file has no pattern counts every layer in full, which errs high. The
+    formula was checked against llama.cpp's own buffers:
+    - Gemma 4 E4B: 8,704 bytes per token (204 MiB more from 8k to 32k), and a 53 MiB
+      window cache;
+    - Qwen2.5-0.5B: 6,528 bytes per token.
+  - **Memory budget:**
+    - With a discrete GPU: the largest one's VRAM less 1 GiB of margin (llama-server's own
+      `--fit-target`), 512 MiB of compute buffers and the model file.
+    - Without one (an integrated GPU shares RAM): half the RAM less the buffers and the model.
+  - **Setting `local_context`:**
+    - `auto` (default) takes the largest of 32k and 16k whose cache fits the budget, else
+      8k. It is never above 32k, because long prompts get slow to read, and never below
+      8k, the size every machine ran before.
+    - A chosen size (8k, 16k, 32k or 64k) is used as it is.
+    - Either is capped at the model's trained length.
+  - **Settings page:** it shows "Auto (16k on this computer)". It warns when a chosen size
+    is more than "auto" (it may run slower or fall back to the CPU) or more than the model
+    reads.
+  - **Restart:** the size is worked out again on every answer. When it changes (another
+    model, the setting, or the hardware), llama-server restarts with it. The token budget
+    (§6) uses the same size.
 - **Settings:**
   - Mode: `local` or `api`.
   - API provider: Anthropic or OpenAI-compatible (base URL), plus model name. The default

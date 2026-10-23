@@ -256,17 +256,19 @@ export default function ChatView({
             setSkipped(e.names);
           } else if (e.type === "context") {
             const use: ContextUse = {
-              used: e.prompt_tokens,
               window: e.context_tokens,
-              measured: false,
+              reply: e.reply_tokens,
+              parts: e.parts,
+              sourceCount: e.source_count,
               kept: e.history_kept,
               total: e.history_total,
+              measured: null,
             };
             setContexts((all) => ({ ...all, [id]: use }));
           } else if (e.type === "usage") {
             state = { ...state, generated: { count: e.generated_tokens, rate: e.tokens_per_second } };
-            const used = e.prompt_tokens + e.generated_tokens;
-            setContexts((all) => (all[id] ? { ...all, [id]: { ...all[id], used, measured: true } } : all));
+            const measured = { prompt: e.prompt_tokens, generated: e.generated_tokens };
+            setContexts((all) => (all[id] ? { ...all, [id]: { ...all[id], measured } } : all));
           } else if (e.type === "thinking") {
             const thought = state.thought ?? { text: "", startedAt: Date.now(), endedAt: null };
             state = { ...state, thought: { ...thought, text: thought.text + e.text } };
