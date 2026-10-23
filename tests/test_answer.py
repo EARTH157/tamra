@@ -587,6 +587,19 @@ def test_the_context_event_tells_the_prompt_size_window_and_history_kept(env):
     assert sum(parts.values()) == context["prompt_tokens"]
 
 
+def test_the_last_context_is_saved_with_the_chat_with_the_final_counts(env):
+    store, make, chat = env
+    assert store.chat_context(chat.id) is None
+    llm = FakeLLM(("Three years.", Chunk("usage", usage=Usage(120, 3, 30.0))))
+    events = list(make(llm).ask(chat.id, "How long is the lease term?"))
+    context = next(e for e in events if e["type"] == "context")
+    saved = store.chat_context(chat.id)
+    assert saved == {
+        **{k: v for k, v in context.items() if k != "type"},
+        "measured": {"prompt_tokens": 120, "generated_tokens": 3},
+    }
+
+
 def test_the_context_event_counts_the_sources_apart_from_the_instructions(env):
     store, make, chat = env
     events = list(make(FakeLLM()).ask(chat.id, "How long is the lease term?", think=True))

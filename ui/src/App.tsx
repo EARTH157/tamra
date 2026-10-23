@@ -1,5 +1,12 @@
-import { AlertTriangle, Plug, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, FilePlus, Plug, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import {
+  type CSSProperties,
+  type DragEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { api } from "./api";
 import { projectErrorText } from "./apiErrors";
 import ChatView from "./ChatView";
@@ -47,6 +54,7 @@ export default function App() {
   // shortcut: kept for this run only; save it in settings if people want it to stay.
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
+  const [dropping, setDropping] = useState(false); // files are being dragged over the window
 
   // Bumped when a chat is changed here (renamed, moved, new scope). A reload of the list that was
   // asked for before that change would bring the old chat back, so its answer is not used.
@@ -206,13 +214,51 @@ export default function App() {
     await refreshChats();
   }
 
+  /** Files dragged onto the window go into the current project's folder, and are indexed there.
+   * Every file drag is taken, so a file dropped by mistake never opens in place of the app. */
+  function dragOver(e: DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return; // text dragged inside the app
+    e.preventDefault();
+    e.dataTransfer.dropEffect = activeProject ? "copy" : "none";
+    setDropping(true);
+  }
+
+  async function drop(e: DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    setDropping(false);
+    if (!activeProject) return;
+    setProblem(null);
+    const refused = await projectsApi.addFiles(activeProject.id, [...e.dataTransfer.files]);
+    if (refused.length) {
+      const list = refused.map(({ file, error }) => `${file.name} (${projectErrorText(error, t)})`);
+      setProblem(t("drop.refused", { list: list.join("; ") }));
+    }
+  }
+
   /** Leave the folder dialog: back to the project's settings if it was opened from there. */
   function leaveFolderDialog(current: Dialog & { kind: "folder" }) {
     setDialog(current.from === "settings" ? { kind: "settings", id: current.id } : null);
   }
 
   return (
-    <div className="app" style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
+    <div
+      className="app"
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      onDragOver={dragOver}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e) => void drop(e)}
+    >
+      {dropping && (
+        <div className="drop-overlay" aria-hidden="true">
+          <div className="drop-card">
+            <FilePlus size={28} />
+            {activeProject ? t("drop.hint", { name: activeProject.name }) : t("drop.noProject")}
+          </div>
+        </div>
+      )}
       <aside className="sidebar">
         <div className="brand">
           {/* The logo's glyph (no tile), as in the Figma lockup; the brackets follow the theme's text. */}

@@ -320,6 +320,64 @@ describe("ChatView", () => {
     expect(createChat).toHaveBeenCalledWith(true);
   });
 
+  it("copies an answer with the sources it cites, and says it did", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const sources = [
+      source,
+      { ...source, n: 2, file: "2026/rent.docx", label: "Rent" },
+      { ...source, n: 3, file: "unused.md", label: "lines 1-3" },
+    ];
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [
+            {
+              id: 2,
+              role: "assistant",
+              content: "Three years [1]. Rent is 18,500 baht [1, 2].",
+              provider: "local",
+              model: "qwen",
+              created_at: "t",
+              sources,
+            },
+          ],
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    await click(buttonByText(view.container, "Copy"));
+    expect(writeText).toHaveBeenCalledWith(
+      "Three years [1]. Rent is 18,500 baht [1, 2].\n\nSources:\n" +
+        "[1] lease.pdf, p. 2\n[2] 2026/rent.docx, Rent",
+    );
+    expect(view.container.querySelector(".copy-answer")?.textContent).toBe("Copied");
+  });
+
+  it("shows the context meter saved with a chat when it is opened again", async () => {
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [],
+          context: {
+            prompt_tokens: 900,
+            context_tokens: 8192,
+            reply_tokens: 1024,
+            parts: { instructions: 100, sources: 0, history: 700, question: 100 },
+            source_count: 0,
+            history_kept: 3,
+            history_total: 5,
+            measured: { prompt_tokens: 620, generated_tokens: 42 },
+          },
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    const summary = view.container.querySelector(".context-summary");
+    expect(summary?.textContent).toContain("Context 662 / 8.2k tokens");
+    expect(summary?.textContent).toContain("2 older left out");
+  });
+
   it("shows the context meter and the local model's token counts", async () => {
     let saved = false;
     const answer = {

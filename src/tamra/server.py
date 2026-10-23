@@ -27,6 +27,7 @@ from tamra.core import (
     BadName,
     Core,
     EmbedderUnavailable,
+    FileNameNotAllowed,
     FolderMissing,
     FolderNotAllowed,
     FolderUsed,
@@ -384,6 +385,27 @@ def _add_project_routes(app: FastAPI, core: Core) -> None:
             raise HTTPException(status_code=404, detail="Project not found.")
         return _project_response(core, project_id)
 
+    @app.put("/api/projects/{project_id}/files/{name}", status_code=201)
+    async def add_file(project_id: int, name: str, request: Request) -> dict:
+        """Add a dropped file to the project's folder; the body is the file's bytes."""
+        content = await request.body()
+        try:
+            added = await anyio.to_thread.run_sync(core.add_file, project_id, name, content)
+        except FileNameNotAllowed as e:
+            raise HTTPException(
+                status_code=400, detail="Only PDF, DOCX, TXT and MD files can be added."
+            ) from e
+        except FileExistsError as e:
+            raise HTTPException(
+                status_code=409, detail="A file with this name is already in the project."
+            ) from e
+        except OSError as e:  # the folder is gone, full or read-only: no path is sent back
+            log.warning("cannot add %s to project %s: %s", name, project_id, e)
+            raise HTTPException(status_code=400, detail="The file could not be saved.") from e
+        if added is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        return {"name": added.name}
+
     @app.post("/api/projects/{project_id}/rebuild", status_code=202)
     def rebuild_project(project_id: int) -> dict:
         if not core.rebuild_project(project_id):
@@ -444,7 +466,11 @@ def _add_routes(app: FastAPI, core: Core) -> None:
             }
             for m in core.store.list_messages(chat_id)
         ]
-        return {**_chat_payload(chat), "messages": messages}
+        return {
+            **_chat_payload(chat),
+            "messages": messages,
+            "context": core.store.chat_context(chat_id),
+        }
 
     @app.patch("/api/chats/{chat_id}")
     def change_chat(chat_id: int, body: ChatChangeBody) -> dict:

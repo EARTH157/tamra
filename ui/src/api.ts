@@ -55,7 +55,8 @@ async function errorOf(response: Response): Promise<ApiError> {
   return new ApiError(response.status, message);
 }
 
-/** Call the Tamra core: JSON in and out, undefined for 204, ApiError on failure. */
+/** Call the Tamra core: JSON in (a Blob, such as a File, is sent as it is) and out, undefined for
+ * 204, ApiError on failure. */
 export async function api<T>(
   method: string,
   path: string,
@@ -63,11 +64,12 @@ export async function api<T>(
   fetchImpl: typeof fetch = fetch,
 ): Promise<T> {
   const headers: Record<string, string> = { "X-Tamra-Token": token };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const raw = body instanceof Blob;
+  if (body !== undefined) headers["Content-Type"] = raw ? "application/octet-stream" : "application/json";
   const response = await fetchImpl(path, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
   });
   if (!response.ok) throw await errorOf(response);
   if (response.status === 204) return undefined as T;

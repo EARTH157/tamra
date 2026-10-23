@@ -76,7 +76,8 @@ export function mockFetch(routes: Record<string, () => Response>): Call[] {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const key = `${init?.method ?? "GET"} ${String(input)}`;
-      calls.push({ key, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      const body = init?.body; // JSON, or a File sent as it is
+      calls.push({ key, body: typeof body === "string" ? JSON.parse(body) : (body ?? undefined) });
       const route = routes[key];
       if (!route) throw new Error(`unexpected request: ${key}`);
       return route();

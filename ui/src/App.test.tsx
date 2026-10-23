@@ -1,3 +1,4 @@
+import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { SettingsProvider } from "./settings";
@@ -11,6 +12,7 @@ import {
   mockFetch,
   mount,
   press,
+  settle,
   typeInto,
 } from "./test-utils";
 
@@ -52,6 +54,18 @@ function dialog(): HTMLElement | null {
   return document.querySelector('[role="dialog"]');
 }
 
+/** Fire a drag event carrying files (jsdom has no DataTransfer of its own). */
+async function drag(target: Element | null, type: string, files: File[], types = ["Files"]) {
+  if (!target) throw new Error("nothing to drag onto");
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: { types, files, dropEffect: "none" } });
+  await act(async () => {
+    target.dispatchEvent(event);
+  });
+  await settle();
+  return event;
+}
+
 async function openMenu(container: HTMLElement) {
   await click(container.querySelector('button[aria-label="Options for Lease length"]'));
   return container.ownerDocument.querySelector('[role="menu"]');
@@ -83,6 +97,40 @@ describe("App", () => {
     expect(view.container.textContent).toContain("2 files indexed");
     expect(view.container.textContent).toContain("Lease length");
     expect(view.container.textContent).toContain("Ask your documents");
+  });
+
+  it("adds files dropped on the window to the current project and says which were not added", async () => {
+    const calls = withChats({
+      "PUT /api/projects/1/files/lease%20notes.md": () => json({ name: "lease notes.md" }, 201),
+      "PUT /api/projects/1/files/old.pdf": () =>
+        json({ detail: "A file with this name is already in the project." }, 409),
+    });
+    view = await mount(<App />);
+    const app = view.container.querySelector(".app");
+    const files = [new File(["x"], "lease notes.md"), new File(["y"], "old.pdf"), new File(["z"], "sheet.xlsx")];
+    await drag(app, "dragover", files);
+    expect(document.querySelector(".drop-card")?.textContent).toBe("Drop to add to Contracts");
+    await drag(app, "drop", files);
+    expect(document.querySelector(".drop-card")).toBeNull();
+    const puts = calls.filter((call) => call.key.startsWith("PUT"));
+    expect(puts.map((call) => call.key)).toEqual([
+      "PUT /api/projects/1/files/lease%20notes.md",
+      "PUT /api/projects/1/files/old.pdf", // the spreadsheet is never sent
+    ]);
+    expect(puts[0].body).toBe(files[0]);
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      "Not added: old.pdf (a file with this name is already in the project); " +
+        "sheet.xlsx (only PDF, DOCX, TXT and MD files can be added)",
+    );
+  });
+
+  it("leaves text dragged inside the app alone", async () => {
+    withChats();
+    view = await mount(<App />);
+    const app = view.container.querySelector(".app");
+    const event = await drag(app, "dragover", [], ["text/plain"]);
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.querySelector(".drop-card")).toBeNull();
   });
 
   it("offers Rename, Move to project and Delete chat in the chat menu", async () => {

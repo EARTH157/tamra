@@ -1,6 +1,6 @@
 [project]
 name = "tamra"
-version = "0.1.0"
+version = "0.1.1"
 description = "Offline-first Windows app for asking questions about your documents, with verifiable citations."
 readme = "README.md"
 license = "Apache-2.0"

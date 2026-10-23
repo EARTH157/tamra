@@ -14,6 +14,16 @@ export const en = {
   "app.noProjects": "No projects yet. Add a folder of documents to start.",
   "app.coreUnreachable": "Tamra core is unreachable. Answers are paused until it reconnects.",
   "app.connecting": "Connecting to Tamra…",
+  "chat.copy": "Copy",
+  "chat.copied": "Copied",
+  "chat.copyFailed": "Could not copy",
+  "chat.copySources": "Sources:",
+  "drop.hint": "Drop to add to {name}",
+  "drop.noProject": "Create a project first to add files",
+  "drop.refused": "Not added: {list}",
+  "drop.err.type": "only PDF, DOCX, TXT and MD files can be added",
+  "drop.err.exists": "a file with this name is already in the project",
+  "drop.err.save": "the file could not be saved",
 
   "folder.changeTitle": "Change documents folder",
   "folder.changeText":
