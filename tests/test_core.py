@@ -1,3 +1,4 @@
+import hashlib
 import time
 
 import pytest
@@ -20,6 +21,7 @@ from tamra.llm.anthropic_api import AnthropicLLM
 from tamra.llm.base import ProviderError
 from tamra.llm.openai_compat import OpenAICompatibleLLM
 from tamra.models.catalog import Catalog, ModelEntry, ModelFile
+from tamra.models.external import ExternalModel
 from tamra.models.hardware import Hardware
 from tamra.models.manager import ModelManager
 from tamra.settings import Settings
@@ -852,3 +854,209 @@ def test_start_reads_the_waiting_scans_again_when_the_ocr_models_are_installed(t
         assert ocr.calls == 1
     finally:
         second.shutdown()
+
+
+# --- local models from every source ---
+
+
+def gguf_file(path, data=b"GGUF-model"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
+def hashed_catalog(model_id, data):
+    """A catalog of one LLM whose single file holds `data`."""
+    sha = hashlib.sha256(data).hexdigest()
+    file = ModelFile(f"{model_id}.gguf", len(data), sha, "http://x")
+    return Catalog([ModelEntry(model_id, "llm", "Qwen3-8B", (file,))])
+
+
+def test_a_model_found_in_ollama_is_used_when_tamra_has_none(tmp_path):
+    blob = gguf_file(tmp_path / "ollama" / "blobs" / "sha256-x")
+    found = [ExternalModel("ollama", "qwen3:8b", blob, "f" * 64)]
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"), external_scan=lambda: found)
+    try:
+        assert c.resolve_local_model() == (f"file:{blob}", blob, "qwen3:8b")
+        assert local_label(c) == "qwen3:8b"
+        assert [(x.source, x.catalogued) for x in c.local_choices()] == [("ollama", False)]
+    finally:
+        c.shutdown()
+
+
+def test_a_catalog_model_resolves_through_a_scanned_file_with_its_hash(tmp_path):
+    data = b"GGUF-official"
+    blob = gguf_file(tmp_path / "hf" / "blob", data)
+    sha = hashlib.sha256(data).hexdigest()
+    found = [ExternalModel("huggingface", "Qwen3-8B-Q4_K_M", blob, sha.upper())]
+    catalog = hashed_catalog("q8", data)
+    c = make_core(tmp_path, llm=None, catalog=catalog, external_scan=lambda: found)
+    try:
+        assert c.resolve_local_model() == ("q8", blob, "Qwen3-8B")
+        choices = [(x.id, x.source, x.catalogued) for x in c.local_choices()]
+        assert choices == [("q8", "huggingface", True)]
+    finally:
+        c.shutdown()
+
+
+def test_tamras_own_copy_wins_over_a_linked_or_scanned_copy(tmp_path):
+    data = b"GGUF-official"
+    sha = hashlib.sha256(data).hexdigest()
+    own = gguf_file(tmp_path / "models" / "q8.gguf", data)
+    linked = gguf_file(tmp_path / "elsewhere" / "q8.gguf", data)
+    blob = gguf_file(tmp_path / "ollama" / "blob", data)
+    found = [ExternalModel("ollama", "qwen3:8b", blob, sha)]
+    catalog = hashed_catalog("q8", data)
+    c = make_core(tmp_path, llm=None, catalog=catalog, external_scan=lambda: found)
+    try:
+        link = {"path": str(linked), "size": len(data), "sha256": sha}
+        c.apply_settings({"linked_models": [link]})
+        assert [(x.id, x.path, x.source) for x in c.local_choices()] == [("q8", own, "tamra")]
+    finally:
+        c.shutdown()
+
+
+def test_a_linked_file_is_listed_while_it_keeps_its_size(tmp_path):
+    linked = gguf_file(tmp_path / "elsewhere" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        link = {"path": str(linked), "size": linked.stat().st_size, "sha256": "e" * 64}
+        c.apply_settings({"linked_models": [link], "local_model_id": f"file:{linked}"})
+        assert c.resolve_local_model() == (f"file:{linked}", linked, "Mine")
+        assert c.local_choices()[0].source == "linked"
+        linked.write_bytes(b"GGUF-replaced-with-something-longer")
+        assert c.local_choices() == []
+        with pytest.raises(ProviderError):
+            c.resolve_local_model()
+    finally:
+        c.shutdown()
+
+
+def test_a_file_id_that_is_neither_linked_nor_scanned_is_never_used(tmp_path):
+    install(tmp_path / "models", "a.gguf")
+    stray = gguf_file(tmp_path / "stray.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        c.apply_settings({"local_model_id": f"file:{stray}"})
+        assert c.resolve_local_model()[0] == "a"
+    finally:
+        c.shutdown()
+
+
+def test_the_fallback_order_is_catalog_then_tamra_then_linked_then_scanned(tmp_path):
+    install(tmp_path / "models", "loose.gguf")
+    linked = gguf_file(tmp_path / "elsewhere" / "linked.gguf")
+    blob = gguf_file(tmp_path / "ollama" / "blob")
+    found = [ExternalModel("ollama", "qwen3:8b", blob, None)]
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"), external_scan=lambda: found)
+    try:
+        link = {"path": str(linked), "size": linked.stat().st_size, "sha256": "e" * 64}
+        c.apply_settings({"linked_models": [link]})
+        assert [x.source for x in c.local_choices()] == ["tamra", "linked", "ollama"]
+        install(tmp_path / "models", "a.gguf")
+        assert c.local_choices()[0].id == "a"
+    finally:
+        c.shutdown()
+
+
+def test_a_scanned_file_that_is_also_linked_is_listed_once_as_linked(tmp_path):
+    model = gguf_file(tmp_path / "lmstudio" / "m.gguf")
+    found = [ExternalModel("lmstudio", "m", model, None)]
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"), external_scan=lambda: found)
+    try:
+        link = {"path": str(model), "size": model.stat().st_size, "sha256": "e" * 64}
+        c.apply_settings({"linked_models": [link]})
+        assert [x.source for x in c.local_choices()] == ["linked"]
+    finally:
+        c.shutdown()
+
+
+def test_the_scan_is_cached_and_a_failing_scan_lists_nothing(tmp_path, monkeypatch):
+    calls = []
+
+    def counted():
+        calls.append(1)
+        return []
+
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"), external_scan=counted)
+    try:
+        c.local_choices()
+        c.local_choices()
+        assert len(calls) == 1
+        c._forget_scan()
+        c.local_choices()
+        assert len(calls) == 2
+        monkeypatch.setattr("tamra.core.EXTERNAL_TTL", 0.0)
+        c.local_choices()
+        assert len(calls) == 3
+    finally:
+        c.shutdown()
+
+    def broken():
+        raise RuntimeError("store exploded")
+
+    c = make_core(tmp_path / "2", llm=None, catalog=catalog_of("a"), external_scan=broken)
+    try:
+        assert c.local_choices() == []
+    finally:
+        c.shutdown()
+
+
+def test_a_file_on_a_fixed_drive_is_linked_and_selected(tmp_path, monkeypatch):
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: False)
+    source = gguf_file(tmp_path / "elsewhere" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        result = c.import_model(source)
+        assert (result.id, result.linked) == (f"file:{source}", True)
+        assert c.settings.linked_models == (
+            {"path": str(source), "size": source.stat().st_size, "sha256": result.sha256},
+        )
+        assert c.settings.local_model_id == result.id
+        assert c.resolve_local_model() == (result.id, source, "Mine")
+        assert not (tmp_path / "models" / "Mine.gguf").exists()
+    finally:
+        c.shutdown()
+
+
+def test_a_file_on_a_removable_drive_is_copied_and_not_linked(tmp_path, monkeypatch):
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: True)
+    source = gguf_file(tmp_path / "usb" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        result = c.import_model(source)
+        assert (result.id, result.linked) == ("import:Mine.gguf", False)
+        assert (tmp_path / "models" / "Mine.gguf").read_bytes() == source.read_bytes()
+        assert c.settings.linked_models == ()
+    finally:
+        c.shutdown()
+
+
+def test_importing_a_linked_path_again_refreshes_its_entry(tmp_path, monkeypatch):
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: False)
+    source = gguf_file(tmp_path / "elsewhere" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        c.import_model(source)
+        source.write_bytes(b"GGUF-a-newer-and-longer-build")
+        again = c.import_model(source)
+        assert len(c.settings.linked_models) == 1
+        assert c.settings.linked_models[0]["size"] == source.stat().st_size
+        assert c.settings.linked_models[0]["sha256"] == again.sha256
+    finally:
+        c.shutdown()
+
+
+def test_unlinking_forgets_the_file_but_leaves_it_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr("tamra.core.is_removable", lambda path: False)
+    source = gguf_file(tmp_path / "elsewhere" / "Mine.gguf")
+    c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
+    try:
+        c.import_model(source)
+        c.unlink_model(str(source).upper())  # Windows paths ignore case
+        assert c.settings.linked_models == ()
+        assert source.exists()
+        with pytest.raises(KeyError):
+            c.unlink_model(str(source))
+    finally:
+        c.shutdown()

@@ -48,6 +48,7 @@ def test_every_field_round_trips(store):
         "text_size": "large",
         "spacing": "compact",
         "ask_before_delete": False,
+        "linked_models": ({"path": "D:\\Models\\a.gguf", "size": 5, "sha256": "a" * 64},),
         "mcp_enabled": True,
     }
     assert set(changes) == {f.name for f in dataclasses.fields(Settings)}
@@ -161,6 +162,35 @@ def test_invalid_api_base_urls_are_rejected(store, url):
     with pytest.raises(ValueError, match="api_base_url"):
         save_settings(store, {"api_base_url": url})
     assert store.all_settings() == {}
+
+
+LINK = {"path": "D:\\Models\\a.gguf", "size": 5, "sha256": "a" * 64}
+
+
+def test_linked_models_default_to_empty_and_load_as_a_tuple(store):
+    assert load_settings(store).linked_models == ()
+    save_settings(store, {"linked_models": [LINK]})  # a list, as JSON gives it back
+    assert load_settings(store).linked_models == (LINK,)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "D:\\a.gguf",
+        [LINK, "x"],
+        [{**LINK, "path": "relative.gguf"}],
+        [{**LINK, "path": 5}],
+        [{**LINK, "size": -1}],
+        [{**LINK, "size": True}],
+        [{**LINK, "sha256": "A" * 64}],
+        [{**LINK, "sha256": "abc"}],
+        [{**LINK, "extra": 1}],
+        [{"path": LINK["path"], "size": 5}],
+    ],
+)
+def test_bad_linked_models_are_refused(store, value):
+    with pytest.raises(ValueError, match="linked_models"):
+        save_settings(store, {"linked_models": value})
 
 
 def test_mcp_enabled_must_be_a_bool(store):

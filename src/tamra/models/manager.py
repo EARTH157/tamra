@@ -32,10 +32,14 @@ class ImportRefused(ValueError):
 
 @dataclass(frozen=True)
 class ImportResult:
-    id: str  # catalog id, or "import:<file name>" if uncatalogued; both are valid local_model_id
-    path: Path  # where the file now lives, inside the models directory
+    # A catalog id, "import:<file name>" (copied) or "file:<path>" (linked): a valid local_model_id.
+    id: str
+    path: Path  # where the file now lives: inside the models directory, or where it was if linked
     catalogued: bool
     warning: str | None = None
+    linked: bool = False  # used where it is, not copied
+    sha256: str | None = None  # set when linked, so the link can be matched to the catalog later
+    size: int | None = None  # set when linked
 
 
 def _idle() -> dict[str, Any]:
@@ -155,26 +159,41 @@ class ModelManager:
 
     # --- import ---
 
-    def import_file(self, path: Path) -> ImportResult:
-        """Copy a model file into the models directory.
+    def import_file(self, path: Path, *, link_llm: bool = False) -> ImportResult:
+        """Copy a model file into the models directory, or, with `link_llm`, accept an LLM file
+        where it is.
 
         A file whose sha256 matches a catalog file is stored under that file's catalog path. Any
         other GGUF is copied as it is, with a warning. Everything else is refused. The copy goes
         to a uniquely named temporary file first, so a half-copied file never looks installed
         and never mixes with a download's .part. Raises ImportRefused, also when the model is
         being downloaded right now.
+
+        With `link_llm`, an LLM file (a catalog match, or any GGUF) is validated and hashed but
+        not copied: the result is `linked`, with the file's sha256 and size. Embedding and OCR
+        files are always copied: Tamra must own them.
         """
         path = Path(path)
         if not path.is_file():
             raise ImportRefused(f"{path} is not a file")
         with self._import_lock:
             try:
+                size = path.stat().st_size
                 digest = sha256_file(path)
             except OSError as exc:
                 raise ImportRefused(_unreadable(path, exc)) from exc
             match = self._find_by_hash(digest)
             if match is not None:
                 entry, f = match
+                if link_llm and entry.role == "llm":
+                    return ImportResult(
+                        id=entry.id,
+                        path=path,
+                        catalogued=True,
+                        linked=True,
+                        sha256=digest,
+                        size=size,
+                    )
                 self._refuse_if_downloading(entry)
                 dest = self.models_dir / f.path
                 if not self._already_there(dest, f.size, digest):
@@ -183,6 +202,19 @@ class ModelManager:
 
             if path.suffix.lower() != ".gguf":
                 raise ImportRefused("Only GGUF model files can be imported.")
+            if link_llm:
+                # No name-clash check: a linked file never enters the models directory.
+                if _head(path, 4) != b"GGUF":
+                    raise ImportRefused(f"{path.name} is not a valid GGUF model file.")
+                return ImportResult(
+                    id=f"file:{path}",
+                    path=path,
+                    catalogued=False,
+                    warning=UNCATALOGUED_WARNING,
+                    linked=True,
+                    sha256=digest,
+                    size=size,
+                )
             clash = self._find_by_name(path.name)
             if clash is not None:
                 entry, _ = clash

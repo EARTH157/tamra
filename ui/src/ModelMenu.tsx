@@ -1,7 +1,7 @@
 import { Check, ChevronDown, Cloud, Cpu, SlidersHorizontal } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useT } from "./i18n";
-import { activeName, isDownloading, offeredLocal, percent } from "./models";
+import { activeName, isDownloading, offeredLocal, percent, SOURCE_KEYS } from "./models";
 import PopMenu from "./PopMenu";
 import type { LocalModel, ModelsInfo, Settings, SettingsChanges } from "./types";
 
@@ -104,7 +104,7 @@ export default function ModelMenu({ models, settings, onChoose, onManage, refres
               key={model.id}
               icon={<Cpu size={16} />}
               name={model.name}
-              note={t("model.imported")}
+              note={t(SOURCE_KEYS[model.source])}
               checked={model.id === activeId}
               onChoose={() => choose({ mode: "local", local_model_id: model.id })}
             />

@@ -224,6 +224,18 @@ describe("model menu", () => {
     expect(entry("Manage models…")).toBeDefined();
   });
 
+  it("names the tool a model comes from", async () => {
+    await mountChat({
+      models: modelsInfo({
+        uncatalogued: [
+          { id: "file:C:\\o\\blob", name: "qwen3:8b", file: "blob", size: 5, source: "ollama", path: "C:\\o\\blob" },
+        ],
+      }),
+    });
+    await click(chip("Model"));
+    expect(entry("qwen3:8b")?.textContent).toContain("From Ollama");
+  });
+
   it("opens Settings on the AI model tab from Manage models", async () => {
     const onOpenSettings = vi.fn();
     await mountChat({ onOpenSettings });
@@ -578,6 +590,31 @@ describe("model errors", () => {
       "No model is ready to answer. Choose or download one in Settings.",
     );
     expect(alert?.textContent).not.toContain("No local model is installed.");
+    await click(buttonByText(alert!, "Open model settings"));
+    expect(onOpenSettings).toHaveBeenCalledWith("model");
+  });
+
+  it("explains a model type llama.cpp cannot run, with a button to the model settings", async () => {
+    const onOpenSettings = vi.fn();
+    await mountChat({
+      onOpenSettings,
+      routes: {
+        "POST /api/chats/5/messages": () =>
+          sse([
+            { type: "sources", sources: [source] },
+            {
+              type: "error",
+              message: "This version of llama.cpp cannot run models of type qwen3vl.",
+              reason: "model_unsupported",
+            },
+          ]),
+      },
+    });
+    await ask();
+    const alert = view!.container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(
+      "Tamra cannot run this type of model yet. Choose another model in Settings.",
+    );
     await click(buttonByText(alert!, "Open model settings"));
     expect(onOpenSettings).toHaveBeenCalledWith("model");
   });

@@ -46,3 +46,9 @@ def _no_truststore_injection(monkeypatch):
     import truststore
 
     monkeypatch.setattr(truststore, "inject_into_ssl", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_model_scan(monkeypatch):
+    """Core scans Ollama, LM Studio and the HF cache; tests must not see this machine's stores."""
+    monkeypatch.setattr("tamra.core.scan_external", lambda home, env: [])

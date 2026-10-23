@@ -25,6 +25,10 @@ mode = sys.argv[2]
 
 if mode == "fail":
     sys.exit(1)
+elif mode == "unknown_arch":
+    print("llama_model_load: error loading model: error loading model architecture: "
+          "unknown model architecture: 'qwen3vl'", flush=True)
+    sys.exit(1)
 elif mode == "hang":
     time.sleep(3600)
 elif mode in ("ok", "offload"):
@@ -339,3 +343,32 @@ def test_an_unwritable_log_raises_llama_server_error(tmp_path):
     srv = LlamaServer(Path("x.exe"), Path("m.gguf"), blocker / "logs" / "l.txt")
     with pytest.raises(LlamaServerError, match="cannot write"):
         srv.start(timeout=1)
+
+
+def test_an_unknown_model_architecture_is_model_unsupported_and_skips_the_cpu_try(
+    tmp_path, spawned
+):
+    stub_script = tmp_path / "stub.py"
+    stub_script.write_text(_STUB_SERVER)
+    srv = _StubLlamaServer(
+        stub_script,
+        Path("dummy.gguf"),
+        tmp_path / "log.txt",
+        modes={"gpu": "unknown_arch", "cpu": "ok"},
+    )
+    with pytest.raises(LlamaServerError) as e:
+        srv.start(timeout=5)
+    assert e.value.reason == "model_unsupported"
+    assert "qwen3vl" in str(e.value)
+    assert len(spawned) == 1  # the CPU would fail the same way: it is not tried
+
+
+def test_any_other_start_failure_keeps_the_reason_other(tmp_path, spawned):
+    stub_script = tmp_path / "stub.py"
+    stub_script.write_text(_STUB_SERVER)
+    srv = _StubLlamaServer(
+        stub_script, Path("dummy.gguf"), tmp_path / "log.txt", modes={"gpu": "fail", "cpu": "fail"}
+    )
+    with pytest.raises(LlamaServerError) as e:
+        srv.start(timeout=5)
+    assert e.value.reason == "other"

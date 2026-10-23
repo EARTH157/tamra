@@ -1,6 +1,6 @@
 # External local models: use GGUF files from Ollama, LM Studio and Hugging Face in place
 
-Status: approved design, not yet implemented. Date: 2026-10-23.
+Status: implemented (plan `docs/superpowers/plans/2026-10-23-external-models.md`). Date: 2026-10-23.
 
 ## Goal
 
@@ -39,19 +39,29 @@ How each source is read:
     `application/vnd.ollama.image.model` has a digest `sha256:<hex>`. That digest names
     the blob `blobs/sha256-<hex>`, and the blob must start with the bytes `GGUF`. The
     model's `sha256` is `<hex>`.
-  - A manifest that also has an `application/vnd.ollama.image.projector` layer is
-    skipped (a vision model).
+  - Files under `manifests-v2/` are manifest lists, written by Ollama 0.40 and later. Each
+    one is followed to its entry whose `runner` is `llamacpp` and whose `format` is `gguf`.
+    That entry's digest names a blob that holds an ordinary manifest.
+  - A manifest that names another `runner` or `format` is skipped, for example `mlx` or
+    `safetensors`. Older manifests name neither, and they are llama.cpp GGUFs.
+  - A vision model's `application/vnd.ollama.image.projector` layer (its mmproj) is
+    ignored. llama-server runs the text model without it.
   - The name is `<model>:<tag>`, taken from the manifest's last two path parts.
-  - Several tags can share one blob. That blob is listed once, under a tag other than
-    `latest` when the blob has one.
+  - Several tags can share one blob, and so can the `manifests/` and `manifests-v2/`
+    entries of one tag. That blob is listed once, under a tag other than `latest` when the
+    blob has one.
 - **LM Studio.** Tamra looks for `*.gguf` files at most three levels deep under:
   - `home/.lmstudio/models`
   - `home/.cache/lm-studio/models`
   - `<dir>/models`, where `<dir>` is the path in `home/.lmstudio-home-pointer` when that
     file exists.
+  - the `downloadsFolder` that `home/.lmstudio/settings.json` names, which is the folder
+    the user picked in LM Studio.
 
-  The name is the file stem and `sha256` is `None`. These locations come from community
-  sources, so check them against a real install.
+  The name is the file stem and `sha256` is `None`.
+- **Checked on real installs.** On 2026-10-23, Ollama 0.40.8 with `qwen3.5:4b` (a vision
+  model, with both manifest layouts) and LM Studio with `gemma-4-E4B-it-Q4_K_M` (and its
+  mmproj) were both found. Both ran on the GPU through the pinned llama.cpp (build 11344).
 - **Hugging Face cache.** The root is `env["HF_HUB_CACHE"]`, then `env["HF_HOME"]/hub`,
   then `home/.cache/huggingface/hub`. Tamra lists `models--*/snapshots/*/**/*.gguf`.
   - A snapshot file that is a symlink to `blobs/<64 hex>` gets that hex as its `sha256`.
@@ -70,7 +80,8 @@ How each source is read:
 
 `Settings.linked_models` is a tuple of `{"path": str, "size": int, "sha256": str}` entries.
 
-- `path` is absolute and ends in `.gguf`.
+- `path` is absolute. It may have any extension, because a file that matches the catalog by
+  sha256 may have any name.
 - `size` is a non-negative int.
 - `sha256` is a 64-character lowercase hex string.
 
@@ -170,7 +181,9 @@ file without copying it.
   tool.
 - **Import notes:**
   - When the file was linked: "Using {file} where it is; it was not copied."
-  - When it was copied from a removable drive: "Copied {file} from the removable drive."
+  - When it was copied, the note keeps today's wording ("Imported {file}. …"). A distinct
+    removable-drive message was dropped: the server would have to tell a removable-drive copy
+    from an embedding copy, and nothing else needs that.
   - `settings.importHint` says that files are normally used in place.
 - **Model menu.** The note under an uncatalogued entry names its source instead of
   "Imported".
@@ -198,7 +211,9 @@ Windows refuses `ollama rm` of that model. The user must switch models or close 
 - **`tests/test_external.py`** uses fake stores under `tmp_path`.
   - Ollama:
     - A valid manifest gives `qwen3:8b`, the blob path and the sha256.
-    - A manifest with a projector layer is skipped.
+    - A vision model is listed by its text model, without the projector.
+    - A manifest for another runner is skipped.
+    - A `manifests-v2` list is followed to its llama.cpp manifest.
     - Bad JSON is skipped, and so is a blob without the `GGUF` magic.
     - Two tags that share one blob give one entry, named by the tag that is not `latest`.
     - `OLLAMA_MODELS` is honored.
