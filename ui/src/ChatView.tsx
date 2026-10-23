@@ -1,4 +1,4 @@
-import { BookOpen, FileText, Info, Lightbulb, SearchX, X } from "lucide-react";
+import { FileText, Info, Lightbulb, SearchX, X } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import AnswerText, { type Highlight } from "./AnswerText";
 import { api, attribute, streamAnswer } from "./api";
@@ -7,6 +7,7 @@ import CheckSourceButton from "./CheckSourceButton";
 import Composer from "./Composer";
 import DocumentViewer from "./DocumentViewer";
 import { useT } from "./i18n";
+import logo from "./logo.svg";
 import { canThink, useModels } from "./models";
 import { isNotFound } from "./notFound";
 import { utf16ToCp } from "./offsets";
@@ -420,9 +421,7 @@ export default function ChatView({
         <div className="messages" ref={scroller}>
           {empty && (
             <div className="hero">
-              <span className="hero-tile">
-                <BookOpen size={26} />
-              </span>
+              <img className="hero-tile" src={logo} alt="" />
               <h1>{t("chat.emptyTitle")}</h1>
               <p className="hero-sub">{t("chat.emptyText")}</p>
             </div>

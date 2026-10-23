@@ -1,14 +1,13 @@
-import { AlignLeft, BookOpen, Check, Folder, Lock } from "lucide-react";
+import { AlignLeft, Check, Folder, Lock } from "lucide-react";
 import { useT } from "./i18n";
+import logo from "./logo.svg";
 
 /** First run: no folder of documents has been chosen yet. */
 export default function Welcome({ onChoose }: { onChoose: () => void }) {
   const t = useT();
   return (
     <div className="hero">
-      <span className="hero-tile">
-        <BookOpen size={26} />
-      </span>
+      <img className="hero-tile" src={logo} alt="" />
       <h1>{t("welcome.title")}</h1>
       <p className="hero-sub">
         {t("welcome.subtitle")}

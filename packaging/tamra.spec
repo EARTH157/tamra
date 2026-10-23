@@ -13,6 +13,7 @@ a = Analysis(
         (str(ROOT / "ui" / "dist"), "ui/dist"),
         (str(ROOT / "vendor" / "llama"), "vendor/llama"),
         (str(ROOT / "src" / "tamra" / "models" / "catalog.json"), "tamra/models"),
+        (str(ROOT / "packaging" / "tamra.ico"), "packaging"),
         (str(ROOT / "LICENSE"), "."),
         (str(ROOT / "NOTICE"), "."),
     ],
@@ -24,5 +25,13 @@ a = Analysis(
     + ["tamra.app", "tamra.selfcheck", "tamra.embedder"],
 )
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Tamra", console=False)
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="Tamra",
+    console=False,
+    icon=str(ROOT / "packaging" / "tamra.ico"),
+)
 coll = COLLECT(exe, a.binaries, a.datas, name="Tamra")
