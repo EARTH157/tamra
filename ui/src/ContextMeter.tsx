@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import { useT } from "./i18n";
+import type { ContextEvent, SavedContext } from "./types";
 
 /** What a chat's last prompt put in the model's context window (spec §6). */
 export type ContextUse = {
@@ -16,6 +17,28 @@ export type ContextUse = {
   /** The local model's own count, once it reports: the whole prompt and what it has generated. */
   measured: { prompt: number; generated: number } | null;
 };
+
+/** A context event, live or saved with the chat, as the meter shows it. */
+export function contextUse(
+  e: Omit<ContextEvent, "type">,
+  measured: ContextUse["measured"] = null,
+): ContextUse {
+  return {
+    window: e.context_tokens,
+    reply: e.reply_tokens,
+    parts: e.parts,
+    sourceCount: e.source_count,
+    kept: e.history_kept,
+    total: e.history_total,
+    measured,
+  };
+}
+
+/** The chat's saved last prompt, as the meter shows it. */
+export function savedContextUse(saved: SavedContext): ContextUse {
+  const m = saved.measured;
+  return contextUse(saved, m && { prompt: m.prompt_tokens, generated: m.generated_tokens });
+}
 
 /** 950, 2.1k, 32k */
 export function compactTokens(n: number): string {

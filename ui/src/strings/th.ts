@@ -16,6 +16,16 @@ export const th: Record<TranslationKey, string> = {
   "app.coreUnreachable":
     "เชื่อมต่อระบบหลักของ Tamra ไม่ได้ การตอบคำถามจะหยุดไว้ก่อนจนกว่าจะเชื่อมต่อได้อีกครั้ง",
   "app.connecting": "กำลังเชื่อมต่อ Tamra…",
+  "chat.copy": "คัดลอก",
+  "chat.copied": "คัดลอกแล้ว",
+  "chat.copyFailed": "คัดลอกไม่ได้",
+  "chat.copySources": "แหล่งอ้างอิง:",
+  "drop.hint": "วางเพื่อเพิ่มลงใน {name}",
+  "drop.noProject": "สร้างโปรเจกต์ก่อนจึงจะเพิ่มไฟล์ได้",
+  "drop.refused": "เพิ่มไม่ได้: {list}",
+  "drop.err.type": "เพิ่มได้เฉพาะไฟล์ PDF, DOCX, TXT และ MD",
+  "drop.err.exists": "มีไฟล์ชื่อนี้อยู่ในโปรเจกต์แล้ว",
+  "drop.err.save": "บันทึกไฟล์ไม่ได้",
 
   "folder.changeTitle": "เปลี่ยนโฟลเดอร์เอกสาร",
   "folder.changeText":

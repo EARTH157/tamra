@@ -35,6 +35,9 @@ const PROJECT_ERRORS: Record<string, TranslationKey> = {
   "Choose at least one project to search.": "project.err.scopeEmpty",
   "Chat not found.": "chat.err.notFound",
   "An answer is being written. Wait for it to finish.": "project.err.busy",
+  "Only PDF, DOCX, TXT and MD files can be added.": "drop.err.type",
+  "A file with this name is already in the project.": "drop.err.exists",
+  "The file could not be saved.": "drop.err.save",
 };
 
 /** The text to show when a project or chat call was refused: the user's language for the core's fixed refusals. */

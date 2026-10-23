@@ -646,3 +646,82 @@ def test_every_project_and_chat_route_needs_the_token(api, method, path, body):
         client.request(method, path, json=body, headers={"X-Tamra-Token": "wrong"}).status_code
         == 401
     )
+
+
+# --- added files ---
+
+
+def test_a_dropped_file_is_saved_in_the_project_folder_and_indexed(api):
+    client, tmp_path = api
+    docs = folder(tmp_path, "docs")
+    created = add_project(client, "Lease", docs)
+    added = client.put(
+        f"/api/projects/{created['id']}/files/สัญญาเช่า.md",
+        headers=AUTH,
+        content=b"The lease term is three years.",
+    )
+    assert added.status_code == 201, added.text
+    assert added.json() == {"name": "สัญญาเช่า.md"}
+    assert (docs / "สัญญาเช่า.md").read_text(encoding="utf-8") == "The lease term is three years."
+    assert [p.name for p in docs.iterdir()] == ["สัญญาเช่า.md"]  # no temp file is left
+    wait_for(lambda: project(client, created["id"])["index"]["counts"]["indexed"] == 1)
+
+
+def test_a_file_with_a_name_already_in_the_folder_is_a_409_and_left_as_it_was(api):
+    client, tmp_path = api
+    docs = folder(tmp_path, "docs", lease="original")
+    created = add_project(client, "Lease", docs)
+    added = client.put(
+        f"/api/projects/{created['id']}/files/lease.md", headers=AUTH, content=b"replacement"
+    )
+    assert added.status_code == 409
+    assert (docs / "lease.md").read_text(encoding="utf-8") == "original"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "..%5Coutside.md",
+        "C%3Aoutside.md",
+        "notes.xlsx",
+        "notes",
+        ".hidden.md",
+        "~$lock.docx",
+        "CON.txt",
+        "lpt1.md",
+        "trailing.md.",
+        "a%3Fb.md",
+        "bell%07.md",
+    ],
+)
+def test_a_name_that_is_not_a_plain_supported_file_name_is_a_400(api, name):
+    client, tmp_path = api
+    docs = folder(tmp_path, "docs")
+    created = add_project(client, "Lease", docs)
+    added = client.put(f"/api/projects/{created['id']}/files/{name}", headers=AUTH, content=b"x")
+    assert added.status_code == 400
+    assert list(docs.iterdir()) == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["data", "docs"]
+
+
+@pytest.mark.parametrize("name, status", [("..", 405), ("..%2Foutside.md", 404)])
+def test_a_path_in_the_name_never_reaches_the_route(api, name, status):
+    client, tmp_path = api
+    docs = folder(tmp_path, "docs")
+    created = add_project(client, "Lease", docs)
+    added = client.put(f"/api/projects/{created['id']}/files/{name}", headers=AUTH, content=b"x")
+    assert added.status_code == status
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["data", "docs"]
+
+
+def test_a_file_for_an_unknown_project_is_a_404(api):
+    client, _ = api
+    assert client.put("/api/projects/99/files/a.md", headers=AUTH, content=b"x").status_code == 404
+
+
+def test_adding_a_file_needs_the_token(api):
+    client, tmp_path = api
+    docs = folder(tmp_path, "docs")
+    created = add_project(client, "Lease", docs)
+    assert client.put(f"/api/projects/{created['id']}/files/a.md", content=b"x").status_code == 401
+    assert list(docs.iterdir()) == []

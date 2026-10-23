@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import unicodedata
+import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -21,7 +22,7 @@ from tamra.drives import is_removable
 from tamra.embedder import MODEL_ID, Embedder, EmbedderUnavailable
 from tamra.ingest.chunker import TokenSpans, bge_token_spans
 from tamra.ingest.indexer import EmbedderLike, Indexer, OcrLike
-from tamra.ingest.parsers import ParsedDoc, ParseError, parse_file, with_ocr
+from tamra.ingest.parsers import SUPPORTED, ParsedDoc, ParseError, parse_file, with_ocr
 from tamra.ingest.watcher import FolderWatcher
 from tamra.llm.anthropic_api import AnthropicLLM
 from tamra.llm.base import Provider, ProviderError
@@ -105,6 +106,37 @@ def _clean_name(name: str) -> str:
     if any(unicodedata.category(c) in _HIDDEN for c in cleaned):
         raise BadName("bad name characters")
     return cleaned
+
+
+class FileNameNotAllowed(ValueError):
+    """An added file's name that is not a plain Windows file name of a supported type."""
+
+
+_RESERVED = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
+
+
+def _file_name(name: str) -> str:
+    """name if it is a plain file name Windows accepts, with a type Tamra indexes and not one the
+    indexer skips; FileNameNotAllowed otherwise. A path, drive or `..` never passes."""
+    if (
+        not name
+        or name != name.strip(" .")  # Windows drops trailing dots and spaces
+        or name.startswith((".", "~$"))
+        or any(c in '<>:"/\\|?*' or unicodedata.category(c) in _HIDDEN for c in name)
+        or name.split(".")[0].upper() in _RESERVED
+        or Path(name).suffix.lower() not in SUPPORTED
+    ):
+        raise FileNameNotAllowed(name)
+    return name
 
 
 def _derived_name(path: Path) -> str:
@@ -698,6 +730,29 @@ class Core:
             self._watch(collection)  # under the lock: a delete cannot unwatch before this
         self.indexer.request_reconcile(collection.id)
         return collection
+
+    def add_file(self, collection_id: int, name: str, content: bytes) -> Path | None:
+        """Save a new file in the project's folder and index it; None if the project is unknown.
+
+        FileNameNotAllowed for a bad name, FileExistsError if the folder has the name already:
+        an existing file is never overwritten (spec §5)."""
+        collection = self.store.get_collection(collection_id)
+        if collection is None:
+            return None
+        target = Path(collection.folder_path) / _file_name(name)
+        if target.exists():
+            raise FileExistsError(name)
+        # Written under a name the watcher and indexer skip, then renamed in one step, so a
+        # half-written file is never indexed.
+        temp = target.with_name(f"~$tamra-{uuid.uuid4().hex[:8]}{target.suffix}")
+        try:
+            temp.write_bytes(content)
+            os.rename(temp, target)  # on Windows it refuses an existing target
+        except BaseException:
+            temp.unlink(missing_ok=True)
+            raise
+        self.indexer.request_reconcile(collection.id)  # also where the folder cannot be watched
+        return target
 
     def rename_project(self, collection_id: int, name: str) -> Collection | None:
         """Rename a project (None if unknown; BadName if the name is not valid, NameTaken if

@@ -545,8 +545,9 @@ class AnswerService:
         reply = self._reply_tokens(route, think)
         room = route.context_tokens - reply
         messages = build_messages(question, history, sources, language, room)
-        yield context_event(messages, history, sources, route.context_tokens, reply)
-        yield from self._write(chat_id, route, messages, sources, think)
+        context = context_event(messages, history, sources, route.context_tokens, reply)
+        yield context
+        yield from self._write(chat_id, route, messages, sources, think, context)
 
     def _reply_tokens(self, route: Route, think: bool) -> int:
         """The part of the context window kept for the reply; the prompt gets the rest. It grows
@@ -568,8 +569,9 @@ class AnswerService:
         room = route.context_tokens - reply
         messages = chat_messages(question, history, detect_language(question), room)
         self._store.add_user_message(chat_id, question)
-        yield context_event(messages, history, [], route.context_tokens, reply)
-        yield from self._write(chat_id, route, messages, [], think)
+        context = context_event(messages, history, [], route.context_tokens, reply)
+        yield context
+        yield from self._write(chat_id, route, messages, [], think, context)
 
     def _write(
         self,
@@ -578,13 +580,16 @@ class AnswerService:
         messages: list[Message],
         sources: list[SourceRecord],
         think: bool,
+        context: dict,
     ) -> Iterator[dict]:
-        """Stream the model's reply to messages and save it with its sources."""
+        """Stream the model's reply to messages and save it with its sources, and save context
+        (the context event) with the local model's final counts as the chat's last prompt."""
         parts: list[str] = []
         error: str | None = None
         reason = "other"
         label = ""
         message_id: int | None = None
+        final: Usage | None = None
         try:
             try:
                 llm = route.open()
@@ -598,6 +603,7 @@ class AnswerService:
                         break
                     if chunk.kind == "usage":  # the local model's live token counts
                         unsent = chunk.usage
+                        final = unsent or final
                         if unsent is not None and time.monotonic() - sent_at >= USAGE_INTERVAL:
                             yield _usage_event(unsent)
                             unsent, sent_at = None, time.monotonic()
@@ -628,6 +634,14 @@ class AnswerService:
                 )
                 if self._on_saved is not None and sources:
                     _run(lambda: self._on_saved(message_id))
+            measured = None
+            if final is not None:
+                measured = {
+                    "prompt_tokens": final.prompt_tokens,
+                    "generated_tokens": final.generated_tokens,
+                }
+            saved = {k: v for k, v in context.items() if k != "type"}
+            self._store.set_chat_context(chat_id, {**saved, "measured": measured})
         if error:
             yield {"type": "error", "message": error, "reason": reason}
         if message_id is not None:

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { ApiError, api } from "./api";
 import type { Project } from "./types";
+
+/** The file types the core indexes (tamra.ingest.parsers.SUPPORTED), and its refusal of others. */
+const SUPPORTED = /\.(pdf|docx|txt|md)$/i;
+const FILE_TYPE_REFUSAL = "Only PDF, DOCX, TXT and MD files can be added.";
 
 /** The longest project name the core accepts. */
 export const NAME_MAX = 80;
@@ -94,5 +98,21 @@ export function useProjects(onReconnect?: () => void) {
     return chats_deleted;
   }
 
-  return { projects, offline, refresh, create, rename, changeFolder, rebuild, remove };
+  /** Copy files into a project's folder, one at a time; the core indexes them. Resolves to the
+   * files it refused, each with its error. A type it cannot index is not sent at all. */
+  async function addFiles(id: number, files: File[]): Promise<{ file: File; error: Error }[]> {
+    const refused: { file: File; error: Error }[] = [];
+    for (const file of files) {
+      try {
+        if (!SUPPORTED.test(file.name)) throw new ApiError(400, FILE_TYPE_REFUSAL);
+        await api("PUT", `/api/projects/${id}/files/${encodeURIComponent(file.name)}`, file);
+      } catch (e) {
+        refused.push({ file, error: e as Error });
+      }
+    }
+    await refresh();
+    return refused;
+  }
+
+  return { projects, offline, refresh, create, rename, changeFolder, rebuild, remove, addFiles };
 }

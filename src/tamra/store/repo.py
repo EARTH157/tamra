@@ -653,6 +653,21 @@ class Store:
             )
         return message_id
 
+    def set_chat_context(self, chat_id: int, context: dict) -> None:
+        """Keep what the chat's last prompt put in the context window."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE chats SET context_json = ? WHERE id = ?", (json.dumps(context), chat_id)
+            )
+
+    def chat_context(self, chat_id: int) -> dict | None:
+        """What the chat's last prompt put in the context window; None before its first."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT context_json FROM chats WHERE id = ?", (chat_id,)
+            ).fetchone()
+        return json.loads(row[0]) if row and row[0] else None
+
     def recent_exchanges(self, chat_id: int, limit: int) -> list[tuple[str, str | None]]:
         """The chat's last `limit` questions, oldest first, each with the assistant reply that
         followed it before the next question (None if there was none)."""

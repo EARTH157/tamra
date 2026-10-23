@@ -198,6 +198,11 @@
   box-sizing: border-box;
 }
 
+/* Panes still scroll by wheel, touch and keyboard; only the bar is hidden. */
+* {
+  scrollbar-width: none;
+}
+
 html,
 body,
 #root {
@@ -1203,6 +1208,25 @@ svg.lucide {
   font-size: 12px;
 }
 
+/* The model line and the copy button, on one line under an answer. */
+.answer-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 12px;
+}
+
+.answer-foot .answer-meta {
+  margin: 0;
+}
+
+.copy-answer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .answer-hint {
   margin: 14px 0 0;
   color: var(--muted);
@@ -2050,6 +2074,38 @@ svg.lucide {
   justify-content: center;
   padding: 24px;
   background: var(--overlay);
+}
+
+/* Files dragged over the window: where they will go. It lets the drag events reach the app. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--overlay);
+  pointer-events: none;
+}
+
+.drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 40px;
+  border: 2px dashed var(--primary);
+  border-radius: var(--radius-dialog);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+  box-shadow: var(--shadow-dialog);
+}
+
+.drop-card svg {
+  color: var(--primary-ink);
 }
 
 .dialog {

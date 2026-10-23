@@ -1,11 +1,12 @@
-import { FileText, Info, Lightbulb, MessageCircle, SearchX, X } from "lucide-react";
+import { Check as CheckIcon, Copy, FileText, Info, Lightbulb, MessageCircle, SearchX, X } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import AnswerText, { type Highlight } from "./AnswerText";
 import { api, attribute, streamAnswer } from "./api";
 import { attributionErrorText, errorText, projectErrorText } from "./apiErrors";
 import CheckSourceButton from "./CheckSourceButton";
+import { splitCitations } from "./citations";
 import Composer from "./Composer";
-import type { ContextUse } from "./ContextMeter";
+import { type ContextUse, contextUse, savedContextUse } from "./ContextMeter";
 import DocumentViewer from "./DocumentViewer";
 import { useT } from "./i18n";
 import logo from "./logo.svg";
@@ -134,7 +135,8 @@ export default function ChatView({
   const [thoughts, setThoughts] = useState<Record<number, Thought>>({});
   // Likewise the local model's token counts of those answers, by message id.
   const [generated, setGenerated] = useState<Record<number, Generated>>({});
-  // How full each chat's last prompt made the context window, by chat id, while the app is open.
+  // How full each chat's last prompt made the context window, by chat id: saved with the chat,
+  // then kept live while it is answered.
   const [contexts, setContexts] = useState<Record<number, ContextUse>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
@@ -178,10 +180,15 @@ export default function ChatView({
     setGenerated({});
     setDetail(null);
     if (chatId === null) return;
+    const id = chatId;
     let current = true;
-    api<ChatDetail>("GET", `/api/chats/${chatId}`)
+    api<ChatDetail>("GET", `/api/chats/${id}`)
       .then((loaded) => {
-        if (current) setDetail(loaded);
+        if (!current) return;
+        setDetail(loaded);
+        const saved = loaded.context;
+        // A live meter from this session is as new as the saved one, or newer.
+        if (saved) setContexts((all) => (all[id] ? all : { ...all, [id]: savedContextUse(saved) }));
       })
       .catch((e: Error) => {
         if (current) setNotice({ message: projectErrorText(e, t) });
@@ -255,16 +262,7 @@ export default function ChatView({
           } else if (e.type === "notice") {
             setSkipped(e.names);
           } else if (e.type === "context") {
-            const use: ContextUse = {
-              window: e.context_tokens,
-              reply: e.reply_tokens,
-              parts: e.parts,
-              sourceCount: e.source_count,
-              kept: e.history_kept,
-              total: e.history_total,
-              measured: null,
-            };
-            setContexts((all) => ({ ...all, [id]: use }));
+            setContexts((all) => ({ ...all, [id]: contextUse(e) }));
           } else if (e.type === "usage") {
             state = { ...state, generated: { count: e.generated_tokens, rate: e.tokens_per_second } };
             const measured = { prompt: e.prompt_tokens, generated: e.generated_tokens };
@@ -334,6 +332,7 @@ export default function ChatView({
             project_id: null,
             scope: [],
             messages: [],
+            context: null,
           },
       );
       return null;
@@ -707,6 +706,50 @@ function metaOf(
   return parts.join(" · ");
 }
 
+/**
+ * An answer as plain text to paste elsewhere: its text with the [n] markers, then the sources it
+ * cites, each with its path in the project and its place ("[1] 2026/lease.pdf, p. 2"). Uncited
+ * sources are left out.
+ */
+function copyableAnswer(text: string, sources: Source[], multi: boolean, heading: string): string {
+  const cited = new Set(
+    splitCitations(text, sources.length).flatMap((segment) => (segment.kind === "cite" ? [segment.n] : [])),
+  );
+  const lines = sources
+    .filter((source) => cited.has(source.n))
+    .map((source) => {
+      const file = multi && source.project ? `${source.project} · ${source.file}` : source.file;
+      return `[${source.n}] ${[file, source.label].filter(Boolean).join(", ")}`;
+    });
+  return lines.length ? `${text.trim()}\n\n${heading}\n${lines.join("\n")}` : text.trim();
+}
+
+/** Copy an answer to the clipboard, and say for a moment that it did (or could not). */
+function CopyButton({ text }: { text: () => string }) {
+  const t = useT();
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = window.setTimeout(() => setState("idle"), 2000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  return (
+    <button
+      type="button"
+      className="link-button copy-answer"
+      onClick={() =>
+        navigator.clipboard.writeText(text()).then(
+          () => setState("copied"),
+          () => setState("failed"), // some web views refuse clipboard writes
+        )
+      }
+    >
+      {state === "copied" ? <CheckIcon size={13} /> : <Copy size={13} />}
+      {state === "copied" ? t("chat.copied") : state === "failed" ? t("chat.copyFailed") : t("chat.copy")}
+    </button>
+  );
+}
+
 type AnswerProps = {
   /** The saved message's id; absent while the answer is being streamed (it cannot be checked yet). */
   messageId?: number;
@@ -850,7 +893,14 @@ function Answer({
           ))}
         </ul>
       )}
-      {meta && <p className="answer-meta">{meta}</p>}
+      {(meta || messageId !== undefined) && (
+        <div className="answer-foot">
+          {meta && <p className="answer-meta">{meta}</p>}
+          {messageId !== undefined && (
+            <CopyButton text={() => copyableAnswer(text, sources, multi, t("chat.copySources"))} />
+          )}
+        </div>
+      )}
       {hint && sources.length > 0 && (
         <p className="answer-hint">{t("chat.citeHint")}</p>
       )}

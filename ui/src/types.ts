@@ -121,7 +121,24 @@ export type Message = {
   sources: Source[];
 };
 
-export type ChatDetail = Chat & { messages: Message[] };
+/** What a prompt puts in the context window, part by part (estimated), and the reply room. */
+export type ContextEvent = {
+  type: "context";
+  prompt_tokens: number;
+  context_tokens: number;
+  reply_tokens: number;
+  parts: { instructions: number; sources: number; history: number; question: number };
+  source_count: number;
+  history_kept: number;
+  history_total: number;
+};
+
+/** The chat's last context event, saved with the local model's final counts (null without). */
+export type SavedContext = Omit<ContextEvent, "type"> & {
+  measured: { prompt_tokens: number; generated_tokens: number } | null;
+};
+
+export type ChatDetail = Chat & { messages: Message[]; context: SavedContext | null };
 
 /** How Tamra responds: write a cited answer, only show the matching passages, or chat with the
  * model without searching. */
@@ -142,17 +159,7 @@ export type AnswerEvent =
   | { type: "notice"; code: "stale_projects"; names: string[] }
   | { type: "thinking"; text: string }
   | { type: "token"; text: string }
-  // What the prompt puts in the context window, part by part (estimated), and the reply room.
-  | {
-      type: "context";
-      prompt_tokens: number;
-      context_tokens: number;
-      reply_tokens: number;
-      parts: { instructions: number; sources: number; history: number; question: number };
-      source_count: number;
-      history_kept: number;
-      history_total: number;
-    }
+  | ContextEvent
   // The local model's own counts so far: the prompt, and the tokens it has generated.
   | { type: "usage"; prompt_tokens: number; generated_tokens: number; tokens_per_second: number }
   | { type: "error"; message: string; reason?: ErrorReason }
