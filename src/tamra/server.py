@@ -4,6 +4,7 @@ import dataclasses
 import json
 import logging
 import secrets
+import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -65,16 +66,20 @@ CONTENT_SECURITY_POLICY = (
 
 
 class TokenGate:
-    """Reject /api requests, HTTP and WebSocket, that lack the per-launch token."""
+    """Reject /api requests, HTTP and WebSocket, that lack the right per-launch token: the MCP
+    token for /api/mcp/* (AI apps), the UI token for every other /api path. Without an MCP
+    token the /api/mcp routes stay closed."""
 
-    def __init__(self, app: ASGIApp, token: str):
+    def __init__(self, app: ASGIApp, token: str, mcp_token: str | None = None):
         self.app = app
         self.token = token.encode()
+        self.mcp_token = mcp_token.encode() if mcp_token else None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] in ("http", "websocket") and _is_api(scope["path"]):
+            expected = self.mcp_token if _is_mcp(scope["path"]) else self.token
             supplied = dict(scope["headers"]).get(b"x-tamra-token", b"")
-            if not secrets.compare_digest(supplied, self.token):
+            if expected is None or not secrets.compare_digest(supplied, expected):
                 if scope["type"] == "http":
                     response = JSONResponse({"detail": "invalid token"}, status_code=401)
                     await response(scope, receive, send)
@@ -88,6 +93,11 @@ class TokenGate:
 def _is_api(path: str) -> bool:
     path = "/" + path.lstrip("/")
     return path == "/api" or path.startswith("/api/")
+
+
+def _is_mcp(path: str) -> bool:
+    path = "/" + path.lstrip("/")
+    return path == "/api/mcp" or path.startswith("/api/mcp/")
 
 
 class SecurityHeaders:
@@ -178,6 +188,7 @@ def create_app(
     pick_file: Callable[[], str | None] | None = None,
     open_data_folder: Callable[[], None] | None = None,
     open_external: Callable[[Path], None] | None = None,
+    mcp_token: str | None = None,
 ) -> FastAPI:
     if not token:
         raise ValueError("the API token must not be empty")  # an empty token would match ""
@@ -236,7 +247,7 @@ def create_app(
             )
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
     # The last one added runs first: response headers, then the host check, then the token.
-    app.add_middleware(TokenGate, token=token)
+    app.add_middleware(TokenGate, token=token, mcp_token=mcp_token)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
     app.add_middleware(SecurityHeaders)
     return app
@@ -631,6 +642,13 @@ def _stored_key(provider: str) -> str | None:
         return None
 
 
+def _mcp_command() -> list[str]:
+    """How an AI app starts Tamra's MCP server: this exe, or this Python when run from source."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "mcp"]
+    return [sys.executable, "-m", "tamra", "mcp"]
+
+
 def _settings_payload(core: Core) -> dict:
     """The settings, plus whether a key is saved for the selected provider and its last 4
     characters (only for a key longer than 8, so a short key is never nearly revealed)."""
@@ -641,6 +659,7 @@ def _settings_payload(core: Core) -> dict:
         "data_dir": str(core.data_dir),  # read-only: shown in Settings, never a setting
         "api_key_set": key is not None,
         "api_key_hint": key[-4:] if key is not None and len(key) > 8 else None,
+        "mcp_command": _mcp_command(),  # read-only: for the "Copy setup" button
     }
 
 

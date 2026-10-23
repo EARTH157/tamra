@@ -27,6 +27,7 @@ def test_defaults_come_back_when_nothing_is_stored(store):
     assert settings.text_size == "default"
     assert settings.spacing == "comfortable"
     assert settings.ask_before_delete is True
+    assert settings.mcp_enabled is False
 
 
 def test_settings_are_frozen():
@@ -47,6 +48,7 @@ def test_every_field_round_trips(store):
         "text_size": "large",
         "spacing": "compact",
         "ask_before_delete": False,
+        "mcp_enabled": True,
     }
     assert set(changes) == {f.name for f in dataclasses.fields(Settings)}
     saved = save_settings(store, changes)
@@ -159,3 +161,9 @@ def test_invalid_api_base_urls_are_rejected(store, url):
     with pytest.raises(ValueError, match="api_base_url"):
         save_settings(store, {"api_base_url": url})
     assert store.all_settings() == {}
+
+
+def test_mcp_enabled_must_be_a_bool(store):
+    with pytest.raises(ValueError, match="mcp_enabled"):
+        save_settings(store, {"mcp_enabled": "yes"})
+    assert load_settings(store).mcp_enabled is False

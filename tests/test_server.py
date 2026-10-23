@@ -128,3 +128,21 @@ def test_the_folder_picker_returns_the_choice():
     assert client.post("/api/pick-folder", headers=AUTH).json() == {"folder_path": "C:/docs"}
     cancelled = make_client(pick_folder=lambda: None)
     assert cancelled.post("/api/pick-folder", headers=AUTH).json() == {"folder_path": None}
+
+
+def test_the_mcp_token_opens_only_the_mcp_routes():
+    client = TestClient(
+        create_app("secret", None, mcp_token="mcp-secret"), base_url="http://127.0.0.1"
+    )
+    mcp = {"X-Tamra-Token": "mcp-secret"}
+    assert client.get("/api/health", headers=mcp).status_code == 401
+    assert client.get("/api/mcp/projects", headers=AUTH).status_code == 401
+    # Past the gate: without a core there is no MCP route, so 404 and not 401.
+    assert client.get("/api/mcp/projects", headers=mcp).status_code == 404
+    assert client.get("/api/mcp", headers=mcp).status_code == 404
+
+
+def test_without_an_mcp_token_the_mcp_routes_stay_closed():
+    client = make_client()
+    assert client.get("/api/mcp/projects", headers=AUTH).status_code == 401
+    assert client.get("/api/mcp/projects", headers={"X-Tamra-Token": ""}).status_code == 401
