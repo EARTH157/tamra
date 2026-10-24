@@ -979,7 +979,7 @@ git commit -m "feat: show project notes as their own part of the context meter"
 - Consumes: `AnswerService._notes(chat)`, `notes_text(notes)` and `NOTES_TEXT` (Task 3, kept for Chat mode).
 - Produces: `NOTES_SOURCE_NAME = "Your project notes"`; `is_notes(source: SourceRecord) -> bool` (its `location["kind"] == "notes"`); `notes_source(notes: str, n: int) -> SourceRecord`; `build_messages(question, history, sources, language, room=...)` (no `notes` parameter: a notes source in `sources` brings its rule); `context_event(..., notes: str = "")`, where `notes` is only for Chat mode; `Core.source_changed(notes source) is False`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/test_answer.py`, add `NOTES_SOURCE_NAME`, `notes_source` and `is_notes` to the `from tamra.answer import (...)` list. Delete Task 3's `test_empty_notes_leave_both_prompts_as_they_were`, `test_notes_sit_between_the_rules_and_the_sources_and_are_not_a_source`, `test_notes_braces_are_text_not_template_fields` and `test_the_context_event_counts_the_notes_apart`. Add these in their place:
 
@@ -1060,12 +1060,12 @@ def test_a_notes_source_never_counts_as_changed(core):
     assert core.source_changed(notes_source("I am the tenant.", 3)) is False
 ```
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `uv run pytest tests/test_answer.py tests/test_core.py -q -k "notes or cites or search_only"`
 Expected: FAIL (`notes_source` does not exist).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/tamra/answer.py`, after `notes_text`:
 
@@ -1156,12 +1156,12 @@ and `"source_count": len(documents),`.
 
 with `is_notes` added to the `from tamra.answer import ...` line.
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest tests/test_answer.py tests/test_core.py tests/test_server_attribution.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Lint and commit**
+- [x] **Step 5: Lint and commit**
 
 ```bash
 uv run ruff check src tests && uv run ruff format --check src tests
@@ -1181,7 +1181,7 @@ git commit -m "feat: in Answer mode the project notes are their own numbered sou
 - Consumes: a source payload with `location: {"kind": "notes"}`, `file_id: null`, `file: "Your project notes"` (Task 6).
 - Produces: `isProjectNotes(source: Pick<Source, "location">): boolean`; `shownFile(source: Source, withProject: boolean, notesName: string): string` (every caller passes `t("source.projectNotes")`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `ui/src/ChatView.test.tsx`, after "copies an answer with the sources it cites, and says it did", add:
 
@@ -1235,12 +1235,12 @@ In `ui/src/ChatView.test.tsx`, after "copies an answer with the sources it cites
 
 (`source` is the file's fixture: `lease.pdf`, label "p. 2". If the "Open file" text differs, take it from `t("source.open")` in `strings/en.ts`.)
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `npm --prefix ui test -- ChatView.test`
 Expected: FAIL. The card shows "Your project notes" from `file` already, but the panel asks to locate the notes and the copy says nothing different. Check which assertion fails first.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `ui/src/SourcePanel.tsx`:
 
@@ -1293,12 +1293,12 @@ Strings: `"source.projectNotes": "Your project notes",` (en) and `"source.projec
 - en: `"Tamra gives these notes to the model in every chat of this project, to understand your questions and shape its answers. An answer that uses them cites them as \"Your project notes\", apart from your documents."`
 - th: `"Tamra ให้โมเดลอ่านโน้ตนี้ในทุกแชทของโปรเจกต์ เพื่อเข้าใจคำถามและปรับวิธีตอบ ถ้าคำตอบใช้ข้อมูลจากโน้ต จะอ้างอิงเป็น \"โน้ตของโปรเจกต์\" แยกจากเอกสารของคุณ"`
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: `npx --prefix ui tsc -p ui --noEmit` and `npm --prefix ui test`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ui/src
@@ -1312,12 +1312,12 @@ git commit -m "feat: show the project notes as their own source, with no file to
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-24-project-notes-design.md` (status line)
 
-- [ ] **Step 1: Run everything**
+- [x] **Step 1: Run everything**
 
 Run: `uv run ruff check src tests`, `uv run ruff format --check src tests`, `uv run pytest -q`, `npx --prefix ui tsc -p ui --noEmit`, `npm --prefix ui test`
 Expected: all pass.
 
-- [ ] **Step 2: Try it in the app**
+- [x] **Step 2: Try it in the app**
 
 Start the dev servers (`tamra-core-dev` and `tamra-ui-dev` in `.claude/launch.json`) and open `http://localhost:5174/#token=dev`. On a project with the lease documents:
 1. Open the card's "Add notes" link. The dialog opens with the Notes field focused. Write `Answer as a numbered list.` and `I am the tenant of unit 1204. I moved in on 3 March.` (two lines), and save. The card now says "Notes".
@@ -1327,7 +1327,7 @@ Start the dev servers (`tamra-core-dev` and `tamra-ui-dev` in `.claude/launch.js
 
 Write down what the model replied in steps 2 and 3, and how often it followed the list style, for the PR description. Then set the dev data's model back to what it was.
 
-- [ ] **Step 3: Mark the spec implemented and commit**
+- [x] **Step 3: Mark the spec implemented and commit**
 
 Change the spec's status line to `Status: implemented (plan docs/superpowers/plans/2026-10-24-project-notes.md). Date: 2026-10-24.`
 

@@ -278,7 +278,9 @@ export default function SourcePanel({
           {match && (
             <>
               <div className="compare-row document">
-                <span className="compare-pill">{t("source.document")}</span>
+                <span className="compare-pill">
+                  {t(notesTarget ? "project.notes" : "source.document")}
+                </span>
                 <p className="compare-text" title={preview ? t("source.selectHint") : undefined}>
                   {match.text}
                 </p>

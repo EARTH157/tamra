@@ -1,6 +1,7 @@
 # Project notes: tell the model about your situation once per project
 
-Status: approved design, revised after the real-model check (see "Why the notes are a source").
+Status: implemented (plan docs/superpowers/plans/2026-10-24-project-notes.md), revised after the
+real-model check (see "Why the notes are a source").
 Date: 2026-10-24.
 
 ## Goal
