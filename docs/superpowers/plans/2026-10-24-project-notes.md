@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A project gets up to 1,000 characters of notes that every chat in it gives the model, to understand questions and shape answers, without the notes ever becoming a source.
+**Goal:** A project gets up to 1,000 characters of notes that every chat in it gives the model, to understand questions and shape answers. In Answer mode a fact taken from the notes cites them as their own source, "Your project notes", never a document.
 
-**Architecture:** The notes are a `collections.notes` column (schema v6). They are cleaned and checked in `tamra.core`, and changed through the existing `PATCH /api/projects/{id}`. `tamra.answer` reads the chat's home project's notes on each question and puts a rule and a `<notes>` block into the system prompt. The rule and block sit between the rules and the sources (Answer mode) or after the rules (Chat mode). The `context` event reports them as their own `notes` part. The UI edits the notes in the project settings dialog, links to them from the sidebar card, and shows the part in the context meter.
+**Architecture:** The notes are a `collections.notes` column (schema v6). They are cleaned and checked in `tamra.core`, and changed through the existing `PATCH /api/projects/{id}`. `tamra.answer` reads the chat's home project's notes on each question. In Answer mode they become the last numbered source, with a rule that names its number. In Chat mode they are a `<notes>` block after the rules. The `context` event reports them as their own `notes` part. The UI edits the notes in the project settings dialog, links to them from the sidebar card, shows the part in the context meter, and shows a notes source as "Your project notes".
+
+**Revision (after Task 5):** In the first real-model check, qwen3.5:4b answered from notes that were "not a source", and in 4 of 8 runs it cited the lease document for the notes' fact. Tasks 1–5 stand. Task 6 replaces Task 3's Answer-mode prompt with the notes as a source, Task 7 shows that source in the UI, and Task 8 is the final check. The spec's "Why the notes are a source" has the numbers.
 
 **Tech Stack:** Python 3.12 (FastAPI, SQLite through `tamra.store`), React + TypeScript (Vite, Vitest), uv, npm.
 
@@ -15,7 +17,7 @@
 - Notes: at most **1,000 characters** (code points) after cleaning; `\r\n` and `\r` become `\n`; leading and trailing whitespace is stripped; `''` means no notes.
 - Allowed: new lines and tabs, and every format character except the bidi overrides and isolates. Refused: other Unicode `Cc` characters, and U+202A–U+202E and U+2066–U+2069.
 - Fixed API detail for refused notes, verbatim: `Project notes must be at most 1,000 characters, without control characters.`
-- Notes are never a source: never cited, never stated as the answer, never part of retrieval's query text.
+- In Answer mode the notes are the last numbered source, `rel_path` "Your project notes", `location` `{"kind": "notes"}`, and no chunk, file or hash. A fact from them cites that number, never a document's. In Chat mode they are a `<notes>` block that is not a source. They never enter retrieval's query text, the not-found gate, Search only results, or the answer's language.
 - A chat uses only its **home** project's notes; a general chat has none; empty notes leave both prompts byte for byte as today.
 - `tamra.store` is the only module that touches SQL. No new dependencies.
 - Code, comments, docs and commit messages are in English. Every UI string is in both `ui/src/strings/en.ts` and `ui/src/strings/th.ts`.
@@ -52,7 +54,7 @@
 **Interfaces:**
 - Produces: `Collection.notes: str` (default `""`, last field); `Store.set_collection_notes(collection_id: int, notes: str) -> bool` (False when the project is unknown; it stores the text as given, already cleaned by the core); `SCHEMA_VERSION == 6`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_store_repo.py`:
 
@@ -93,12 +95,12 @@ def test_a_v5_database_gets_empty_notes(tmp_path):
 
 In `tests/test_store_settings.py` change the three pins `5` to `6` (lines 20, 21 and 52: `assert SCHEMA_VERSION == 6`, `... fetchone()[0] == 6`). In `tests/test_store_ocr.py:118` change `== SCHEMA_VERSION == 5` to `== SCHEMA_VERSION == 6`.
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `uv run pytest tests/test_store_repo.py tests/test_store_settings.py tests/test_store_ocr.py -q`
 Expected: FAIL. `Collection` has no attribute `notes`, there is no `set_collection_notes`, and the version is still 5.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/tamra/store/schema.py`: set `SCHEMA_VERSION = 6`, add after `_V5`:
 
@@ -129,12 +131,12 @@ and in `migrate`: `steps = [_V1, _V2, _V3, _V4, _V5, _V6]  # steps[n] upgrades s
         return cursor.rowcount > 0
 ```
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest tests/test_store_repo.py tests/test_store_settings.py tests/test_store_ocr.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tamra/store tests/test_store_repo.py tests/test_store_settings.py tests/test_store_ocr.py
@@ -153,7 +155,7 @@ git commit -m "feat: store a project's notes (schema v6)"
 - Consumes: `Store.set_collection_notes`, `Collection.notes` (Task 1).
 - Produces: `tamra.core.MAX_NOTES = 1000`; `tamra.core.BadNotes(ValueError)`; `Core.change_project(collection_id: int, *, name: str | None = None, notes: str | None = None) -> Collection | None` (None when unknown; raises `BadName`, `BadNotes` or `NameTaken` before saving anything); project payloads carry `"notes": str`; `PATCH /api/projects/{id}` takes `{"name"?: str, "notes"?: str}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/test_core.py` replace `test_rename_project` with:
 
@@ -244,12 +246,12 @@ def test_notes_for_an_unknown_project_are_a_404(api):
 
 Also add `"notes"` to the expected payload keys in `test_create_a_project_returns_it_with_its_index_status`: `assert set(body) == {"id", "name", "folder_path", "index", "notes"}`.
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `uv run pytest tests/test_core.py tests/test_server_projects.py -q -k "change_project or notes or returns_it"`
 Expected: FAIL (`BadNotes` and `change_project` do not exist; no `notes` in payloads).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/tamra/core.py`, after `class BadName`:
 
@@ -330,12 +332,12 @@ BAD_NOTES_DETAIL = "Project notes must be at most 1,000 characters, without cont
         return _project_response(core, project_id)
 ```
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest tests/test_core.py tests/test_server_projects.py -q`
 Expected: PASS. If another test still calls `rename_project`, run `grep -rn rename_project src tests` and switch it to `change_project(id, name=...)`.
 
-- [ ] **Step 5: Lint and commit**
+- [x] **Step 5: Lint and commit**
 
 ```bash
 uv run ruff check src tests && uv run ruff format --check src tests
@@ -355,7 +357,7 @@ git commit -m "feat: clean, check and change project notes through PATCH /api/pr
 - Consumes: `Collection.notes`, `Store.set_collection_notes` (Task 1).
 - Produces: `notes_text(notes: str) -> str`; `build_messages(question, history, sources, language, room=..., notes: str = "")`; `chat_messages(question, history, language, room=..., notes: str = "")`; `context_event(messages, history, sources, context_tokens, reply_tokens, notes: str = "")`, whose `parts` has the keys `instructions, notes, sources, history, question`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_answer.py` (add `notes_text` and `SYSTEM_PROMPT` to the `from tamra.answer import (...)` list if not there):
 
@@ -432,12 +434,12 @@ def test_a_general_chat_has_no_notes(env):
 
 The `env` fixture yields `store.create_chat(collection_id=collection.id)`, so its chat has a home project, and `Store.set_chat_scope(chat_id, collection_ids)` sets a chat's scope.
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `uv run pytest tests/test_answer.py -q -k "notes"`
 Expected: FAIL (`notes_text` does not exist; `build_messages` takes no `notes`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/tamra/answer.py`:
 
@@ -509,12 +511,12 @@ and import `Chat` in `from tamra.store import ...`. In `_ask`, after the `chat i
 
 and pass `notes=notes` to `chat_messages(...)` and `context_event(...)`.
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest tests/test_answer.py -q`
 Expected: PASS, including the existing context-event tests (they sum `parts.values()`, and `notes` is 0 there).
 
-- [ ] **Step 5: Lint and commit**
+- [x] **Step 5: Lint and commit**
 
 ```bash
 uv run ruff check src tests && uv run ruff format --check src tests
@@ -534,7 +536,7 @@ git commit -m "feat: give the model the home project's notes, apart from the sou
 - Consumes: the payload's `notes` and `PATCH {"name"?, "notes"?}` (Task 2).
 - Produces: `Project.notes: string`; `ProjectChanges = { name?: string; notes?: string }`; `NOTES_MAX = 1000`; `noteLength(notes: string): number`; `useProjects().change(id, changes)` (replaces `rename`); `ProjectSettingsDialog` props `focusNotes?: boolean` and `onSave(changes)` (replaces `onRename`); `IndexStatus` prop `onNotes: () => void`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `ui/src/ProjectTree.test.tsx`, after "shows a refused rename inside the project settings", add:
 
@@ -620,12 +622,12 @@ In `ui/src/IndexStatus.test.tsx`, add `notes: ""` to the `project()` fixture and
 
 Add `onNotes={vi.fn()}` to every other `<IndexStatus ... />` in that file. In `ui/src/projects.test.tsx` change `latest!.rename(5, "Renamed")` to `latest!.change(5, { name: "Renamed" })`. Add `notes: ""` to every typed `Project` fixture that `npx --prefix ui tsc -p ui --noEmit` reports. The fixtures in `ProjectTree.test.tsx:35-40,725`, `IndexStatus.test.tsx:15`, `ChatView.scope.test.tsx:26`, `projects.test.tsx:12` and `App.chats.test.tsx:23-24` build projects. Add it to the untyped ones in `App.test.tsx:35` as well.
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `npm --prefix ui test -- ProjectTree IndexStatus projects`
 Expected: FAIL (no Notes field, no card link, no `change`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `ui/src/types.ts`: `export type Project = { id: number; name: string; folder_path: string; notes: string; index: IndexStatus };`
 
@@ -850,12 +852,12 @@ and after the `.field-input:focus` rule add:
   color: var(--error-text);
 }
 ```
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: `npx --prefix ui tsc -p ui --noEmit` and `npm --prefix ui test`
 Expected: no type errors; all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ui/src
@@ -874,7 +876,7 @@ git commit -m "feat: edit project notes in project settings, with a link on the 
 - Consumes: the `context` event's `parts.notes` (Task 3).
 - Produces: `parts.notes?: number` (optional: a context saved before project notes has none); the Details row with key `notes`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `ui/src/ChatView.test.tsx`, after "shows the context meter saved with a chat when it is opened again", add:
 
@@ -912,12 +914,12 @@ In `ui/src/ChatView.test.tsx`, after "shows the context meter saved with a chat 
 
 (If the meter shows the summary differently, match the existing "shows the context meter saved with a chat" test: there 900 estimated with 620 measured shows "Context 662 / 8.2k tokens". With `measured: null` the summary shows the estimate, 170.)
 
-- [ ] **Step 2: Run the test to see it fail**
+- [x] **Step 2: Run the test to see it fail**
 
 Run: `npm --prefix ui test -- ChatView`
 Expected: FAIL (no "Project notes" row; the summary is 120, without the notes).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `ui/src/types.ts`, in `ContextEvent`:
 
@@ -953,6 +955,343 @@ with `{ key: "notes", label: t("context.notes"), tokens: notes, estimated: true 
 
 Strings: `"context.notes": "Project notes",` (en) and `"context.notes": "โน้ตของโปรเจกต์",` (th), next to `context.instructions`.
 
+- [x] **Step 4: Run the tests to see them pass**
+
+Run: `npx --prefix ui tsc -p ui --noEmit` and `npm --prefix ui test`
+Expected: PASS.
+
+- [x] **Step 5: Commit**
+
+```bash
+git add ui/src
+git commit -m "feat: show project notes as their own part of the context meter"
+```
+
+---
+
+### Task 6: The notes as a numbered source in Answer mode
+
+**Files:**
+- Modify: `src/tamra/answer.py` (new `NOTES_SOURCE_NAME`, `NOTES_SOURCE_RULE`, `is_notes`, `notes_source`; `_blocks`; `build_messages`; `context_event`; `AnswerService._ask`), `src/tamra/core.py` (`source_changed`)
+- Test: `tests/test_answer.py` (replace Task 3's Answer-mode tests), `tests/test_core.py`
+
+**Interfaces:**
+- Consumes: `AnswerService._notes(chat)`, `notes_text(notes)` and `NOTES_TEXT` (Task 3, kept for Chat mode).
+- Produces: `NOTES_SOURCE_NAME = "Your project notes"`; `is_notes(source: SourceRecord) -> bool` (its `location["kind"] == "notes"`); `notes_source(notes: str, n: int) -> SourceRecord`; `build_messages(question, history, sources, language, room=...)` (no `notes` parameter: a notes source in `sources` brings its rule); `context_event(..., notes: str = "")`, where `notes` is only for Chat mode; `Core.source_changed(notes source) is False`.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/test_answer.py`, add `NOTES_SOURCE_NAME`, `notes_source` and `is_notes` to the `from tamra.answer import (...)` list. Delete Task 3's `test_empty_notes_leave_both_prompts_as_they_were`, `test_notes_sit_between_the_rules_and_the_sources_and_are_not_a_source`, `test_notes_braces_are_text_not_template_fields` and `test_the_context_event_counts_the_notes_apart`. Add these in their place:
+
+```python
+LEASE_LOCATION = {"kind": "text", "line_start": 1, "line_end": 1}
+
+
+def lease_source(n: int = 1) -> SourceRecord:
+    text = "The lease term is three years, starting on 1 March 2026."
+    return SourceRecord(n, None, None, "lease.md", text, LEASE_LOCATION, None)
+
+
+def test_without_notes_both_prompts_are_as_they_were():
+    plain = build_messages("q", [lease_source()], [], "en")
+    assert NOTES_SOURCE_NAME not in plain[0]["content"] and "<notes>" not in plain[0]["content"]
+    assert chat_messages("q", [], "en", notes="") == chat_messages("q", [], "en")
+    assert notes_text("") == ""
+
+
+def test_answer_mode_lists_the_notes_as_the_last_source_with_its_rule():
+    notes = notes_source(NOTES, 2)
+    assert is_notes(notes) and not is_notes(lease_source())
+    assert (notes.n, notes.chunk_id, notes.file_id, notes.rel_path) == (2, None, None, NOTES_SOURCE_NAME)
+    system = build_messages("q", [], [lease_source(), notes], "en")[0]["content"]
+    assert "Source [2] is the user's own notes for this project" in system
+    assert "A fact taken from the notes must cite [2], never a\n  document's number." in system
+    assert f"[2] Your project notes\n{NOTES}" in system  # no location for the notes
+    assert system.index("[1] lease.md") < system.index("[2] Your project notes")
+    assert system.index("Source [2] is") < system.index("Sources:")
+    assert "<notes>" not in system  # Answer mode: a source, not a block
+
+
+def test_braces_in_notes_are_text_in_both_modes():
+    answer_system = build_messages("q", [], [notes_source("Use {curly} braces", 1)], "en")
+    assert "[1] Your project notes\nUse {curly} braces" in answer_system[0]["content"]
+    chat_system = chat_messages("q", [], "en", notes="Use {curly} braces")[0]["content"]
+    assert "<notes>\nUse {curly} braces\n</notes>" in chat_system
+
+
+def test_an_answer_cites_from_the_notes_as_their_own_source(env):
+    store, make, chat = env
+    store.set_collection_notes(chat.collection_id, NOTES)
+    llm = FakeLLM(("You moved in on 3 March [3].",))
+    events = list(make(llm).ask(chat.id, "How long is the lease term?"))
+    shown = next(e for e in events if e["type"] == "sources")["sources"]
+    documents, notes = shown[:-1], shown[-1]
+    assert (notes["n"], notes["file"], notes["file_id"]) == (len(documents) + 1, NOTES_SOURCE_NAME, None)
+    assert notes["text"] == NOTES and notes["location"] == {"kind": "notes"}
+    context = next(e for e in events if e["type"] == "context")
+    assert context["source_count"] == len(documents)
+    assert context["parts"]["notes"] > 0
+    assert sum(context["parts"].values()) == context["prompt_tokens"]
+    saved = store.get_message(next(e for e in events if e["type"] == "done")["message_id"])
+    assert [s.text for s in saved.sources if is_notes(s)] == [NOTES]  # what the model saw
+
+
+def test_search_only_and_not_found_never_use_the_notes(env):
+    store, make, chat = env
+    store.set_collection_notes(chat.collection_id, NOTES)
+    llm = FakeLLM()
+    events = list(make(llm).ask(chat.id, "How long is the lease term?", mode="search"))
+    shown = next(e for e in events if e["type"] == "sources")["sources"]
+    assert shown and all(s["file"] != NOTES_SOURCE_NAME for s in shown)
+    events = list(make(llm).ask(chat.id, "ใครเป็นผู้จัดการฝ่ายขาย"))  # nothing in the documents
+    assert next(e for e in events if e["type"] == "sources")["sources"] == []
+    assert llm.calls == []  # not found: the model is not asked, whatever the notes say
+```
+
+Keep `test_chat_mode_has_the_notes_after_its_rules`, `test_a_chat_uses_only_its_home_projects_notes` and `test_a_general_chat_has_no_notes` from Task 3. In `test_a_chat_uses_only_its_home_projects_notes`, also assert `NOTES_SOURCE_NAME not in llm.calls[0][0]["content"]` after the first, Answer-mode question (its home has no notes yet).
+
+(The not-found question is the one `test_an_unrelated_question_gets_not_found_without_the_llm` already uses.)
+
+In `tests/test_core.py` add (import `notes_source` from `tamra.answer`):
+
+```python
+def test_a_notes_source_never_counts_as_changed(core):
+    assert core.source_changed(notes_source("I am the tenant.", 3)) is False
+```
+
+- [ ] **Step 2: Run the tests to see them fail**
+
+Run: `uv run pytest tests/test_answer.py tests/test_core.py -q -k "notes or cites or search_only"`
+Expected: FAIL (`notes_source` does not exist).
+
+- [ ] **Step 3: Implement**
+
+`src/tamra/answer.py`, after `notes_text`:
+
+```python
+# Answer mode (project notes spec): the notes are the last numbered source, so a fact the model
+# takes from them cites them. A rule that is "not a source" did not stop a small model from
+# stating the notes' facts, and it then cited a document for them.
+NOTES_SOURCE_NAME = "Your project notes"
+NOTES_SOURCE_RULE = """
+- Source [{n}] is the user's own notes for this project: their situation and how they want
+  answers. Follow how they want answers. A fact taken from the notes must cite [{n}], never a
+  document's number."""
+
+
+def is_notes(source: SourceRecord) -> bool:
+    """Whether a source is the project's notes rather than a passage of a document."""
+    return source.location.get("kind") == "notes"
+
+
+def notes_source(notes: str, n: int) -> SourceRecord:
+    """The project's notes as source [n] of an Answer-mode prompt: no chunk, file or hash."""
+    return SourceRecord(n, None, None, NOTES_SOURCE_NAME, notes, {"kind": "notes"}, None)
+```
+
+`_blocks`:
+
+```python
+def _blocks(sources: list[SourceRecord]) -> str:
+    """The numbered sources as the system prompt lists them; the notes have no location."""
+    return "\n\n".join(
+        f"[{s.n}] {s.rel_path}\n{s.text}"
+        if is_notes(s)
+        else f"[{s.n}] {s.rel_path} ({location_label(s.location)})\n{s.text}"
+        for s in sources
+    )
+```
+
+`build_messages`: remove the `notes` parameter and its docstring sentence. Build the rule from the sources:
+
+```python
+    notes = next((s for s in sources if is_notes(s)), None)
+    rule = NOTES_SOURCE_RULE.format(n=notes.n) if notes else ""
+    system = SYSTEM_PROMPT.format(
+        language=LANGUAGE_NAMES[language], sources=_blocks(sources), notes=rule
+    )
+```
+
+and add to its docstring: "A notes source (`notes_source`) brings its rule."
+
+`context_event`: keep `notes: str = ""` (Chat mode only), and count the parts as:
+
+```python
+    documents = [s for s in sources if not is_notes(s)]
+    from_notes = [s for s in sources if is_notes(s)]
+    source_tokens = estimate_tokens(_blocks(documents)) if documents else 0
+    if from_notes:  # Answer mode: the notes source and its rule
+        rule = NOTES_SOURCE_RULE.format(n=from_notes[0].n)
+        notes_tokens = estimate_tokens(_blocks(from_notes)) + estimate_tokens(rule)
+    else:  # Chat mode: the notes block ("" without notes)
+        notes_tokens = estimate_tokens(notes_text(notes))
+```
+
+and `"source_count": len(documents),`.
+
+`AnswerService._ask`: move the `sources` event so that Search only never shows the notes:
+
+```python
+        if mode == "search":  # passages only: no model is involved, so no notes either
+            yield {"type": "sources", "sources": source_payloads(self._store, sources)}
+            message_id = self._store.add_assistant_message(
+                chat_id, "", provider=None, model=None, sources=sources
+            )
+            yield {"type": "done", "message_id": message_id}
+            return
+        if notes:  # the last source (project notes spec): what the model takes from them cites them
+            sources = [*sources, notes_source(notes, len(sources) + 1)]
+        yield {"type": "sources", "sources": source_payloads(self._store, sources)}
+```
+
+(The `skipped` notice stays before both.) Then call `build_messages(question, history, sources, language, room)` and `context_event(messages, history, sources, route.context_tokens, reply)` without `notes`. `_write` saves `sources`, the notes source included. `auto_citation` sees it too.
+
+`src/tamra/core.py`, at the top of `source_changed`:
+
+```python
+        if is_notes(source):
+            return False  # the saved notes are what the answer saw; there is no file to change
+```
+
+with `is_notes` added to the `from tamra.answer import ...` line.
+
+- [ ] **Step 4: Run the tests to see them pass**
+
+Run: `uv run pytest tests/test_answer.py tests/test_core.py tests/test_server_attribution.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Lint and commit**
+
+```bash
+uv run ruff check src tests && uv run ruff format --check src tests
+git add src/tamra/answer.py src/tamra/core.py tests/test_answer.py tests/test_core.py
+git commit -m "feat: in Answer mode the project notes are their own numbered source"
+```
+
+---
+
+### Task 7: Show a notes source in the UI
+
+**Files:**
+- Modify: `ui/src/SourcePanel.tsx` (`isProjectNotes`, `shownFile`, the locate target), `ui/src/ChatView.tsx` (source cards, passages, `copyableAnswer`), `ui/src/strings/en.ts`, `ui/src/strings/th.ts`
+- Test: `ui/src/ChatView.test.tsx`
+
+**Interfaces:**
+- Consumes: a source payload with `location: {"kind": "notes"}`, `file_id: null`, `file: "Your project notes"` (Task 6).
+- Produces: `isProjectNotes(source: Pick<Source, "location">): boolean`; `shownFile(source: Source, withProject: boolean, notesName: string): string` (every caller passes `t("source.projectNotes")`).
+
+- [ ] **Step 1: Write the failing test**
+
+In `ui/src/ChatView.test.tsx`, after "copies an answer with the sources it cites, and says it did", add:
+
+```tsx
+  it("shows the project notes as their own source, with no file to open", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const notes = {
+      n: 2,
+      file: "Your project notes",
+      file_id: null,
+      label: "",
+      text: "I am the tenant of unit 1204. I moved in on 3 March.",
+      location: { kind: "notes" },
+      project: null,
+    };
+    const calls = mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [
+            {
+              id: 2,
+              role: "assistant",
+              content: "The term is three years [1]. You moved in on 3 March [2].",
+              provider: "local",
+              model: "qwen",
+              created_at: "t",
+              sources: [source, notes],
+            },
+          ],
+          context: null,
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    const cards = [...view.container.querySelectorAll(".source-card")];
+    expect(cards[1].textContent).toBe("2Your project notes"); // no location line
+    await click(cards[1]);
+    const panel = view.container.querySelector(".source-panel")!;
+    expect(panel.querySelector(".source-title strong")?.textContent).toBe("Your project notes");
+    expect(buttonByText(panel, "Open file")).toBeUndefined();
+    expect(panel.textContent).toContain("I moved in on 3 March.");
+    expect(calls.some((call) => call.key.includes("/locate"))).toBe(false); // no file to locate
+    await click(buttonByText(view.container, "Copy"));
+    expect(writeText).toHaveBeenCalledWith(
+      "The term is three years [1]. You moved in on 3 March [2].\n\nSources:\n" +
+        "[1] lease.pdf, p. 2\n[2] Your project notes",
+    );
+  });
+```
+
+(`source` is the file's fixture: `lease.pdf`, label "p. 2". If the "Open file" text differs, take it from `t("source.open")` in `strings/en.ts`.)
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `npm --prefix ui test -- ChatView.test`
+Expected: FAIL. The card shows "Your project notes" from `file` already, but the panel asks to locate the notes and the copy says nothing different. Check which assertion fails first.
+
+- [ ] **Step 3: Implement**
+
+`ui/src/SourcePanel.tsx`:
+
+```ts
+/** The project's notes as a source of an answer (project notes spec): no file, no location. */
+export function isProjectNotes(source: Pick<Source, "location">): boolean {
+  return source.location?.kind === "notes";
+}
+```
+
+`shownFile` gets a third parameter and names the notes in the user's language:
+
+```ts
+/** A source's file name, with its project when the answer spans projects; the notes by name. */
+export function shownFile(source: Source, withProject: boolean, notesName: string): string {
+  if (isProjectNotes(source)) return notesName;
+  const name = fileName(source.file);
+  return withProject && source.project ? `${source.project} · ${name}` : name;
+}
+```
+
+Pass `t("source.projectNotes")` at its three calls in `SourcePanel.tsx` (the title and the list of sources) and its two in `ChatView.tsx` (source cards, passages). In `SourcePanel`, never locate a notes source:
+
+```ts
+  const targetSource = match ? sources.find((s) => s.n === match.n) : source;
+  const notesTarget = !!targetSource && isProjectNotes(targetSource);
+  const target = notesTarget
+    ? null
+    : match
+      ? { n: match.n, start: match.start, end: match.end }
+      : !check && source
+        ? { n: source.n, start: null, end: null }
+        : null;
+```
+
+`ChatView.tsx`, `copyableAnswer`: add a `notesName: string` parameter after `heading`, and build each line's file name as
+
+```ts
+      const file = isProjectNotes(source)
+        ? notesName
+        : multi && source.project
+          ? `${source.project} · ${source.file}`
+          : source.file;
+```
+
+The call becomes `copyableAnswer(text, sources, multi, t("chat.copySources"), t("source.projectNotes"))`. Import `isProjectNotes` from `./SourcePanel`.
+
+Strings: `"source.projectNotes": "Your project notes",` (en) and `"source.projectNotes": "โน้ตของโปรเจกต์",` (th). Change `project.notesHelp` to the spec's new wording:
+
+- en: `"Tamra gives these notes to the model in every chat of this project, to understand your questions and shape its answers. An answer that uses them cites them as \"Your project notes\", apart from your documents."`
+- th: `"Tamra ให้โมเดลอ่านโน้ตนี้ในทุกแชทของโปรเจกต์ เพื่อเข้าใจคำถามและปรับวิธีตอบ ถ้าคำตอบใช้ข้อมูลจากโน้ต จะอ้างอิงเป็น \"โน้ตของโปรเจกต์\" แยกจากเอกสารของคุณ"`
+
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `npx --prefix ui tsc -p ui --noEmit` and `npm --prefix ui test`
@@ -962,12 +1301,12 @@ Expected: PASS.
 
 ```bash
 git add ui/src
-git commit -m "feat: show project notes as their own part of the context meter"
+git commit -m "feat: show the project notes as their own source, with no file to open"
 ```
 
 ---
 
-### Task 6: Check the whole feature, with a real model
+### Task 8: Check the whole feature, with a real model
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-24-project-notes-design.md` (status line)
@@ -980,12 +1319,12 @@ Expected: all pass.
 - [ ] **Step 2: Try it in the app**
 
 Start the dev servers (`tamra-core-dev` and `tamra-ui-dev` in `.claude/launch.json`) and open `http://localhost:5174/#token=dev`. On a project with the lease documents:
-1. Open the card's "Add notes" link. The dialog opens with the Notes field focused. Write `Answer in Thai, as a numbered list.` and `I am the tenant of unit 1204. I moved in on 3 March.` (two lines), and save. The card now says "Notes".
-2. Ask in Answer mode: "How long is the lease term?" The reply should be in Thai, as a list, with `[n]` citations to the documents. Context → Details shows a "Project notes" row.
-3. Ask: "When did I move in?" The reply must not give 3 March from the notes. It is "not found", or it says the documents do not tell, and no `[n]` points at the notes.
-4. Clear the notes and save. The card says "Add notes" again, and the next question's Details has no notes row.
+1. Open the card's "Add notes" link. The dialog opens with the Notes field focused. Write `Answer as a numbered list.` and `I am the tenant of unit 1204. I moved in on 3 March.` (two lines), and save. The card now says "Notes".
+2. Use a 4B+ local model, `qwen3.5:4b` (the dev data's API mode would spend the owner's API credit). Ask in Answer mode: "How long is the lease term?" The reply cites the lease, `[1]`. Context → Details shows a "Project notes" row.
+3. Ask: "When did I move in?" several times (8 in the experiment). 3 March must never cite a document: when the reply gives 3 March, it cites the notes source, and its card says "Your project notes". Click that card: the panel shows the notes text and no "Open file". Select the sentence and use "Check source": it matches the notes, with no "document changed" warning.
+4. Clear the notes and save. The card says "Add notes" again, and the next question has no notes source and no notes row.
 
-Write down what the model replied in steps 2 and 3 for the PR description. A small local model (0.5B) may not follow the style. If the style is not followed, try the API model or a 4B+ local model before calling it a bug, and say which model was used.
+Write down what the model replied in steps 2 and 3, and how often it followed the list style, for the PR description. Then set the dev data's model back to what it was.
 
 - [ ] **Step 3: Mark the spec implemented and commit**
 

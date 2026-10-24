@@ -180,10 +180,11 @@ stored in `ocr_pages`.
     tell the model about the user's situation and how they want answers.
   - A chat uses its home project's notes, in Answer and Chat mode. A general chat has none,
     and a chat that searches other projects too still uses only its home project's notes.
-  - The notes help the model understand the question and shape the answer. They are **not a
-    source**: the model may not state a fact from them as the answer or cite them. Every fact
-    still comes from the documents with an `[n]` citation.
-  - Notes never change retrieval.
+  - The notes help the model understand the question and shape the answer. In Answer mode
+    they are also the last numbered source, "Your project notes", so a fact taken from them
+    cites the notes and never a document. Every fact still carries an `[n]` that shows where
+    it came from.
+  - Notes never change retrieval or the not-found gate, and never the answer's language.
 - **Query text:** the latest user question plus the previous user question, so follow-ups
   like "what about item 2?" stay on topic without an extra LLM call.
 - **Conversation (token budget):** earlier exchanges go to the model newest first, as many
@@ -229,9 +230,9 @@ stored in `ocr_pages`.
 - **Prompt:** numbered sources `[1]..[k]` with file name and location. Instructions: answer
   only from the sources, put `[n]` after each supported claim, answer in the language of
   the question, and say so plainly when the sources are insufficient. When the chat's home
-  project has notes, the system prompt adds a rule that they are not a source. It also adds
-  a `<notes>` block between the rules and the sources (after the rules in Chat mode). With
-  no notes the prompt is unchanged.
+  project has notes, Answer mode lists them as source `[k+1]` "Your project notes", with a
+  rule that a fact from them cites that number. Chat mode adds them after its rules, as a
+  `<notes>` block that is not a source. With no notes the prompt is unchanged.
 - **Streaming:** tokens go to the UI over SSE, and generation can be cancelled. `[n]`
   markers render as clickable chips that open the source popup (§7).
 - **Context and token counts:**
