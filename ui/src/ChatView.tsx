@@ -20,6 +20,7 @@ import SourcePanel, {
   type Check,
   fileName,
   folderOf,
+  isProjectNotes,
   shownFile,
   sourceLabel,
   spansProjects,
@@ -711,14 +712,24 @@ function metaOf(
  * cites, each with its path in the project and its place ("[1] 2026/lease.pdf, p. 2"). Uncited
  * sources are left out.
  */
-function copyableAnswer(text: string, sources: Source[], multi: boolean, heading: string): string {
+function copyableAnswer(
+  text: string,
+  sources: Source[],
+  multi: boolean,
+  heading: string,
+  notesName: string,
+): string {
   const cited = new Set(
     splitCitations(text, sources.length).flatMap((segment) => (segment.kind === "cite" ? [segment.n] : [])),
   );
   const lines = sources
     .filter((source) => cited.has(source.n))
     .map((source) => {
-      const file = multi && source.project ? `${source.project} · ${source.file}` : source.file;
+      const file = isProjectNotes(source)
+        ? notesName
+        : multi && source.project
+          ? `${source.project} · ${source.file}`
+          : source.file;
       return `[${source.n}] ${[file, source.label].filter(Boolean).join(", ")}`;
     });
   return lines.length ? `${text.trim()}\n\n${heading}\n${lines.join("\n")}` : text.trim();
@@ -828,7 +839,7 @@ function Answer({
                 <span className="passage-head">
                   <FileText size={16} />
                   <span className="passage-file" title={source.file}>
-                    {shownFile(source, multi)}
+                    {shownFile(source, multi, t("source.projectNotes"))}
                   </span>
                   <span className="passage-label">{sourceLabel(source)}</span>
                 </span>
@@ -880,7 +891,7 @@ function Answer({
                 <span className="source-num">{source.n}</span>
                 <span className="source-meta">
                   <span className="source-file" title={source.file}>
-                    {shownFile(source, multi)}
+                    {shownFile(source, multi, t("source.projectNotes"))}
                   </span>
                   {(source.label || folderOf(source.file)) && (
                     <span className="source-label" title={source.file}>
@@ -897,7 +908,11 @@ function Answer({
         <div className="answer-foot">
           {meta && <p className="answer-meta">{meta}</p>}
           {messageId !== undefined && (
-            <CopyButton text={() => copyableAnswer(text, sources, multi, t("chat.copySources"))} />
+            <CopyButton
+              text={() =>
+                copyableAnswer(text, sources, multi, t("chat.copySources"), t("source.projectNotes"))
+              }
+            />
           )}
         </div>
       )}

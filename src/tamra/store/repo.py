@@ -27,7 +27,7 @@ FILE_STATUSES = ("pending", "indexing", "indexed", "failed", "skipped")
 _FILE_COLUMNS = (
     "id, collection_id, rel_path, size, mtime, content_hash, status, error, indexed_at, needs_ocr"
 )
-_COLLECTION_COLUMNS = "id, name, folder_path, embedding_model_id, created_at"
+_COLLECTION_COLUMNS = "id, name, folder_path, embedding_model_id, created_at, notes"
 
 
 def _now() -> str:
@@ -122,6 +122,14 @@ class Store:
                 raise NameTaken
             cursor = self._conn.execute(
                 "UPDATE collections SET name = ? WHERE id = ?", (name, collection_id)
+            )
+        return cursor.rowcount > 0
+
+    def set_collection_notes(self, collection_id: int, notes: str) -> bool:
+        """Save a project's notes, as the core cleaned them; False if the project is unknown."""
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE collections SET notes = ? WHERE id = ?", (notes, collection_id)
             )
         return cursor.rowcount > 0
 

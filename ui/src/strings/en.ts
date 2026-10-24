@@ -72,6 +72,13 @@ export const en = {
   "project.settings": "Project settings",
   "project.delete": "Delete project",
   "project.nameLabel": "Project name",
+  "project.notesLabel": "Notes",
+  "project.notesHelp":
+    "Tamra gives these notes to the model in every chat of this project, to understand your questions and shape its answers. An answer that uses them cites them as \"Your project notes\", apart from your documents.",
+  "project.notesCount": "{used} / {max}",
+  "project.notes": "Notes",
+  "project.addNotes": "Add notes",
+  "project.err.notes": "Notes can be at most 1,000 characters, without control characters.",
   "project.folderLabel": "Documents folder",
 
   "project.new.title": "New project",
@@ -80,7 +87,7 @@ export const en = {
   "project.new.hint": "Reads PDF, Word, TXT, and Markdown. Your files are never changed.",
   "project.new.create": "Create project",
 
-  "project.settings.text": "Name the project, choose its folder, and check its search index.",
+  "project.settings.text": "Name the project, write its notes, choose its folder, and check its search index.",
   "project.settings.index": "Search index",
   "project.settings.save": "Save",
 
@@ -127,6 +134,7 @@ export const en = {
   "chat.resizeSource": "Resize the source panel",
   "chat.checkSource": "Check source",
   "source.open": "Open file",
+  "source.projectNotes": "Your project notes",
   "source.compare": "Compare",
   "source.resizeCompare": "Resize Compare and the page",
   "source.answer": "Answer",
@@ -215,6 +223,7 @@ export const en = {
   "settings.contextTooBig": "More than this computer's memory fits well ({size}): answers may be slower, or the model may run on the CPU.",
   "context.details": "Details",
   "context.instructions": "Instructions",
+  "context.notes": "Project notes",
   "context.sources": "Passages from your documents",
   "context.sourceCount": "{count} passages",
   "context.history": "Earlier messages",

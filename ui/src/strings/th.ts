@@ -72,6 +72,13 @@ export const th: Record<TranslationKey, string> = {
   "project.settings": "การตั้งค่าโปรเจกต์",
   "project.delete": "ลบโปรเจกต์",
   "project.nameLabel": "ชื่อโปรเจกต์",
+  "project.notesLabel": "โน้ต",
+  "project.notesHelp":
+    "Tamra ให้โมเดลอ่านโน้ตนี้ในทุกแชทของโปรเจกต์ เพื่อเข้าใจคำถามและปรับวิธีตอบ ถ้าคำตอบใช้ข้อมูลจากโน้ต จะอ้างอิงเป็น \"โน้ตของโปรเจกต์\" แยกจากเอกสารของคุณ",
+  "project.notesCount": "{used} / {max}",
+  "project.notes": "โน้ต",
+  "project.addNotes": "เพิ่มโน้ต",
+  "project.err.notes": "โน้ตยาวได้ไม่เกิน 1,000 ตัวอักษร และต้องไม่มีอักขระควบคุม",
   "project.folderLabel": "โฟลเดอร์เอกสาร",
 
   "project.new.title": "โปรเจกต์ใหม่",
@@ -80,7 +87,7 @@ export const th: Record<TranslationKey, string> = {
   "project.new.hint": "อ่านไฟล์ PDF, Word, TXT และ Markdown ไฟล์ของคุณจะไม่ถูกแก้ไข",
   "project.new.create": "สร้างโปรเจกต์",
 
-  "project.settings.text": "ตั้งชื่อโปรเจกต์ เลือกโฟลเดอร์ และดูสถานะดัชนีการค้นหา",
+  "project.settings.text": "ตั้งชื่อโปรเจกต์ เขียนโน้ต เลือกโฟลเดอร์ และดูสถานะดัชนีการค้นหา",
   "project.settings.index": "ดัชนีการค้นหา",
   "project.settings.save": "บันทึก",
 
@@ -126,6 +133,7 @@ export const th: Record<TranslationKey, string> = {
   "chat.resizeSource": "ปรับความกว้างแผงแหล่งที่มา",
   "chat.checkSource": "ตรวจสอบแหล่งที่มา",
   "source.open": "เปิดไฟล์",
+  "source.projectNotes": "โน้ตของโปรเจกต์",
   "source.compare": "เปรียบเทียบ",
   "source.resizeCompare": "ปรับขนาดช่องเปรียบเทียบกับหน้าเอกสาร",
   "source.answer": "คำตอบ",
@@ -214,6 +222,7 @@ export const th: Record<TranslationKey, string> = {
   "settings.contextTooBig": "มากกว่าที่หน่วยความจำของเครื่องนี้รองรับได้ดี ({size}) คำตอบอาจช้าลง หรือโมเดลอาจไปรันบน CPU",
   "context.details": "รายละเอียด",
   "context.instructions": "คำสั่งระบบ",
+  "context.notes": "โน้ตของโปรเจกต์",
   "context.sources": "ข้อความจากเอกสารของคุณ",
   "context.sourceCount": "{count} ข้อความ",
   "context.history": "บทสนทนาก่อนหน้า",

@@ -73,7 +73,8 @@ which is started on demand in local mode and stopped when the app exits.
 
 ## 4. Data model (SQLite)
 
-- `collections(id, name, folder_path, embedding_model_id, created_at)`
+- `collections(id, name, folder_path, embedding_model_id, created_at, notes)`. `notes` is the
+  project's notes (§6), at most 1,000 characters; `''` means none.
 - `files(id, collection_id, rel_path, size, mtime, content_hash, status, error, indexed_at, needs_ocr)`
   — `status ∈ {pending, indexing, indexed, failed, skipped}`; `needs_ocr` marks a file whose last
   parse left pages for OCR because the OCR models were not installed
@@ -174,6 +175,16 @@ stored in `ocr_pages`.
   leaves only the home project. The chip says "All projects" while every project is ticked.
   When an answer's sources come from more than one project, each source shows its project's
   name.
+- **Project notes** (`docs/superpowers/specs/2026-10-24-project-notes-design.md`):
+  - A project can have notes, up to 1,000 characters, written in its settings dialog. They
+    tell the model about the user's situation and how they want answers.
+  - A chat uses its home project's notes, in Answer and Chat mode. A general chat has none,
+    and a chat that searches other projects too still uses only its home project's notes.
+  - The notes help the model understand the question and shape the answer. In Answer mode
+    they are also the last numbered source, "Your project notes", so a fact taken from them
+    cites the notes and never a document. Every fact still carries an `[n]` that shows where
+    it came from.
+  - Notes never change retrieval or the not-found gate, and never the answer's language.
 - **Query text:** the latest user question plus the previous user question, so follow-ups
   like "what about item 2?" stay on topic without an extra LLM call.
 - **Conversation (token budget):** earlier exchanges go to the model newest first, as many
@@ -218,14 +229,17 @@ stored in `ocr_pages`.
   happens without that click, and a draft in the question box is kept.
 - **Prompt:** numbered sources `[1]..[k]` with file name and location. Instructions: answer
   only from the sources, put `[n]` after each supported claim, answer in the language of
-  the question, and say so plainly when the sources are insufficient.
+  the question, and say so plainly when the sources are insufficient. When the chat's home
+  project has notes, Answer mode lists them as source `[k+1]` "Your project notes", with a
+  rule that a fact from them cites that number. Chat mode adds them after its rules, as a
+  `<notes>` block that is not a source. With no notes the prompt is unchanged.
 - **Streaming:** tokens go to the UI over SSE, and generation can be cancelled. `[n]`
   markers render as clickable chips that open the source popup (§7).
 - **Context and token counts:**
   - Before the model is called (Answer and Chat modes), a `context` event gives:
     - the context window and the room kept for the reply;
-    - the estimated prompt, part by part: instructions, passages (and how many), earlier
-      messages and the question;
+    - the estimated prompt, part by part: instructions, the project's notes, passages (and
+      how many), earlier messages and the question;
     - how many of the chat's answered exchanges the prompt kept.
   - The local model is asked for llama-server's per-token timings (`timings_per_token`).
     Its provider yields them as `usage` chunks: the whole prompt (including the part reused
@@ -237,7 +251,8 @@ stored in `ocr_pages`.
     The bar turns amber at 90%. The line also says how many earlier exchanges the model
     remembers, or how many older ones were left out. "Details" opens a stacked bar and a
     list of what fills the window:
-    - instructions, passages, earlier messages and the question;
+    - instructions, project notes (when the project has some), passages, earlier messages and
+      the question;
     - what the model has written so far;
     - the room kept for the reply, and what is free.
 

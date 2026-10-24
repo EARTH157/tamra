@@ -27,7 +27,7 @@ export type IndexStatus = {
 };
 
 /** A project: a name and one folder of documents with its own search index (GET /api/projects). */
-export type Project = { id: number; name: string; folder_path: string; index: IndexStatus };
+export type Project = { id: number; name: string; folder_path: string; notes: string; index: IndexStatus };
 
 export type Chat = {
   id: number;
@@ -130,7 +130,8 @@ export type ContextEvent = {
   prompt_tokens: number;
   context_tokens: number;
   reply_tokens: number;
-  parts: { instructions: number; sources: number; history: number; question: number };
+  /** `notes` is missing from a context saved before project notes; read it as 0. */
+  parts: { instructions: number; notes?: number; sources: number; history: number; question: number };
   source_count: number;
   history_kept: number;
   history_total: number;

@@ -14,7 +14,7 @@ from tamra.embedder import EmbedderUnavailable
 from tamra.llm.base import THINKING_HEADROOM, LLMError, Message, Provider, Usage
 from tamra.llm.llama_server import LlamaServerError
 from tamra.retriever import best_similarity, fts_query, hybrid_search, query_text, trigrams
-from tamra.store import ChunkRecord, Collection, SourceRecord, Store
+from tamra.store import Chat, ChunkRecord, Collection, SourceRecord, Store
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ Rules:
   from the sources.
 - Cite each sentence that uses a source with its number in brackets, like [1] or [2][3].
 - Write the whole answer in {language}, the language of the question.
-- Be concise.
+- Be concise.{notes}
 
 Sources:
 
@@ -47,7 +47,18 @@ Rules:
   write citation markers like [1].
 - If you are not sure, say so plainly.
 - Write the whole answer in {language}, the language of the question.
-- Be concise."""
+- Be concise.{notes}"""
+# Project notes (spec §6): the user's situation and how they want answers. They follow the
+# rules in both modes. They guide the answer and are never a source.
+NOTES_TEXT = """
+- The user's notes below describe their situation and how they want answers. Use them to
+  understand the question and to shape the answer. They are not a source: never state a
+  fact from them as the answer, and never cite them.
+
+The user's notes for this project:
+<notes>
+{notes}
+</notes>"""
 
 AUTO_CITE_MIN_OVERLAP = 0.5  # share of the answer's trigrams found in one source
 # One citation marker: [1], [12] or a group such as [1, 2]. tamra.attribution and the UI
@@ -182,6 +193,32 @@ def source_payloads(store: Store, sources: Sequence[SourceRecord]) -> list[dict]
     return payloads
 
 
+def notes_text(notes: str) -> str:
+    """What the Chat-mode prompt adds for a project's notes; '' when there are none, so the
+    prompt is then exactly what it was without notes."""
+    return NOTES_TEXT.format(notes=notes) if notes else ""
+
+
+# Answer mode (project notes spec): the notes are the last numbered source, so a fact the model
+# takes from them cites them. A rule that they are "not a source" did not stop a small model from
+# stating the notes' facts, and it then cited a document for them.
+NOTES_SOURCE_NAME = "Your project notes"
+NOTES_SOURCE_RULE = """
+- Source [{n}] is the user's own notes for this project: their situation and how they want
+  answers. Follow how they want answers. A fact taken from the notes must cite [{n}], never a
+  document's number."""
+
+
+def is_notes(source: SourceRecord) -> bool:
+    """Whether a source is the project's notes rather than a passage of a document."""
+    return source.location.get("kind") == "notes"
+
+
+def notes_source(notes: str, n: int) -> SourceRecord:
+    """The project's notes as source [n] of an Answer-mode prompt: no chunk, file or hash."""
+    return SourceRecord(n, None, None, NOTES_SOURCE_NAME, notes, {"kind": "notes"}, None)
+
+
 def build_messages(
     question: str,
     history: Sequence[tuple[str, str | None]],
@@ -191,19 +228,27 @@ def build_messages(
 ) -> list[Message]:
     """The prompt: system with the sources, the answered earlier exchanges (oldest first), then
     the question. Earlier answers lose their markers: their sources are no longer in the prompt.
+    A notes source (`notes_source`) among the sources brings its rule.
 
     room is the prompt's share of the context window (the window less the reply's max tokens).
     History gets what the sources and question leave, at most ANSWER_HISTORY_SHARE of room: the
     sources come first, and a short prompt keeps a small model on them (spec §6)."""
-    system = SYSTEM_PROMPT.format(language=LANGUAGE_NAMES[language], sources=_blocks(sources))
+    notes = next((s for s in sources if is_notes(s)), None)
+    rule = NOTES_SOURCE_RULE.format(n=notes.n) if notes else ""
+    system = SYSTEM_PROMPT.format(
+        language=LANGUAGE_NAMES[language], sources=_blocks(sources), notes=rule
+    )
     budget = min(_left(room, system, question), int(room * ANSWER_HISTORY_SHARE))
     return _with_history(system, history, question, budget)
 
 
 def _blocks(sources: list[SourceRecord]) -> str:
-    """The numbered sources as the system prompt lists them."""
+    """The numbered sources as the system prompt lists them; the notes have no location."""
     return "\n\n".join(
-        f"[{s.n}] {s.rel_path} ({location_label(s.location)})\n{s.text}" for s in sources
+        f"[{s.n}] {s.rel_path}\n{s.text}"
+        if is_notes(s)
+        else f"[{s.n}] {s.rel_path} ({location_label(s.location)})\n{s.text}"
+        for s in sources
     )
 
 
@@ -212,10 +257,11 @@ def chat_messages(
     history: Sequence[tuple[str, str | None]],
     language: str,
     room: int = LOCAL_CONTEXT_TOKENS - AnswerSettings.max_tokens,
+    notes: str = "",
 ) -> list[Message]:
     """The chat-mode prompt: no sources, the earlier exchanges in all the room the system prompt
-    and question leave, then the question."""
-    system = CHAT_PROMPT.format(language=LANGUAGE_NAMES[language])
+    and question leave, then the question. notes follow the rules."""
+    system = CHAT_PROMPT.format(language=LANGUAGE_NAMES[language], notes=notes_text(notes))
     return _with_history(system, history, question, _left(room, system, question))
 
 
@@ -265,6 +311,7 @@ def context_event(
     sources: list[SourceRecord],
     context_tokens: int,
     reply_tokens: int,
+    notes: str = "",
 ) -> dict:
     """What the prompt puts in the context window, part by part (estimated), what is kept for
     the reply, and how many of the chat's answered exchanges the prompt kept (spec §6)."""
@@ -272,9 +319,17 @@ def context_event(
     def tokens(message: Message) -> int:
         return estimate_tokens(message["content"]) + MESSAGE_TOKENS
 
-    source_tokens = estimate_tokens(_blocks(sources)) if sources else 0
+    documents = [s for s in sources if not is_notes(s)]
+    from_notes = [s for s in sources if is_notes(s)]
+    source_tokens = estimate_tokens(_blocks(documents)) if documents else 0
+    if from_notes:  # Answer mode: the notes source and its rule
+        rule = NOTES_SOURCE_RULE.format(n=from_notes[0].n)
+        notes_tokens = estimate_tokens(_blocks(from_notes)) + estimate_tokens(rule)
+    else:  # Chat mode: the notes block ("" without notes)
+        notes_tokens = estimate_tokens(notes_text(notes))
     parts = {
-        "instructions": tokens(messages[0]) - source_tokens,
+        "instructions": tokens(messages[0]) - source_tokens - notes_tokens,
+        "notes": notes_tokens,
         "sources": source_tokens,
         "history": sum(tokens(m) for m in messages[1:-1]),
         "question": tokens(messages[-1]),
@@ -285,7 +340,7 @@ def context_event(
         "context_tokens": context_tokens,
         "reply_tokens": reply_tokens,
         "parts": parts,
-        "source_count": len(sources),
+        "source_count": len(documents),
         "history_kept": (len(messages) - 2) // 2,
         "history_total": sum(1 for _, answer in history if _earlier_answer(answer) is not None),
     }
@@ -487,6 +542,7 @@ class AnswerService:
         if chat is None:
             yield {"type": "error", "message": f"Chat {chat_id} not found."}
             return
+        notes = self._notes(chat)
         # The chat's scope; an empty one falls back to its home project. A chat with neither
         # searches nothing: it never reaches every project implicitly.
         wanted = chat.scope or ([chat.collection_id] if chat.collection_id is not None else [])
@@ -535,19 +591,30 @@ class AnswerService:
             yield {"type": "token", "text": text}
             yield {"type": "done", "message_id": message_id}
             return
-        yield {"type": "sources", "sources": source_payloads(self._store, sources)}
-        if mode == "search":  # passages only: no model is involved, so none is recorded
+        if mode == "search":  # passages only: no model is involved, so none (and no notes)
+            yield {"type": "sources", "sources": source_payloads(self._store, sources)}
             message_id = self._store.add_assistant_message(
                 chat_id, "", provider=None, model=None, sources=sources
             )
             yield {"type": "done", "message_id": message_id}
             return
+        if notes:  # the last source (project notes spec): what the model takes from them cites them
+            sources = [*sources, notes_source(notes, len(sources) + 1)]
+        yield {"type": "sources", "sources": source_payloads(self._store, sources)}
         reply = self._reply_tokens(route, think)
         room = route.context_tokens - reply
         messages = build_messages(question, history, sources, language, room)
         context = context_event(messages, history, sources, route.context_tokens, reply)
         yield context
         yield from self._write(chat_id, route, messages, sources, think, context)
+
+    def _notes(self, chat: Chat) -> str:
+        """The notes of the chat's home project; '' for a general chat (project notes spec).
+        Read once per question, so an edit applies from the next one."""
+        if chat.collection_id is None:
+            return ""
+        home = self._store.get_collection(chat.collection_id)
+        return home.notes if home is not None else ""
 
     def _reply_tokens(self, route: Route, think: bool) -> int:
         """The part of the context window kept for the reply; the prompt gets the rest. It grows
@@ -560,16 +627,18 @@ class AnswerService:
 
     def _chat(self, chat_id: int, question: str, think: bool) -> Iterator[dict]:
         """A chat-mode reply: no project is searched, so none needs to be indexed."""
-        if self._store.get_chat(chat_id) is None:
+        chat = self._store.get_chat(chat_id)
+        if chat is None:
             yield {"type": "error", "message": f"Chat {chat_id} not found."}
             return
+        notes = self._notes(chat)
         route = self._route()
         history = self._store.recent_exchanges(chat_id, MAX_HISTORY_TURNS)
         reply = self._reply_tokens(route, think)
         room = route.context_tokens - reply
-        messages = chat_messages(question, history, detect_language(question), room)
+        messages = chat_messages(question, history, detect_language(question), room, notes)
         self._store.add_user_message(chat_id, question)
-        context = context_event(messages, history, [], route.context_tokens, reply)
+        context = context_event(messages, history, [], route.context_tokens, reply, notes)
         yield context
         yield from self._write(chat_id, route, messages, [], think, context)
 

@@ -37,7 +37,7 @@ import Welcome from "./Welcome";
 /** The project dialog that is open, if any. At most one is open at a time. */
 type Dialog =
   | { kind: "newProject" }
-  | { kind: "settings"; id: number }
+  | { kind: "settings"; id: number; focus?: "notes" }
   // Change folder, from the project's menu or from its settings (which come back afterwards).
   | { kind: "folder"; id: number; from: "menu" | "settings" }
   | { kind: "deleteProject"; id: number };
@@ -185,7 +185,7 @@ export default function App() {
 
   async function renameProject(id: number, name: string) {
     try {
-      await projectsApi.rename(id, name);
+      await projectsApi.change(id, { name });
     } catch (e) {
       setProblem(projectErrorText(e as Error, t));
     }
@@ -348,6 +348,7 @@ export default function App() {
             onChangeFolder={() => setDialog({ kind: "folder", id: activeProject.id, from: "menu" })}
             onRebuild={() => void rebuildProject(activeProject.id)}
             onOpenModelSettings={() => openSettings("model")}
+            onNotes={() => setDialog({ kind: "settings", id: activeProject.id, focus: "notes" })}
           />
         )}
         {settings.mcp_enabled && (
@@ -444,8 +445,9 @@ export default function App() {
         <ProjectSettingsDialog
           project={dialogProject}
           busy={busy}
-          onRename={async (name) => {
-            await projectsApi.rename(dialogProject.id, name);
+          focusNotes={dialog.focus === "notes"}
+          onSave={async (changes) => {
+            await projectsApi.change(dialogProject.id, changes);
             setDialog(null);
           }}
           onChangeFolder={() =>

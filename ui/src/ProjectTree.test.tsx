@@ -32,11 +32,12 @@ const idle = {
   error: null,
   problems: [],
 };
-const contracts: Project = { id: 1, name: "Contracts", folder_path: "C:/c", index: idle };
+const contracts: Project = { id: 1, name: "Contracts", folder_path: "C:/c", notes: "", index: idle };
 const hr: Project = {
   id: 2,
   name: "HR Documents",
   folder_path: "D:/hr",
+  notes: "",
   index: { ...idle, counts: { ...idle.counts, indexed: 128 } },
 };
 const chat = (id: number, title: string, project_id: number): Chat => ({
@@ -359,6 +360,60 @@ describe("The project menu", () => {
     expect(calls).toContainEqual({ key: "PATCH /api/projects/1", body: { name: "Leases" } });
     expect(dialog()).toBeNull();
     expect(names()).toEqual(["Leases"]);
+  });
+
+  it("edits the notes in project settings, counting characters as the core does", async () => {
+    let core: Core = { projects: [contracts], chats: [] };
+    const calls = boot(core, {
+      "GET /api/projects": () => json({ projects: core.projects }),
+      "PATCH /api/projects/1": () => {
+        core = { ...core, projects: [{ ...contracts, notes: "I am the tenant. 😀" }] };
+        return json(core.projects[0]);
+      },
+    });
+    view = await mount(<App />);
+    await click(projectMenuButton("Contracts"));
+    await click(buttonByText(menu()!, "Project settings"));
+    const box = dialog()!;
+    const notes = box.querySelector<HTMLTextAreaElement>("textarea.notes-input");
+    expect(box.querySelector(".notes-count")?.textContent).toBe("0 / 1,000");
+    await typeInto(notes, "x".repeat(1001));
+    expect(box.querySelector(".notes-count.over")).not.toBeNull();
+    expect(buttonByText(box, "Save")?.disabled).toBe(true);
+    await typeInto(notes, "  I am the tenant. 😀 "); // stripped, and the emoji counts once
+    expect(box.querySelector(".notes-count")?.textContent).toBe("18 / 1,000");
+    await click(buttonByText(box, "Save"));
+    expect(calls).toContainEqual({ key: "PATCH /api/projects/1", body: { notes: "I am the tenant. 😀" } });
+    expect(dialog()).toBeNull();
+  });
+
+  it("opens the project settings on the Notes field from the card's Add notes link", async () => {
+    boot({ projects: [contracts], chats: [] });
+    view = await mount(<App />);
+    await click(buttonByText(view.container.querySelector(".collection-card")!, "Add notes"));
+    expect(dialog()?.querySelector("h2")?.textContent).toBe("Project settings");
+    expect(document.activeElement?.classList.contains("notes-input")).toBe(true);
+  });
+
+  it("shows refused notes inside the project settings", async () => {
+    boot(
+      { projects: [contracts], chats: [] },
+      {
+        "PATCH /api/projects/1": () =>
+          json(
+            { detail: "Project notes must be at most 1,000 characters, without control characters." },
+            400,
+          ),
+      },
+    );
+    view = await mount(<App />);
+    await click(projectMenuButton("Contracts"));
+    await click(buttonByText(menu()!, "Project settings"));
+    await typeInto(dialog()?.querySelector("textarea.notes-input"), "Answer as a list.");
+    await click(buttonByText(dialog()!, "Save"));
+    expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe(
+      "Notes can be at most 1,000 characters, without control characters.",
+    );
   });
 
   it("shows a refused rename inside the project settings", async () => {
@@ -723,6 +778,7 @@ describe("New project", () => {
       id: 7,
       name: "Supplier agreements",
       folder_path: "D:/s",
+      notes: "",
       index: idle,
     };
     const calls = boot(core, {

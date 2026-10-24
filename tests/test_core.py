@@ -6,10 +6,11 @@ import pytest
 from docgen import make_pdf
 from fakes import FakeEmbedder, FakeLLM, FakeLocalLLM, FakeOcr, fake_spans
 
-from tamra.answer import API_CONTEXT_TOKENS, AnswerSettings
+from tamra.answer import API_CONTEXT_TOKENS, AnswerSettings, notes_source
 from tamra.core import (
     AnswerBusy,
     BadName,
+    BadNotes,
     Core,
     EmbedderUnavailable,
     FolderMissing,
@@ -112,6 +113,7 @@ def test_projects_report_their_status_and_rebuild_fixes_a_stale_index(core, tmp_
         "id",
         "name",
         "folder_path",
+        "notes",
         "counts",
         "stale",
         "current",
@@ -242,15 +244,50 @@ def test_changing_the_folder_indexes_the_new_one(core, tmp_path):
         core.change_project_folder(project.id, str(tmp_path / "missing"))
 
 
-def test_rename_project(core, tmp_path):
+def test_change_project_renames_and_sets_notes_all_or_nothing(core, tmp_path):
     first = core.create_project("Docs", str(make_docs(tmp_path, "one")))
     core.create_project("Other", str(make_docs(tmp_path, "two")))
-    assert core.rename_project(first.id, "  Papers ").name == "Papers"
-    assert core.rename_project(999, "Whatever") is None
+    assert core.change_project(first.id, name="  Papers ").name == "Papers"
+    assert core.change_project(999, name="Whatever") is None
     with pytest.raises(ValueError, match="name taken"):
-        core.rename_project(first.id, "other")
+        core.change_project(first.id, name="other")
     with pytest.raises(ValueError):
-        core.rename_project(first.id, "   ")
+        core.change_project(first.id, name="   ")
+    changed = core.change_project(first.id, notes="  I am the tenant.\r\nAnswer as a list.\r ")
+    assert changed.notes == "I am the tenant.\nAnswer as a list."
+    assert core.change_project(first.id, notes="   ").notes == ""  # empty means none
+    # A refused part changes nothing: the good name is not saved with bad notes.
+    with pytest.raises(BadNotes):
+        core.change_project(first.id, name="Kept out", notes="x" * 1001)
+    assert core.store.get_collection(first.id).name == "Papers"
+    with pytest.raises(ValueError, match="name taken"):
+        core.change_project(first.id, name="Other", notes="Not saved")
+    assert core.store.get_collection(first.id).notes == ""
+
+
+def test_a_notes_source_never_counts_as_changed(core):
+    assert core.source_changed(notes_source("I am the tenant.", 3)) is False
+
+
+@pytest.mark.parametrize(
+    ("notes", "ok"),
+    [
+        ("x" * 1000, True),
+        ("x" * 1001, False),
+        ("ฉันเป็นผู้เช่าห้อง 1204\tตอบเป็นข้อ ๆ", True),
+        ("ค่าเช่า​เดือนละ", True),  # a zero-width space pasted with Thai text
+        ("ring \a", False),  # a control character
+        ("a ‮ b", False),  # a bidi override
+        ("a ⁦ b", False),  # a bidi isolate
+    ],
+)
+def test_notes_are_checked(core, tmp_path, notes, ok):
+    project = core.create_project("Docs", str(make_docs(tmp_path, "one")))
+    if ok:
+        assert core.change_project(project.id, notes=notes).notes == notes
+    else:
+        with pytest.raises(BadNotes):
+            core.change_project(project.id, notes=notes)
 
 
 def test_names_are_validated_and_errors_are_typed(core, tmp_path):

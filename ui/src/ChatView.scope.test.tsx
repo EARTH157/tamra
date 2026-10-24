@@ -24,6 +24,7 @@ const project = (id: number, name: string): Project => ({
   id,
   name,
   folder_path: `C:/${name}`,
+  notes: "",
   index: idle,
 });
 const hr = project(1, "HR Documents");

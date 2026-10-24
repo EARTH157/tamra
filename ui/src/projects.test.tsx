@@ -10,6 +10,7 @@ const project = (indexing: number, id = 1): Project => ({
   id,
   name: `P${id}`,
   folder_path: "C:/p",
+  notes: "",
   index: { stale: false, counts: { ...counts, indexing }, current: null, error: null, problems: [] },
 });
 
@@ -157,7 +158,7 @@ describe("useProjects polling", () => {
 
     await act(async () => {
       await latest!.create("", "D:/new");
-      await latest!.rename(5, "Renamed");
+      await latest!.change(5, { name: "Renamed" });
       await latest!.changeFolder(5, "D:/other");
       await latest!.rebuild(5);
       expect(await latest!.remove(5)).toBe(4);

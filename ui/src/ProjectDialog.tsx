@@ -5,7 +5,7 @@ import FolderField from "./FolderField";
 import { useT } from "./i18n";
 import { IndexBody } from "./IndexStatus";
 import Modal from "./Modal";
-import { NAME_MAX } from "./projects";
+import { NAME_MAX, NOTES_MAX, noteLength, type ProjectChanges } from "./projects";
 import type { Project } from "./types";
 
 type NewProps = {
@@ -83,35 +83,47 @@ type SettingsProps = {
   project: Project;
   /** An answer is being written: the folder and the index cannot change now. */
   busy: boolean;
-  /** Rename the project: resolve to close the dialog; reject with an ApiError to show why it was refused. */
-  onRename: (name: string) => Promise<void>;
+  /** Open with the Notes field focused (the card's Notes link). */
+  focusNotes?: boolean;
+  /** Save what changed: resolve to close the dialog; reject with an ApiError to show why it was refused. */
+  onSave: (changes: ProjectChanges) => Promise<void>;
   onChangeFolder: () => void;
   onRebuild: () => Promise<void>;
   onClose: () => void;
 };
 
-/** Project settings: its name, its folder, and its search index (status and Rebuild index). */
+/** Project settings: its name, its notes, its folder, and its search index (status and Rebuild index). */
 export function ProjectSettingsDialog({
   project,
   busy,
-  onRename,
+  focusNotes = false,
+  onSave,
   onChangeFolder,
   onRebuild,
   onClose,
 }: SettingsProps) {
   const t = useT();
   const [name, setName] = useState(project.name);
+  const [notes, setNotes] = useState(project.notes);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const next = name.trim();
+  const nextNotes = notes.trim();
+  const used = noteLength(notes);
+  const tooLong = used > NOTES_MAX;
+  const changes: ProjectChanges = {
+    ...(next !== project.name ? { name: next } : {}),
+    ...(nextNotes !== project.notes ? { notes: nextNotes } : {}),
+  };
+  const changed = Object.keys(changes).length > 0;
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!next || next === project.name) return;
+    if (!next || !changed || tooLong) return;
     setWorking(true);
     setError(null);
     try {
-      await onRename(next);
+      await onSave(changes);
     } catch (e) {
       setError(projectErrorText(e as Error, t));
       setWorking(false);
@@ -144,8 +156,27 @@ export function ProjectSettingsDialog({
             value={name}
             maxLength={NAME_MAX}
             onChange={(e) => setName(e.target.value)}
-            data-autofocus
+            data-autofocus={focusNotes ? undefined : true}
           />
+        </label>
+        <label className="field">
+          <span className="field-label">{t("project.notesLabel")}</span>
+          <textarea
+            className="field-input notes-input"
+            rows={6}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            aria-describedby="project-notes-help"
+            data-autofocus={focusNotes ? true : undefined}
+          />
+          <span className="notes-foot">
+            <span id="project-notes-help" className="field-help">
+              {t("project.notesHelp")}
+            </span>
+            <span className={tooLong ? "notes-count over" : "notes-count"}>
+              {t("project.notesCount", { used: used.toLocaleString("en"), max: NOTES_MAX.toLocaleString("en") })}
+            </span>
+          </span>
         </label>
         <div className="field">
           <span className="field-label">{t("project.folderLabel")}</span>
@@ -182,7 +213,7 @@ export function ProjectSettingsDialog({
           <button
             type="submit"
             className="btn primary"
-            disabled={working || !next || next === project.name}
+            disabled={working || !next || !changed || tooLong}
           >
             {t("project.settings.save")}
           </button>

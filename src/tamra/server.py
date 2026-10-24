@@ -25,6 +25,7 @@ from tamra.core import (
     MAX_PROJECT_NAME,
     AnswerBusy,
     BadName,
+    BadNotes,
     Core,
     EmbedderUnavailable,
     FileNameNotAllowed,
@@ -136,8 +137,9 @@ class ProjectBody(BaseModel):
     folder_path: str = Field(min_length=1, max_length=1000)
 
 
-class ProjectRenameBody(BaseModel):
+class ProjectChangeBody(BaseModel):
     name: str | None = None
+    notes: str | None = None
 
 
 class FolderBody(BaseModel):
@@ -299,6 +301,7 @@ def _project_payload(view: dict) -> dict:
         "id": view["id"],
         "name": view["name"],
         "folder_path": view["folder_path"],
+        "notes": view["notes"],
         "index": {
             key: view[key] for key in ("counts", "stale", "current", "error", "reading", "problems")
         },
@@ -333,6 +336,7 @@ BAD_NAME_DETAIL = (
     f"The project name must be 1 to {MAX_PROJECT_NAME} characters, "
     "without control or format characters."
 )
+BAD_NOTES_DETAIL = "Project notes must be at most 1,000 characters, without control characters."
 # How a ValueError from a project change shows to the client: the first class that matches wins.
 # The details are fixed, so a path the user typed is never sent back.
 _PROJECT_ERRORS: tuple[tuple[type[ValueError], int, str], ...] = (
@@ -345,6 +349,7 @@ _PROJECT_ERRORS: tuple[tuple[type[ValueError], int, str], ...] = (
         "Choose a folder of documents, not a whole drive or Tamra's own folder.",
     ),
     (BadName, 400, BAD_NAME_DETAIL),
+    (BadNotes, 400, BAD_NOTES_DETAIL),
 )
 
 
@@ -378,13 +383,14 @@ def _add_project_routes(app: FastAPI, core: Core) -> None:
         return _project_response(core, collection.id)
 
     @app.patch("/api/projects/{project_id}")
-    def rename_project(project_id: int, body: ProjectRenameBody) -> dict:
-        if body.name is not None:
+    def change_project(project_id: int, body: ProjectChangeBody) -> dict:
+        """Rename a project and/or set its notes; a refused part changes nothing."""
+        if body.name is not None or body.notes is not None:
             try:
-                renamed = core.rename_project(project_id, body.name)
+                changed = core.change_project(project_id, name=body.name, notes=body.notes)
             except ValueError as e:
                 raise _project_error(e) from e
-            if renamed is None:
+            if changed is None:
                 raise HTTPException(status_code=404, detail="Project not found.")
         return _project_response(core, project_id)
 

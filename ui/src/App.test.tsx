@@ -32,7 +32,7 @@ const idle = {
   error: null,
   problems: [],
 };
-const contracts = { id: 1, name: "Contracts", folder_path: "C:/c", index: idle };
+const contracts = { id: 1, name: "Contracts", folder_path: "C:/c", notes: "", index: idle };
 const lease = {
   id: 3,
   title: "Lease length",

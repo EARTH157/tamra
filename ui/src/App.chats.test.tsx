@@ -20,8 +20,8 @@ const idle = {
   problems: [],
 };
 const projects: Project[] = [
-  { id: 1, name: "Contracts", folder_path: "C:/c", index: idle },
-  { id: 2, name: "Eval corpus", folder_path: "C:/e", index: idle },
+  { id: 1, name: "Contracts", folder_path: "C:/c", notes: "", index: idle },
+  { id: 2, name: "Eval corpus", folder_path: "C:/e", notes: "", index: idle },
 ];
 const chat = (scope: number[]): Chat => ({
   id: 3,
