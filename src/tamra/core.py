@@ -63,6 +63,10 @@ class BadName(ValueError):
     """A project name that is empty, too long, or has control or format characters."""
 
 
+class BadNotes(ValueError):
+    """Project notes over MAX_NOTES characters, or with a control character or a bidi override."""
+
+
 class FolderUsed(ValueError):
     """The folder is, or lies inside or around, another project's folder."""
 
@@ -105,6 +109,25 @@ def _clean_name(name: str) -> str:
         raise BadName("bad name length")
     if any(unicodedata.category(c) in _HIDDEN for c in cleaned):
         raise BadName("bad name characters")
+    return cleaned
+
+
+MAX_NOTES = 1000
+_BIDI_CONTROLS = frozenset("‪‫‬‭‮⁦⁧⁨⁩")
+
+
+def _clean_notes(notes: str) -> str:
+    """Notes as they are stored (project notes spec): one kind of new line, stripped, at most
+    MAX_NOTES characters, and no control characters (new lines and tabs aside) or bidi
+    overrides. Other format characters stay: a zero-width space comes with pasted Thai text."""
+    cleaned = notes.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(cleaned) > MAX_NOTES:
+        raise BadNotes("notes too long")
+    if any(
+        c in _BIDI_CONTROLS or (unicodedata.category(c) == "Cc" and c not in "\n\t")
+        for c in cleaned
+    ):
+        raise BadNotes("bad notes characters")
     return cleaned
 
 
@@ -713,6 +736,7 @@ class Core:
             "id": collection.id,
             "name": collection.name,
             "folder_path": collection.folder_path,
+            "notes": collection.notes,
             **self._index_status(collection),
         }
 
@@ -754,10 +778,19 @@ class Core:
         self.indexer.request_reconcile(collection.id)  # also where the folder cannot be watched
         return target
 
-    def rename_project(self, collection_id: int, name: str) -> Collection | None:
-        """Rename a project (None if unknown; BadName if the name is not valid, NameTaken if
-        another project has it)."""
-        if not self.store.rename_collection(collection_id, _clean_name(name)):
+    def change_project(
+        self, collection_id: int, *, name: str | None = None, notes: str | None = None
+    ) -> Collection | None:
+        """Rename a project and/or set its notes; None if it is unknown. Both are checked before
+        either is saved (BadName, BadNotes, NameTaken), so a refused change changes nothing."""
+        new_name = _clean_name(name) if name is not None else None
+        new_notes = _clean_notes(notes) if notes is not None else None
+        if self.store.get_collection(collection_id) is None:
+            return None
+        # rename_collection raises NameTaken before it writes, and runs before the notes are saved.
+        if new_name is not None and not self.store.rename_collection(collection_id, new_name):
+            return None
+        if new_notes is not None and not self.store.set_collection_notes(collection_id, new_notes):
             return None
         return self.store.get_collection(collection_id)
 

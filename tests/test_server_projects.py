@@ -85,7 +85,7 @@ def test_create_a_project_returns_it_with_its_index_status(api):
     )
     assert created.status_code == 201
     body = created.json()
-    assert set(body) == {"id", "name", "folder_path", "index"}
+    assert set(body) == {"id", "name", "folder_path", "index", "notes"}
     assert (body["name"], body["folder_path"]) == ("Lease", str(docs.resolve()))
     assert set(body["index"]) == INDEX_KEYS
     assert body["index"]["stale"] is False
@@ -336,7 +336,7 @@ def test_rename_a_project(api):
     renamed = client.patch(f"/api/projects/{created['id']}", headers=AUTH, json={"name": " New "})
     assert renamed.status_code == 200
     assert renamed.json()["name"] == "New"
-    assert set(renamed.json()) == {"id", "name", "folder_path", "index"}
+    assert set(renamed.json()) == {"id", "name", "folder_path", "index", "notes"}
     assert project(client, created["id"])["name"] == "New"
     same = client.patch(f"/api/projects/{created['id']}", headers=AUTH, json={"name": "new"})
     assert same.status_code == 200  # only its own name differs in case
@@ -682,6 +682,43 @@ def test_an_empty_or_long_search_is_a_422(chats):
     assert client.get("/api/chats/search", params={"q": ""}, headers=AUTH).status_code == 422
     too_long = client.get("/api/chats/search", params={"q": "a" * 201}, headers=AUTH)
     assert too_long.status_code == 422
+
+
+# --- project notes ---
+
+BAD_NOTES = "Project notes must be at most 1,000 characters, without control characters."
+
+
+def test_notes_are_saved_and_shown_with_the_project(api):
+    client, tmp_path = api
+    created = add_project(client, "Lease", folder(tmp_path, "docs"))
+    assert created["notes"] == ""
+    changed = client.patch(
+        f"/api/projects/{created['id']}", headers=AUTH, json={"notes": " I am the tenant. "}
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["notes"] == "I am the tenant."
+    assert project(client, created["id"])["notes"] == "I am the tenant."
+
+
+def test_bad_notes_are_a_400_and_change_nothing(api):
+    client, tmp_path = api
+    created = add_project(client, "Lease", folder(tmp_path, "docs"))
+    refused = client.patch(
+        f"/api/projects/{created['id']}",
+        headers=AUTH,
+        json={"name": "Renamed", "notes": "x" * 1001},
+    )
+    assert refused.status_code == 400
+    assert refused.json()["detail"] == BAD_NOTES
+    kept = project(client, created["id"])
+    assert (kept["name"], kept["notes"]) == ("Lease", "")
+
+
+def test_notes_for_an_unknown_project_are_a_404(api):
+    client, _ = api
+    response = client.patch("/api/projects/99", headers=AUTH, json={"notes": "x"})
+    assert response.status_code == 404
 
 
 # --- the token ---
