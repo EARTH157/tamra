@@ -115,5 +115,5 @@ def test_a_v3_database_upgrades_and_flags_files_that_waited_for_ocr(tmp_path):
     finally:
         store.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 6
     conn.close()

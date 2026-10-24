@@ -11,6 +11,7 @@ class Collection:
     folder_path: str
     embedding_model_id: str
     created_at: str
+    notes: str = ""  # the project's notes for the model (project notes spec); "" when none
 
 
 @dataclass(frozen=True)

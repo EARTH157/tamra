@@ -1,6 +1,6 @@
 import sqlite3
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _V1 = """
 CREATE TABLE collections (
@@ -124,6 +124,11 @@ _V5 = """
 ALTER TABLE chats ADD COLUMN context_json TEXT;
 """
 
+# v6: a project's notes, which every chat in it gives the model (project notes spec).
+_V6 = """
+ALTER TABLE collections ADD COLUMN notes TEXT NOT NULL DEFAULT '';
+"""
+
 
 def _run_in_transaction(conn: sqlite3.Connection, script: str, version: int) -> None:
     try:
@@ -142,6 +147,6 @@ def migrate(conn: sqlite3.Connection) -> None:
         raise RuntimeError(
             f"database schema {version} is newer than this version of Tamra ({SCHEMA_VERSION})"
         )
-    steps = [_V1, _V2, _V3, _V4, _V5]  # steps[n] upgrades schema n to n + 1
+    steps = [_V1, _V2, _V3, _V4, _V5, _V6]  # steps[n] upgrades schema n to n + 1
     if version < SCHEMA_VERSION:
         _run_in_transaction(conn, "\n".join(steps[version:]), SCHEMA_VERSION)

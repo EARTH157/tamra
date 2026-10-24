@@ -208,3 +208,37 @@ def test_get_file_returns_one_record_or_none(store, coll):
         "pending",
     )
     assert store.get_file(file_id + 100) is None
+
+
+def test_a_project_has_no_notes_until_they_are_set(store, coll):
+    assert coll.notes == ""
+    assert store.get_collection(coll.id).notes == ""
+    assert store.set_collection_notes(coll.id, "I am the tenant.\nAnswer as a list.")
+    assert store.get_collection(coll.id).notes == "I am the tenant.\nAnswer as a list."
+    assert [c.notes for c in store.list_collections()] == ["I am the tenant.\nAnswer as a list."]
+    assert store.set_collection_notes(999, "x") is False
+
+
+def test_a_v5_database_gets_empty_notes(tmp_path):
+    from tamra.store.db import connect
+    from tamra.store.schema import _V1, _V2, _V3, _V4, _V5
+
+    path = tmp_path / "tamra.db"
+    conn = connect(path)
+    conn.executescript(
+        "BEGIN;\n" + _V1 + _V2 + _V3 + _V4 + _V5 + "\nPRAGMA user_version = 5;\nCOMMIT;"
+    )
+    conn.execute(
+        "INSERT INTO collections (name, folder_path, embedding_model_id, created_at)"
+        " VALUES ('Old', 'C:/old', 'm', 't')"
+    )
+    conn.commit()
+    conn.close()
+    store = Store.open(path)
+    try:
+        assert [(c.name, c.notes) for c in store.list_collections()] == [("Old", "")]
+    finally:
+        store.close()
+    conn = sqlite3.connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 6
+    conn.close()
