@@ -621,6 +621,69 @@ def test_the_old_collection_routes_are_gone(api):
     assert client.post("/api/collection/rebuild", headers=AUTH).status_code in (404, 405)
 
 
+# --- chat search ---
+
+
+@pytest.fixture
+def chats(tmp_path):
+    """A core with three chats: titles and messages to search."""
+    core, client = make_api(tmp_path)
+    lease = core.store.create_chat("Lease questions")
+    core.store.add_user_message(lease.id, "How long is the lease term?")
+    rent = core.store.create_chat()
+    core.store.add_user_message(rent.id, "And the rent?")
+    long_reply = "The tenant pays " + "x " * 100 + "a monthly RENT of 18,500 baht, " + "y " * 100
+    core.store.add_assistant_message(rent.id, long_reply, provider=None, model=None, sources=[])
+    thai = core.store.create_chat()
+    core.store.add_user_message(thai.id, "ค่าเช่าเดือนละเท่าไหร่ 100%_done")
+    yield client, {"lease": lease.id, "rent": rent.id, "thai": thai.id}
+    core.shutdown()
+
+
+def search(client, q):
+    response = client.get("/api/chats/search", params={"q": q}, headers=AUTH)
+    assert response.status_code == 200, response.text
+    return response.json()["chats"]
+
+
+def test_search_finds_titles_and_messages_newest_activity_first(chats):
+    client, ids = chats
+    found = search(client, "lease")
+    assert [c["id"] for c in found] == [ids["lease"]]
+    assert found[0]["title"] == "Lease questions"
+    assert found[0]["match"] == "How long is the lease term?"  # the message that has it
+    assert {"project_id", "scope"} <= set(found[0])
+    # "the" is in both chats: the one with the newest activity comes first.
+    assert [c["id"] for c in search(client, "the")] == [ids["rent"], ids["lease"]]
+
+
+def test_a_match_is_an_excerpt_around_the_newest_message_that_has_it(chats):
+    client, ids = chats
+    (found,) = search(client, "monthly rent")  # any case for A-Z
+    assert found["id"] == ids["rent"]
+    match = found["match"]
+    assert "a monthly RENT of 18,500 baht" in match
+    assert match.startswith("…") and match.endswith("…") and len(match) <= 125
+    assert "  " not in match
+
+
+def test_search_matches_thai_and_treats_percent_and_underscore_as_text(chats):
+    client, ids = chats
+    assert [c["id"] for c in search(client, "ค่าเช่า")] == [ids["thai"]]
+    assert [c["id"] for c in search(client, "100%_")] == [ids["thai"]]
+    assert search(client, "%") == search(client, "100%")  # not a wildcard
+    assert search(client, "_") == search(client, "%_d")
+    assert search(client, "nothing like this") == []
+    assert search(client, "   ") == []
+
+
+def test_an_empty_or_long_search_is_a_422(chats):
+    client, _ = chats
+    assert client.get("/api/chats/search", params={"q": ""}, headers=AUTH).status_code == 422
+    too_long = client.get("/api/chats/search", params={"q": "a" * 201}, headers=AUTH)
+    assert too_long.status_code == 422
+
+
 # --- the token ---
 
 
@@ -637,6 +700,7 @@ def test_the_old_collection_routes_are_gone(api):
         ("PATCH", "/api/chats/1", {"project_id": 1}),
         ("PUT", "/api/chats/1/scope", {"project_ids": [1]}),
         ("GET", "/api/chats/1", None),
+        ("GET", "/api/chats/search?q=lease", None),
     ],
 )
 def test_every_project_and_chat_route_needs_the_token(api, method, path, body):

@@ -427,6 +427,24 @@ svg.lucide {
   text-align: left;
 }
 
+/* New chat, with the chat search beside it. */
+.new-chat-row {
+  display: flex;
+  gap: 6px;
+}
+
+.new-chat-row .new-chat {
+  flex: 1;
+  min-width: 0;
+}
+
+.new-chat-row .search-chats {
+  flex: none;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+}
+
 .new-chat:hover:not(:disabled) {
   border-color: var(--border-strong);
 }
@@ -2135,6 +2153,128 @@ svg.lucide {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* The Ctrl+K chat search. */
+.dialog .chat-search-title {
+  margin-bottom: 12px;
+}
+
+.chat-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.chat-search-field:focus-within {
+  border-color: var(--primary);
+}
+
+.chat-search-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.chat-search-label,
+.chat-search-empty,
+.chat-search-foot {
+  margin: 12px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-search-label:empty {
+  display: none;
+}
+
+.chat-search-empty {
+  padding: 16px 0;
+  font-size: 13px;
+  text-align: center;
+}
+
+.chat-search-results {
+  max-height: min(360px, 50vh);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.chat-search-results li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.chat-search-results li > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.chat-search-results li.active {
+  background: var(--sidebar);
+}
+
+.chat-search-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-search-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.chat-search-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-search-project {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-search-match {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 17px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.chat-search-foot {
+  margin: 12px 0 0;
+  text-align: right;
 }
 
 .dialog h2 {
