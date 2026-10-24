@@ -117,6 +117,20 @@ def test_metadata_keeps_strings_and_only_the_integers_asked_for(tmp_path):
     assert "qwen3.context_length" not in meta
 
 
+def test_a_large_vocabulary_is_skipped_without_asking_the_size_per_token(tmp_path, monkeypatch):
+    # A real tokenizer holds ~250k strings: one fstat per read took 15-20 s (GET /api/models).
+    vocabulary = [f"t{i}" for i in range(1000)]
+    path = qwen3_8b(tmp_path, string_array("tokenizer.ggml.merges", vocabulary))
+    import tamra.models.gguf as gguf_module
+
+    calls = []
+    real = gguf_module.os.fstat
+    monkeypatch.setattr(gguf_module.os, "fstat", lambda fd: calls.append(fd) or real(fd))
+    meta = read_metadata(path, {"{arch}.block_count"})
+    assert meta["qwen3.block_count"] == 36
+    assert len(calls) <= 1
+
+
 def test_files_that_do_not_tell_give_no_shape(tmp_path):
     assert read_shape(tmp_path / "missing.gguf") is None
     (tmp_path / "junk.gguf").write_bytes(b"gguf")
