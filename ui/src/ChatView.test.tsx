@@ -320,6 +320,52 @@ describe("ChatView", () => {
     expect(createChat).toHaveBeenCalledWith(true);
   });
 
+  it("shows the project notes as their own source, with no file to open", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const notes = {
+      n: 2,
+      file: "Your project notes",
+      file_id: null,
+      label: "",
+      text: "I am the tenant of unit 1204. I moved in on 3 March.",
+      location: { kind: "notes" },
+      project: null,
+    };
+    const calls = mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [
+            {
+              id: 2,
+              role: "assistant",
+              content: "The term is three years [1]. You moved in on 3 March [2].",
+              provider: "local",
+              model: "qwen",
+              created_at: "t",
+              sources: [source, notes],
+            },
+          ],
+          context: null,
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    const cards = [...view.container.querySelectorAll(".source-card")];
+    expect(cards[1].textContent).toBe("2Your project notes"); // no location line
+    await click(cards[1]);
+    const panel = view.container.querySelector(".source-panel")!;
+    expect(panel.querySelector(".source-title strong")?.textContent).toBe("Your project notes");
+    expect(buttonByText(panel, "Open file")).toBeUndefined();
+    expect(panel.textContent).toContain("I moved in on 3 March.");
+    expect(calls.some((call) => call.key.includes("/locate"))).toBe(false); // no file to locate
+    await click(buttonByText(view.container, "Copy"));
+    expect(writeText).toHaveBeenCalledWith(
+      "The term is three years [1]. You moved in on 3 March [2].\n\nSources:\n" +
+        "[1] lease.pdf, p. 2\n[2] Your project notes",
+    );
+  });
+
   it("copies an answer with the sources it cites, and says it did", async () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });

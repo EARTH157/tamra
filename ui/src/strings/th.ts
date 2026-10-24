@@ -74,7 +74,7 @@ export const th: Record<TranslationKey, string> = {
   "project.nameLabel": "ชื่อโปรเจกต์",
   "project.notesLabel": "โน้ต",
   "project.notesHelp":
-    "Tamra ให้โมเดลอ่านโน้ตนี้ในทุกแชทของโปรเจกต์ เพื่อเข้าใจคำถามและปรับวิธีตอบ โน้ตไม่ใช่แหล่งข้อมูล คำตอบยังอ้างอิงจากเอกสารของคุณเสมอ",
+    "Tamra ให้โมเดลอ่านโน้ตนี้ในทุกแชทของโปรเจกต์ เพื่อเข้าใจคำถามและปรับวิธีตอบ ถ้าคำตอบใช้ข้อมูลจากโน้ต จะอ้างอิงเป็น \"โน้ตของโปรเจกต์\" แยกจากเอกสารของคุณ",
   "project.notesCount": "{used} / {max}",
   "project.notes": "โน้ต",
   "project.addNotes": "เพิ่มโน้ต",
@@ -133,6 +133,7 @@ export const th: Record<TranslationKey, string> = {
   "chat.resizeSource": "ปรับความกว้างแผงแหล่งที่มา",
   "chat.checkSource": "ตรวจสอบแหล่งที่มา",
   "source.open": "เปิดไฟล์",
+  "source.projectNotes": "โน้ตของโปรเจกต์",
   "source.compare": "เปรียบเทียบ",
   "source.resizeCompare": "ปรับขนาดช่องเปรียบเทียบกับหน้าเอกสาร",
   "source.answer": "คำตอบ",

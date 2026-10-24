@@ -42,8 +42,15 @@ export function spansProjects(sources: Source[]): boolean {
   return new Set(sources.map((source) => source.project).filter(Boolean)).size > 1;
 }
 
-/** The name shown for a source's file: "HR Documents · lease.pdf" when the project is named. */
-export function shownFile(source: Source, withProject: boolean): string {
+/** The project's notes as a source of an answer (project notes spec): no file, no location. */
+export function isProjectNotes(source: Pick<Source, "location">): boolean {
+  return source.location?.kind === "notes";
+}
+
+/** The name shown for a source's file: "HR Documents · lease.pdf" when the project is named;
+ * notesName for the project's notes. */
+export function shownFile(source: Source, withProject: boolean, notesName: string): string {
+  if (isProjectNotes(source)) return notesName;
   const name = fileName(source.file);
   return withProject && source.project ? `${source.project} · ${name}` : name;
 }
@@ -123,11 +130,16 @@ export default function SourcePanel({
   const matches = check?.status === "ready" ? check.matches : [];
   const match = matches[check?.index ?? 0] ?? null;
   // A selection locates its matched window; a source opened as it is locates the whole snapshot.
-  const target = match
-    ? { n: match.n, start: match.start, end: match.end }
-    : !check && source
-      ? { n: source.n, start: null, end: null }
-      : null;
+  // The project's notes have no file: their saved text is all there is to show.
+  const targetSource = match ? sources.find((s) => s.n === match.n) : source;
+  const notesTarget = !!targetSource && isProjectNotes(targetSource);
+  const target = notesTarget
+    ? null
+    : match
+      ? { n: match.n, start: match.start, end: match.end }
+      : !check && source
+        ? { n: source.n, start: null, end: null }
+        : null;
   // Undefined while loading, null when it failed. The selected answer text goes along, so the page
   // can mark just those words where the passage has them word for word.
   const located = useLocated(messageId, target, match ? answerFocus(check?.selection) : undefined);
@@ -136,7 +148,7 @@ export default function SourcePanel({
 
   const title = match ? match.file : (source?.file ?? null);
   const titled = match ? sources.find((s) => s.n === match.n) : source;
-  const shownTitle = title ? (titled ? shownFile(titled, multiProject) : fileName(title)) : null;
+  const shownTitle = title ? (titled ? shownFile(titled, multiProject, t("source.projectNotes")) : fileName(title)) : null;
   const subtitle = match ? whereLine(match, located, t) : source ? sourceLabel(source) : "";
   const fileId = match ? match.file_id : (source?.file_id ?? null);
   // The real page, once located: a text file's snapshot is already its real text. While the next
@@ -366,7 +378,7 @@ export default function SourcePanel({
                         <span className="source-num">{s.n}</span>
                         <span className="source-meta">
                           <span className="source-file" title={s.file}>
-                            {shownFile(s, multiProject)}
+                            {shownFile(s, multiProject, t("source.projectNotes"))}
                           </span>
                           {s.label && <span className="source-label">{s.label}</span>}
                         </span>

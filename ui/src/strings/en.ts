@@ -74,7 +74,7 @@ export const en = {
   "project.nameLabel": "Project name",
   "project.notesLabel": "Notes",
   "project.notesHelp":
-    "Tamra gives these notes to the model in every chat of this project, to understand your questions and shape its answers. They are not a source: answers still cite your documents.",
+    "Tamra gives these notes to the model in every chat of this project, to understand your questions and shape its answers. An answer that uses them cites them as \"Your project notes\", apart from your documents.",
   "project.notesCount": "{used} / {max}",
   "project.notes": "Notes",
   "project.addNotes": "Add notes",
@@ -134,6 +134,7 @@ export const en = {
   "chat.resizeSource": "Resize the source panel",
   "chat.checkSource": "Check source",
   "source.open": "Open file",
+  "source.projectNotes": "Your project notes",
   "source.compare": "Compare",
   "source.resizeCompare": "Resize Compare and the page",
   "source.answer": "Answer",
