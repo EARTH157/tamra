@@ -66,6 +66,16 @@ async function drag(target: Element | null, type: string, files: File[], types =
   return event;
 }
 
+/** Press Ctrl and a key, identified by its place on the keyboard (`code`) and what it types. */
+async function ctrl(code: string, key: string) {
+  const event = new KeyboardEvent("keydown", { code, key, ctrlKey: true, bubbles: true, cancelable: true });
+  await act(async () => {
+    document.body.dispatchEvent(event);
+  });
+  await settle();
+  return event;
+}
+
 async function openMenu(container: HTMLElement) {
   await click(container.querySelector('button[aria-label="Options for Lease length"]'));
   return container.ownerDocument.querySelector('[role="menu"]');
@@ -122,6 +132,51 @@ describe("App", () => {
       "Not added: old.pdf (a file with this name is already in the project); " +
         "sheet.xlsx (only PDF, DOCX, TXT and MD files can be added)",
     );
+  });
+
+  it("searches the chats with Ctrl+K and opens the one chosen with Enter", async () => {
+    const leave = { ...lease, id: 5, title: "Leave policy" };
+    const calls = mockFetch({
+      "GET /api/projects": () => json({ projects: [contracts] }),
+      "GET /api/chats": () => json({ chats: [lease, leave] }),
+      "GET /api/chats/search?q=rent": () =>
+        json({ chats: [{ ...leave, match: "…the monthly rent is 18,500 baht…" }] }),
+      "GET /api/chats/5": () => json({ ...leave, messages: [], context: null }),
+    });
+    view = await mount(<App />);
+    const event = await ctrl("KeyK", "า"); // the K key on a Thai layout
+    expect(event.defaultPrevented).toBe(true);
+    expect(dialog()?.querySelector("h2")?.textContent).toBe("Search chats");
+    const names = () => [...document.querySelectorAll(".chat-search-name")].map((el) => el.textContent);
+    expect(names()).toEqual(["Lease length", "Leave policy"]); // recent first, before typing
+    const input = document.querySelector<HTMLInputElement>(".chat-search-field input");
+    await typeInto(input, "rent");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200)); // the search waits for a pause
+    });
+    await settle();
+    expect(names()).toEqual(["Leave policy"]);
+    expect(document.querySelector(".chat-search-match")?.textContent).toBe(
+      "…the monthly rent is 18,500 baht…",
+    );
+    expect(document.querySelector(".chat-search-project")?.textContent).toBe("Contracts");
+    await press(input, "Enter");
+    expect(dialog()).toBeNull();
+    expect(calls.map((call) => call.key)).toContain("GET /api/chats/5");
+  });
+
+  it("starts a new chat with Ctrl+N, and leaves plain keys alone", async () => {
+    withChats({ "GET /api/chats/3": () => json({ ...lease, messages: [], context: null }) });
+    view = await mount(<App />);
+    await click(view.container.querySelector(".chat-title"));
+    expect(view.container.querySelector(".chat-row.active")).not.toBeNull();
+    expect((await ctrl("KeyN", "n")).defaultPrevented).toBe(true); // not a new window
+    expect(view.container.querySelector(".chat-row.active")).toBeNull();
+    expect(view.container.textContent).toContain("Ask your documents");
+    const plain = new KeyboardEvent("keydown", { code: "KeyK", key: "k", bubbles: true, cancelable: true });
+    document.body.dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(false);
+    expect(dialog()).toBeNull();
   });
 
   it("leaves text dragged inside the app alone", async () => {

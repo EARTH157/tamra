@@ -305,6 +305,19 @@ def _project_payload(view: dict) -> dict:
     }
 
 
+SEARCH_LIMIT = 30  # chats a search lists
+EXCERPT_CHARS = 120
+
+
+def _excerpt(text: str, query: str) -> str:
+    """About EXCERPT_CHARS of text around the first place it contains query, on one line."""
+    at = text.lower().find(query.lower())
+    start = max(0, at - EXCERPT_CHARS // 3)  # at -1 (a case the store folded): from the start
+    end = start + EXCERPT_CHARS
+    cut = " ".join(text[start:end].split())
+    return ("…" if start else "") + cut + ("…" if end < len(text) else "")
+
+
 def _chat_payload(chat: Chat) -> dict:
     return {
         "id": chat.id,
@@ -431,6 +444,21 @@ def _add_routes(app: FastAPI, core: Core) -> None:
     @app.get("/api/chats")
     def list_chats() -> dict:
         return {"chats": [_chat_payload(chat) for chat in core.store.list_chats()]}
+
+    # Before /api/chats/{chat_id}, which would take "search" for an id.
+    @app.get("/api/chats/search")
+    def search_chats(q: Annotated[str, Query(min_length=1, max_length=200)]) -> dict:
+        """Chats whose title or messages contain q, each with an excerpt of the newest match."""
+        query = q.strip()
+        if not query:
+            return {"chats": []}
+        found = core.store.search_chats(query, SEARCH_LIMIT)
+        return {
+            "chats": [
+                {**_chat_payload(chat), "match": None if hit is None else _excerpt(hit, query)}
+                for chat, hit in found
+            ]
+        }
 
     @app.post("/api/chats", status_code=201)
     def create_chat(body: NewChatBody | None = None) -> dict:

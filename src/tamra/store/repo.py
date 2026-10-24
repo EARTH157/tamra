@@ -1,6 +1,7 @@
 """Store: one SQLite connection shared by API threads and the indexer, serialized by a lock."""
 
 import json
+import re
 import sqlite3
 import threading
 from collections.abc import Sequence
@@ -482,6 +483,25 @@ class Store:
         ):
             scopes.setdefault(chat_id, []).append(collection_id)
         return [Chat(*row, scope=scopes.get(row[0], [])) for row in rows]
+
+    def search_chats(self, query: str, limit: int) -> list[tuple[Chat, str | None]]:
+        """Chats whose title or messages contain query (A-Z in any case), newest activity first,
+        each with its newest message that contains it (None when only the title does)."""
+        pattern = "%" + re.sub(r"([\\%_])", r"\\\1", query) + "%"
+        with self._lock:
+            hits = dict(
+                self._conn.execute(
+                    "SELECT id, (SELECT content FROM messages m WHERE m.chat_id = c.id"
+                    "  AND m.content LIKE ?1 ESCAPE '\\' ORDER BY m.id DESC LIMIT 1) AS hit"
+                    " FROM chats c WHERE c.title LIKE ?1 ESCAPE '\\' OR hit IS NOT NULL"
+                    " ORDER BY activity DESC LIMIT ?2",
+                    (pattern, limit),
+                ).fetchall()
+            )
+            if not hits:
+                return []
+            chats = self._chats(f" WHERE id IN ({','.join('?' * len(hits))})", tuple(hits))
+        return [(chat, hits[chat.id]) for chat in chats]
 
     def _require_collections(self, collection_ids: Sequence[int]) -> None:
         for collection_id in collection_ids:

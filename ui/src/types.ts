@@ -40,6 +40,9 @@ export type Chat = {
   scope: number[];
 };
 
+/** A chat a search found, with an excerpt of its newest message that matched (null: the title did). */
+export type ChatMatch = Chat & { match: string | null };
+
 export type Source = {
   n: number;
   /** The file's id in the index; null once it left the index (absent in payloads before M3). */

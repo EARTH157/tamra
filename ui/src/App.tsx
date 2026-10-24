@@ -1,4 +1,13 @@
-import { AlertTriangle, FilePlus, Plug, Plus, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import {
+  AlertTriangle,
+  FilePlus,
+  Plug,
+  Plus,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import {
   type CSSProperties,
   type DragEvent,
@@ -9,6 +18,7 @@ import {
 } from "react";
 import { api } from "./api";
 import { projectErrorText } from "./apiErrors";
+import ChatSearch from "./ChatSearch";
 import ChatView from "./ChatView";
 import ConfirmDialog from "./ConfirmDialog";
 import DeleteChatDialog from "./DeleteChatDialog";
@@ -49,6 +59,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [deleting, setDeleting] = useState<Chat | null>(null);
+  const [searching, setSearching] = useState(false); // the Ctrl+K chat search is open
   // The chat stays mounted (but hidden) while Settings is open, so a streaming answer carries on.
   const [view, setView] = useState<"chat" | "settings">("chat");
   // shortcut: kept for this run only; save it in settings if people want it to stay.
@@ -236,6 +247,23 @@ export default function App() {
     }
   }
 
+  // Ctrl+K searches the chats and Ctrl+N starts one, wherever focus is. The physical key decides,
+  // so a Thai keyboard layout works too. Not while an answer is written or another dialog is open.
+  const shortcut = useRef<(event: KeyboardEvent) => void>(() => {});
+  shortcut.current = (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+    if (event.code !== "KeyK" && event.code !== "KeyN") return;
+    event.preventDefault(); // Ctrl+N would open a new window
+    if (busy || dialog || deleting || searching || !projects?.length) return;
+    if (event.code === "KeyK") setSearching(chats.length > 0);
+    else newChat();
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => shortcut.current(event);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   /** Leave the folder dialog: back to the project's settings if it was opened from there. */
   function leaveFolderDialog(current: Dialog & { kind: "folder" }) {
     setDialog(current.from === "settings" ? { kind: "settings", id: current.id } : null);
@@ -271,10 +299,28 @@ export default function App() {
             ตำรา
           </span>
         </div>
-        <button type="button" className="new-chat" onClick={newChat} disabled={busy || !projects?.length}>
-          <Plus size={16} />
-          {t("app.newChat")}
-        </button>
+        <div className="new-chat-row">
+          <button
+            type="button"
+            className="new-chat"
+            title={t("app.newChatKey")}
+            onClick={newChat}
+            disabled={busy || !projects?.length}
+          >
+            <Plus size={16} />
+            {t("app.newChat")}
+          </button>
+          <button
+            type="button"
+            className="new-chat search-chats"
+            aria-label={t("search.open")}
+            title={t("search.open")}
+            onClick={() => setSearching(true)}
+            disabled={busy || !chats.length}
+          >
+            <Search size={16} />
+          </button>
+        </div>
         <ProjectTree
           projects={projects}
           chats={chats}
@@ -437,6 +483,17 @@ export default function App() {
           chat={deleting}
           onConfirm={() => deleteChat(deleting.id)}
           onCancel={() => setDeleting(null)}
+        />
+      )}
+      {searching && projects && (
+        <ChatSearch
+          chats={chats}
+          projects={projects}
+          onOpen={(id) => {
+            setSearching(false);
+            selectChat(id);
+          }}
+          onClose={() => setSearching(false)}
         />
       )}
     </div>
