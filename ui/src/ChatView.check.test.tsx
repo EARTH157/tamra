@@ -389,7 +389,7 @@ describe("checking a source from an answer", () => {
     expect(answerText().querySelector("mark")).toBeNull();
   });
 
-  it("ignores the answer of a check that was replaced", async () => {
+  it("opens a second check in a card of its own, and ignores the answer of a closed one", async () => {
     let releaseFirst: () => void = () => {};
     let requests = 0;
     vi.stubGlobal(
@@ -414,14 +414,20 @@ describe("checking a source from an answer", () => {
     );
     view = await mount(<ChatView {...base} chatId={5} />);
     await click(answerText().querySelectorAll("button.cite")[0]); // pending
-    await click(answerText().querySelectorAll("button.cite")[1]); // replaces it
-    expect(view.container.querySelector("header strong")?.textContent).toBe("notes.txt");
-    await act(async () => releaseFirst());
-    await settle();
-    expect(view.container.querySelector("header strong")?.textContent).toBe("notes.txt");
+    await click(answerText().querySelectorAll("button.cite")[1]); // a card of its own
+    const panels = () => [...view!.container.querySelectorAll(".source-panel")];
+    expect(panels()).toHaveLength(2);
+    expect(panels()[1].querySelector("header strong")?.textContent).toBe("notes.txt");
+    // Both chips are filled; only the span checked last is marked.
+    expect([...answerText().querySelectorAll("button.cite.active")]).toHaveLength(2);
     expect(answerText().querySelector("mark.answer-hit")?.textContent).toBe(
       "The notice period is 30 days",
     );
+    await click(panels()[0].querySelector('button[aria-label="Close source"]'));
+    await act(async () => releaseFirst());
+    await settle();
+    expect(panels()).toHaveLength(1);
+    expect(panels()[0].querySelector("header strong")?.textContent).toBe("notes.txt");
   });
 });
 

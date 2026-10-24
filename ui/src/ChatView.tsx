@@ -1,5 +1,5 @@
 import { Check as CheckIcon, Copy, FileText, Info, Lightbulb, MessageCircle, SearchX, X } from "lucide-react";
-import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import AnswerText, { type Highlight } from "./AnswerText";
 import { api, attribute, streamAnswer } from "./api";
 import { attributionErrorText, errorText, projectErrorText } from "./apiErrors";
@@ -15,7 +15,7 @@ import { isNotFound } from "./notFound";
 import { utf16ToCp } from "./offsets";
 import { MIN_SELECTION, type Selected, sentenceBefore } from "./selection";
 import { useSettings } from "./settings";
-import Splitter from "./Splitter";
+import SourceDock, { type DockCard } from "./SourceDock";
 import SourcePanel, {
   type Check,
   fileName,
@@ -102,11 +102,20 @@ function reopen(source: Source, saved: ChatDetail | null): Opened | null {
   return answer && same ? { owner: answer.id, source: same } : null;
 }
 
-/** The source panel's width at start, and how narrow it can be dragged, in CSS pixels. */
-export const PANEL_WIDTH = 520;
-const PANEL_MIN = 320;
-/** How narrow the chat can get as the source panel is dragged wider; the panel's CSS says it too. */
-const CHAT_MIN = 400;
+/** What a source card shows: a source as it is, or a selection being checked. */
+type CardContent = { opened: Opened | null; check: Check | null };
+/** An open source card, when it was last used, and the chip or card it was opened from. */
+type Card = CardContent & { key: number; used: number; anchor: Element | null };
+/** How many source cards can be open at once; the least recently used gives way to another. */
+const MAX_CARDS = 2;
+
+/** Whether a card already shows this: the same source of the same answer, or the same check. */
+function sameContent(card: CardContent, content: CardContent): boolean {
+  const [a, b] = [card.opened, content.opened];
+  if (a && b) return a.owner === b.owner && a.source.n === b.source.n;
+  const [x, y] = [card.check, content.check];
+  return !!x && !!y && x.messageId === y.messageId && x.start === y.start && x.end === y.end && x.n === y.n;
+}
 
 /** One chat: its messages, the answer being streamed, the question box, and a source panel. */
 export default function ChatView({
@@ -140,13 +149,13 @@ export default function ChatView({
   // then kept live while it is answered.
   const [contexts, setContexts] = useState<Record<number, ContextUse>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [opened, setOpened] = useState<Opened | null>(null);
+  // The open source cards, at most MAX_CARDS.
+  const [cards, setCards] = useState<Card[]>([]);
+  const cardSeq = useRef(0); // the cards' keys and the order they were used in
   const [viewer, setViewer] = useState<ViewerRequest | null>(null);
-  // A selection being checked against the sources of its answer. It and `opened` are never both set.
-  const [check, setCheck] = useState<Check | null>(null);
-  const [panelWidth, setPanelWidth] = useState(PANEL_WIDTH);
   const view = useRef<HTMLDivElement>(null);
-  const checkSeq = useRef(0); // a check that was replaced or closed is ignored when it answers
+  const clicked = useRef<Element | null>(null); // the chip or card last clicked in the messages
+  const checkSeq = useRef(0); // a check's id: its answer goes to the card still showing it
   // The CPU-fallback line is shown until dismissed, then not again while the app stays open.
   const [cpuNoticeDismissed, setCpuNoticeDismissed] = useState(false);
   // The projects whose index was left out of the last answer (it must be rebuilt first).
@@ -169,9 +178,7 @@ export default function ChatView({
 
   useEffect(() => {
     if (asking.current) return; // this chat was just created for the question being answered
-    setOpened(null);
-    checkSeq.current++;
-    setCheck(null);
+    setCards([]);
     setViewer(null);
     setNotice(null);
     setSkipped([]);
@@ -220,9 +227,7 @@ export default function ChatView({
     if (again === undefined) setQuestion(""); // a draft in the box stays when asking again
     setNotice(null);
     setSkipped([]);
-    setOpened(null);
-    checkSeq.current++;
-    setCheck(null);
+    setCards([]);
     let state: Pending = {
       question: text,
       mode: askMode,
@@ -310,7 +315,13 @@ export default function ChatView({
       // The core saves nothing for this question: give the text back so it can be asked again.
       if (state.error?.reason === "embedding_missing") setQuestion((current) => current || text);
       setPending(null);
-      setOpened((open) => (open?.owner === "pending" ? reopen(open.source, saved) : open));
+      setCards((all) =>
+        all.flatMap((card) => {
+          if (card.opened?.owner !== "pending") return [card];
+          const opened = reopen(card.opened.source, saved);
+          return opened ? [{ ...card, opened }] : [];
+        }),
+      );
       onBusyChange(false);
       onAnswered();
     }
@@ -363,45 +374,69 @@ export default function ChatView({
     scopeSaves.current = Promise.all([scopeSaves.current, saving]);
   }
 
-  function closePanel() {
-    checkSeq.current++;
-    setOpened(null);
-    setCheck(null);
+  /**
+   * Show a source or a check in a card: the one already showing it, else a new one, else the least
+   * recently used of the open cards. Its tail points at the chip or card just clicked.
+   */
+  function show(content: CardContent) {
+    const anchor = clicked.current;
+    const used = ++cardSeq.current;
+    const key = ++cardSeq.current;
+    setCards((all) => {
+      const same = all.find((card) => sameContent(card, content));
+      const oldest = all.reduce<Card | null>((a, b) => (a && a.used <= b.used ? a : b), null);
+      const replaced = same ?? (all.length < MAX_CARDS ? null : oldest);
+      if (!replaced) return [...all, { key, used, anchor, ...content }];
+      return all.map((card) => (card === replaced ? { ...card, ...content, anchor, used } : card));
+    });
   }
 
-  /** Find where a selected part of a saved answer comes from; the panel shows the progress. */
+  const changeCard = (key: number, change: (card: Card) => Card) =>
+    setCards((all) => all.map((card) => (card.key === key ? change(card) : card)));
+
+  /** The answer of a check goes to the card still showing it, if any. */
+  const changeCheck = (id: number, change: (check: Check) => Check) =>
+    setCards((all) =>
+      all.map((card) => (card.check?.id === id ? { ...card, check: change(card.check) } : card)),
+    );
+
+  /** A card was pressed: the other one gives way first to the next source shown. */
+  function markUsed(key: number) {
+    const used = ++cardSeq.current;
+    changeCard(key, (card) => ({ ...card, used }));
+  }
+
+  /** Find where a selected part of a saved answer comes from; its card shows the progress. */
   function startCheck(messageId: number, selected: Selected, n: number | null) {
     const id = ++checkSeq.current;
-    setOpened(null);
-    setCheck({
-      id,
-      messageId,
-      selection: selected.text,
-      start: selected.start,
-      end: selected.end,
-      n,
-      status: "loading",
-      matches: [],
-      index: 0,
-      error: null,
+    show({
+      opened: null,
+      check: {
+        id,
+        messageId,
+        selection: selected.text,
+        start: selected.start,
+        end: selected.end,
+        n,
+        status: "loading",
+        matches: [],
+        index: 0,
+        error: null,
+      },
     });
     // The core counts characters as Python does; the selection's offset is a UTF-16 index.
     const content = detail?.messages.find((m) => m.id === messageId)?.content;
     const start = content === undefined ? undefined : utf16ToCp(content, selected.start);
     attribute(messageId, selected.text, n, start)
-      .then((result) =>
-        setCheck((c) => (c?.id === id ? { ...c, status: "ready", matches: result.matches } : c)),
-      )
+      .then((result) => changeCheck(id, (c) => ({ ...c, status: "ready", matches: result.matches })))
       .catch((e: Error) =>
-        setCheck((c) => (c?.id === id ? { ...c, status: "error", error: attributionErrorText(e, t) } : c)),
+        changeCheck(id, (c) => ({ ...c, status: "error", error: attributionErrorText(e, t) })),
       );
   }
 
   /** A source card or passage: show that snapshot as it is. */
   function openSource(owner: number | "pending", source: Source) {
-    checkSeq.current++;
-    setCheck(null);
-    setOpened({ owner, source });
+    show({ opened: { owner, source }, check: null });
   }
 
   // The "Open file" button of the panel: the document viewer opens over the chat.
@@ -454,23 +489,65 @@ export default function ChatView({
     lastAnswer && lastQuestion && !pending && isNotFound(lastAnswer.content, lastAnswer.sources.length)
       ? () => void ask(lastQuestion.content)
       : undefined;
-  // The chips of the source being shown are drawn filled.
-  const activeFor = (owner: number | "pending") => {
-    if (check?.messageId === owner) {
-      return check.status === "ready" ? (check.matches[check.index]?.n ?? null) : check.n;
-    }
-    return opened?.owner === owner ? opened.source.n : null;
-  };
-  // The span being checked stays marked in its answer while the panel is open.
+  // The chips of the sources being shown are drawn filled.
+  const activeFor = (owner: number | "pending") =>
+    cards.flatMap(({ check, opened }) => {
+      if (check?.messageId === owner) {
+        const n = check.status === "ready" ? check.matches[check.index]?.n : check.n;
+        return n == null ? [] : [n];
+      }
+      return opened?.owner === owner ? [opened.source.n] : [];
+    });
+  // The span checked last stays marked in its answer while its card is open.
+  const lastCheck = [...cards].sort((a, b) => b.used - a.used).find((card) => card.check)?.check;
   const highlightFor = (owner: number): Highlight | null =>
-    check?.messageId === owner ? { start: check.start, end: check.end } : null;
-  const panelOwner = check?.messageId ?? opened?.owner ?? null;
-  const panelMessage = messages.find((message) => message.id === panelOwner);
+    lastCheck?.messageId === owner ? { start: lastCheck.start, end: lastCheck.end } : null;
+  const dockCards: DockCard[] = cards.map((card) => {
+    const owner = card.check?.messageId ?? card.opened?.owner ?? null;
+    const ownerMessage = messages.find((message) => message.id === owner);
+    return {
+      key: card.key,
+      used: card.used,
+      // What opened it, else (once that is gone, as when an answer is saved) the span checked last.
+      target: () =>
+        card.anchor?.isConnected
+          ? card.anchor
+          : card.check && card.check === lastCheck
+            ? (scroller.current?.querySelector(".answer-hit") ?? null)
+            : null,
+      panel: (place) => (
+        <SourcePanel
+          sources={ownerMessage?.sources ?? []}
+          multiProject={spansProjects(
+            ownerMessage?.sources ?? (owner === "pending" ? (pending?.sources ?? []) : []),
+          )}
+          messageId={typeof owner === "number" ? owner : null}
+          check={card.check}
+          source={card.opened?.source ?? null}
+          onIndexChange={(index) =>
+            changeCard(card.key, (c) => (c.check ? { ...c, check: { ...c.check, index } } : c))
+          }
+          onOpenSource={(source) =>
+            owner !== null && changeCard(card.key, (c) => ({ ...c, opened: { owner, source }, check: null }))
+          }
+          onOpenViewer={openViewer}
+          onClose={() => setCards((all) => all.filter((c) => c.key !== card.key))}
+          {...place}
+        />
+      ),
+    };
+  });
 
   return (
-    <div className="chat-view" ref={view} style={{ "--panel-width": `${panelWidth}px` } as CSSProperties}>
+    <div className="chat-view" ref={view}>
       <div className="chat-column">
-        <div className="messages" ref={scroller}>
+        <div
+          className="messages"
+          ref={scroller}
+          onClickCapture={(event) => {
+            clicked.current = (event.target as Element).closest(".source-card, .cite");
+          }}
+        >
           {empty && (
             <div className="hero">
               <img className="hero-tile" src={logo} alt="" />
@@ -619,32 +696,7 @@ export default function ChatView({
           context={chatId !== null ? contexts[chatId] : undefined}
         />
       </div>
-      {(check || opened) && (
-        <Splitter
-          label={t("chat.resizeSource")}
-          orientation="vertical"
-          size={panelWidth}
-          min={PANEL_MIN}
-          max={() => (view.current?.clientWidth ?? 1000) - CHAT_MIN}
-          grow={-1}
-          onResize={setPanelWidth}
-        />
-      )}
-      {(check || opened) && (
-        <SourcePanel
-          sources={panelMessage?.sources ?? []}
-          multiProject={spansProjects(
-            panelMessage?.sources ?? (opened?.owner === "pending" ? (pending?.sources ?? []) : []),
-          )}
-          messageId={typeof panelOwner === "number" ? panelOwner : null}
-          check={check}
-          source={opened?.source ?? null}
-          onIndexChange={(index) => setCheck((c) => (c ? { ...c, index } : c))}
-          onOpenSource={(source) => panelOwner !== null && openSource(panelOwner, source)}
-          onOpenViewer={openViewer}
-          onClose={closePanel}
-        />
-      )}
+      <SourceDock cards={dockCards} root={view} list={scroller} onUse={markUsed} />
       {viewer && (
         <DocumentViewer
           request={viewer}
@@ -773,7 +825,7 @@ type AnswerProps = {
   general: boolean;
   collectionName: string;
   done?: boolean;
-  active: number | null;
+  active: number[];
   highlight?: Highlight | null;
   /** Open a source as it is, without comparing it to anything. */
   onOpen: (source: Source) => void;

@@ -1,20 +1,26 @@
-import { ChevronLeft, ChevronRight, FileText, Minus, Plus, TriangleAlert, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Minus,
+  PanelRight,
+  PictureInPicture2,
+  Plus,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import { type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { MathText, TextWithParagraphs } from "./AnswerText";
 import { locateSource } from "./api";
 import { MARKER_SOURCE } from "./citations";
 import { type TranslationKey, useT } from "./i18n";
 import { cpToUtf16 } from "./offsets";
-import PdfPage, { useDragScroll, useWheelZoom } from "./PdfPage";
+import PdfPage, { IN_CARD_VIEW, useDragScroll, useWheelZoom } from "./PdfPage";
 import { MAX_SELECTION } from "./selection";
-import Splitter from "./Splitter";
 import type { Locate, Match, Source, ViewerRequest } from "./types";
 
 /** The zoom steps of the panel's PDF page, in percent of the panel width. */
 export const PANEL_ZOOM_STEPS = [100, 125, 150, 200, 300];
-
-/** How short Compare can be dragged, in CSS pixels. */
-const COMPARE_MIN = 100;
 
 /** The file name of a collection-relative path ("a/b/c.pdf" -> "c.pdf"). */
 export function fileName(path: string): string {
@@ -88,6 +94,14 @@ type Props = {
   /** The "Open file" button: open the document viewer at the shown passage. */
   onOpenViewer: (request: ViewerRequest) => void;
   onClose: () => void;
+  /** Out of its place beside the chat, put anywhere over it. */
+  floating?: boolean;
+  /** The pop-out / dock button. */
+  onToggleFloat?: () => void;
+  /** A press on the header away from its buttons: the start of dragging the panel. */
+  onGrab?: (event: PointerEvent<HTMLElement>) => void;
+  /** Bars along its edges to resize it by, while floating. */
+  edges?: ReactNode;
 };
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
@@ -125,6 +139,10 @@ export default function SourcePanel({
   onOpenSource,
   onOpenViewer,
   onClose,
+  floating = false,
+  onToggleFloat,
+  onGrab,
+  edges,
 }: Props) {
   const t = useT();
   const matches = check?.status === "ready" ? check.matches : [];
@@ -168,9 +186,6 @@ export default function SourcePanel({
   const zoomTo = (at: number) => setZoomed({ fileId, zoom: PANEL_ZOOM_STEPS[at] });
   const body = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLElement>(null);
-  const compare = useRef<HTMLElement>(null);
-  // Null: Compare is as tall as its text; once dragged, this many pixels, the Document text filling it.
-  const [compareHeight, setCompareHeight] = useState<number | null>(null);
   useDragScroll(body);
   useWheelZoom(body, (by) => {
     if (preview) zoomTo(Math.min(PANEL_ZOOM_STEPS.length - 1, Math.max(0, zoomAt + by)));
@@ -238,8 +253,18 @@ export default function SourcePanel({
   }
 
   return (
-    <aside className="source-panel" ref={panel} aria-label={t("chat.sourcePanel")}>
-      <header>
+    <aside
+      className={floating ? "source-panel floating" : "source-panel"}
+      ref={panel}
+      aria-label={t("chat.sourcePanel")}
+    >
+      {edges}
+      <header
+        className={onGrab ? "grab" : undefined}
+        onPointerDown={(event) => {
+          if (onGrab && !(event.target as Element).closest("button")) onGrab(event);
+        }}
+      >
         <FileText size={20} />
         <div className="source-title">
           <strong title={title ?? undefined}>{shownTitle ?? t("chat.sourcePanel")}</strong>
@@ -248,6 +273,17 @@ export default function SourcePanel({
         {canOpen && (
           <button type="button" className="btn" onClick={openViewer}>
             {t("source.open")}
+          </button>
+        )}
+        {onToggleFloat && (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={t(floating ? "chat.dockSource" : "chat.floatSource")}
+            title={t(floating ? "chat.dockSource" : "chat.floatSource")}
+            onClick={onToggleFloat}
+          >
+            {floating ? <PanelRight size={18} /> : <PictureInPicture2 size={18} />}
           </button>
         )}
         <button
@@ -259,166 +295,155 @@ export default function SourcePanel({
           <X size={18} />
         </button>
       </header>
-      {check && (
-        <section
-          ref={compare}
-          className={compareHeight === null ? "compare" : "compare sized"}
-          style={compareHeight === null ? undefined : { height: compareHeight }}
-          aria-label={t("source.compare")}
-          onMouseUp={(event) => selectFocus(event.currentTarget)}
-          onKeyUp={(event) => selectFocus(event.currentTarget)}
-        >
-          <h3 className="compare-title">{t("source.compare")}</h3>
-          <div className="compare-row">
-            <span className="compare-pill">{t("source.answer")}</span>
-            <p className="compare-text" title={preview ? t("source.selectHint") : undefined}>
-              <MathText text={check.selection} />
-            </p>
-          </div>
-          {match && (
-            <>
-              <div className="compare-row document">
-                <span className="compare-pill">
-                  {t(notesTarget ? "project.notes" : "source.document")}
-                </span>
-                <p className="compare-text" title={preview ? t("source.selectHint") : undefined}>
-                  {match.text}
-                </p>
-              </div>
-              <div className="compare-bar">
-                <span className={`match-badge ${match.label}`}>
-                  {t(match.label === "strong" ? "source.strong" : "source.partial")}
-                </span>
-                {matches.length > 1 && (
-                  <span className="match-nav">
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label={t("source.previous")}
-                      disabled={check.index === 0}
-                      onClick={() => onIndexChange(check.index - 1)}
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <span>{t("source.matchOf", { index: check.index + 1, count: matches.length })}</span>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label={t("source.next")}
-                      disabled={check.index === matches.length - 1}
-                      onClick={() => onIndexChange(check.index + 1)}
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  </span>
-                )}
-              </div>
-            </>
-          )}
-        </section>
-      )}
-      {check && previewPage && (
-        <Splitter
-          label={t("source.resizeCompare")}
-          orientation="horizontal"
-          size={compareHeight ?? compare.current?.offsetHeight ?? 0}
-          min={COMPARE_MIN}
-          // Leave room for the zoom buttons and some of the page.
-          max={() => (panel.current?.clientHeight ?? 600) - 200}
-          grow={1}
-          onResize={setCompareHeight}
-        />
-      )}
-      {previewPage && (
-        <div className="source-zoom">
-          <div className="viewer-control">
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={t("viewer.zoomOut")}
-              disabled={zoomAt <= 0}
-              onClick={() => zoomTo(Math.max(0, zoomAt - 1))}
-            >
-              <Minus size={18} />
-            </button>
-            <span className="viewer-readout">{zoom}%</span>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={t("viewer.zoomIn")}
-              disabled={zoomAt >= PANEL_ZOOM_STEPS.length - 1}
-              onClick={() => zoomTo(Math.min(PANEL_ZOOM_STEPS.length - 1, zoomAt + 1))}
-            >
-              <Plus size={18} />
-            </button>
-          </div>
-        </div>
-      )}
-      <div className="source-body" ref={body}>
-        {check?.status === "loading" && (
-          <p className="source-state" role="status">
-            {t("source.checking")}
-          </p>
-        )}
-        {check?.status === "error" && (
-          <div className="chat-error" role="alert">
-            <span>
-              {t("source.failed")} {check.error}
-            </span>
-          </div>
-        )}
-        {check?.status === "ready" && !match && (
-          <div className="source-none">
-            <p className="source-state">{t("source.none")}</p>
-            {sources.length > 0 && (
+      {/* Below the header everything scrolls together: Compare, the zoom and the page. */}
+      <div className="source-scroll" ref={body}>
+        {check && (
+          <section
+            className="compare"
+            aria-label={t("source.compare")}
+            onMouseUp={(event) => selectFocus(event.currentTarget)}
+            onKeyUp={(event) => selectFocus(event.currentTarget)}
+          >
+            <h3 className="compare-title">{t("source.compare")}</h3>
+            <div className="compare-row">
+              <span className="compare-pill">{t("source.answer")}</span>
+              <p className="compare-text" title={preview ? t("source.selectHint") : undefined}>
+                <MathText text={check.selection} />
+              </p>
+            </div>
+            {match && (
               <>
-                <p className="source-state">{t("source.noneList")}</p>
-                <ul className="source-cards">
-                  {sources.map((s) => (
-                    <li key={s.n}>
-                      <button type="button" className="source-card" onClick={() => onOpenSource(s)}>
-                        <span className="source-num">{s.n}</span>
-                        <span className="source-meta">
-                          <span className="source-file" title={s.file}>
-                            {shownFile(s, multiProject, t("source.projectNotes"))}
-                          </span>
-                          {s.label && <span className="source-label">{s.label}</span>}
-                        </span>
+                <div className="compare-row document">
+                  <span className="compare-pill">
+                    {t(notesTarget ? "project.notes" : "source.document")}
+                  </span>
+                  <p className="compare-text" title={preview ? t("source.selectHint") : undefined}>
+                    {match.text}
+                  </p>
+                </div>
+                <div className="compare-bar">
+                  <span className={`match-badge ${match.label}`}>
+                    {t(match.label === "strong" ? "source.strong" : "source.partial")}
+                  </span>
+                  {matches.length > 1 && (
+                    <span className="match-nav">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={t("source.previous")}
+                        disabled={check.index === 0}
+                        onClick={() => onIndexChange(check.index - 1)}
+                      >
+                        <ChevronLeft size={16} />
                       </button>
-                    </li>
-                  ))}
-                </ul>
+                      <span>{t("source.matchOf", { index: check.index + 1, count: matches.length })}</span>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={t("source.next")}
+                        disabled={check.index === matches.length - 1}
+                        onClick={() => onIndexChange(check.index + 1)}
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </span>
+                  )}
+                </div>
               </>
             )}
+          </section>
+        )}
+        {previewPage && (
+          <div className="source-zoom">
+            <div className="viewer-control">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={t("viewer.zoomOut")}
+                disabled={zoomAt <= 0}
+                onClick={() => zoomTo(Math.max(0, zoomAt - 1))}
+              >
+                <Minus size={18} />
+              </button>
+              <span className="viewer-readout">{zoom}%</span>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={t("viewer.zoomIn")}
+                disabled={zoomAt >= PANEL_ZOOM_STEPS.length - 1}
+                onClick={() => zoomTo(Math.min(PANEL_ZOOM_STEPS.length - 1, zoomAt + 1))}
+              >
+                <Plus size={18} />
+              </button>
+            </div>
           </div>
         )}
-        {match && (previewPage || snapshot !== null) && (
-          <>
-            {match.changed && (
-              <div className="source-warning" role="status">
-                <TriangleAlert size={16} />
-                <span>{t("source.changed")}</span>
-              </div>
-            )}
-            {focusRects?.length === 0 && (
-              <p className="source-state" role="status">
-                {t("source.focusNotFound")}
-              </p>
-            )}
-            {previewPage ?? (
-              <div className="paper">
-                <Snapshot text={snapshot ?? ""} start={match.start} end={match.end} />
-              </div>
-            )}
-          </>
-        )}
-        {!check &&
-          source &&
-          (previewPage ?? (
-            <div className="paper">
-              <TextWithParagraphs text={source.text} />
+        <div className="source-body">
+          {check?.status === "loading" && (
+            <p className="source-state" role="status">
+              {t("source.checking")}
+            </p>
+          )}
+          {check?.status === "error" && (
+            <div className="chat-error" role="alert">
+              <span>
+                {t("source.failed")} {check.error}
+              </span>
             </div>
-          ))}
+          )}
+          {check?.status === "ready" && !match && (
+            <div className="source-none">
+              <p className="source-state">{t("source.none")}</p>
+              {sources.length > 0 && (
+                <>
+                  <p className="source-state">{t("source.noneList")}</p>
+                  <ul className="source-cards">
+                    {sources.map((s) => (
+                      <li key={s.n}>
+                        <button type="button" className="source-card" onClick={() => onOpenSource(s)}>
+                          <span className="source-num">{s.n}</span>
+                          <span className="source-meta">
+                            <span className="source-file" title={s.file}>
+                              {shownFile(s, multiProject, t("source.projectNotes"))}
+                            </span>
+                            {s.label && <span className="source-label">{s.label}</span>}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+          {match && (previewPage || snapshot !== null) && (
+            <>
+              {match.changed && (
+                <div className="source-warning" role="status">
+                  <TriangleAlert size={16} />
+                  <span>{t("source.changed")}</span>
+                </div>
+              )}
+              {focusRects?.length === 0 && (
+                <p className="source-state" role="status">
+                  {t("source.focusNotFound")}
+                </p>
+              )}
+              {previewPage ?? (
+                <div className="paper">
+                  <Snapshot text={snapshot ?? ""} start={match.start} end={match.end} />
+                </div>
+              )}
+            </>
+          )}
+          {!check &&
+            source &&
+            (previewPage ?? (
+              <div className="paper">
+                <TextWithParagraphs text={source.text} />
+              </div>
+            ))}
+        </div>
       </div>
     </aside>
   );
@@ -431,7 +456,7 @@ function Snapshot({ text, start, end }: { text: string; start: number; end: numb
   const from = cpToUtf16(text, start);
   const to = Math.max(from, cpToUtf16(text, end));
   useEffect(() => {
-    mark.current?.scrollIntoView?.({ block: "center" });
+    mark.current?.scrollIntoView?.(IN_CARD_VIEW);
   }, [from, to, text]);
   return (
     <>

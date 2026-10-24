@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { act, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ChatView from "./ChatView";
 import { fileName, folderOf } from "./SourcePanel";
@@ -9,6 +9,7 @@ import {
   type Mounted,
   mockFetch,
   mount,
+  press,
   settle,
   sse,
   typeInto,
@@ -133,6 +134,138 @@ describe("ChatView", () => {
     await click(view.container.querySelector('button[aria-label="Close source"]'));
     expect(view.container.querySelector(".source-panel")).toBeNull();
     expect(view.container.querySelector("button.cite")?.classList.contains("active")).toBe(false);
+  });
+
+  it("pops the source panel out over the chat, and docks it again", async () => {
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [
+            {
+              id: 2,
+              role: "assistant",
+              content: "Three years [1].",
+              provider: "local",
+              model: "qwen",
+              created_at: "t",
+              sources: [source],
+            },
+          ],
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    await click(view.container.querySelector(".source-card"));
+    const root = view.container.querySelector<HTMLElement>(".chat-view")!;
+    const panel = () => view!.container.querySelector<HTMLElement>(".source-panel")!;
+    const splitter = () => root.querySelector(':scope > [role="separator"]');
+    expect(panel().classList.contains("floating")).toBe(false);
+    expect(splitter()).not.toBeNull();
+
+    await click(view.container.querySelector('button[aria-label="Pop out the source"]'));
+    expect(panel().classList.contains("floating")).toBe(true);
+    expect(splitter()).toBeNull();
+    await click(view.container.querySelector('button[aria-label="Dock the source beside the chat"]'));
+    expect(panel().classList.contains("floating")).toBe(false);
+
+    // Dragged by its header it comes out; let go at the chat's right edge, it goes back.
+    root.getBoundingClientRect = () => new DOMRect(0, 0, 1000, 700);
+    const pointer = (target: EventTarget, type: string, x: number, y = 30) =>
+      act(async () => {
+        target.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }));
+      });
+    await pointer(panel().querySelector("header")!, "pointerdown", 300);
+    await pointer(window, "pointermove", 400);
+    expect(panel().classList.contains("floating")).toBe(true);
+    const slot = () => panel().closest<HTMLElement>(".card-slot")!;
+    expect(slot().style.getPropertyValue("--float-x")).toBe("100px");
+    expect(root.querySelector(".dock-zone")).toBeNull();
+    await pointer(window, "pointerup", 400);
+    expect(panel().classList.contains("floating")).toBe(true); // let go away from its place: it stays
+
+    // Its edges resize it; the left one moves it too, so its right side stays put.
+    const px = (name: string) => parseFloat(slot().style.getPropertyValue(name));
+    const [x, w] = [px("--float-x"), px("--float-w")];
+    await press(panel().querySelector(".float-edge.right [role='separator']"), "ArrowRight");
+    expect([px("--float-x"), px("--float-w")]).toEqual([x, w + 16]);
+    await press(panel().querySelector(".float-edge.left [role='separator']"), "ArrowLeft");
+    expect([px("--float-x"), px("--float-w")]).toEqual([x - 16, w + 32]);
+    // A corner resizes both ways; dragged from the bottom left, the top right stays put.
+    const h = px("--float-h");
+    await pointer(panel().querySelector(".float-corner.bottom.left")!, "pointerdown", 0, 0);
+    await pointer(window, "pointermove", -10, 30);
+    await pointer(window, "pointerup", -10, 30);
+    expect([px("--float-x"), px("--float-y"), px("--float-w"), px("--float-h")]).toEqual([
+      x - 26,
+      0,
+      w + 42,
+      h + 30,
+    ]);
+
+    // Pushed all the way to the right edge the chat makes room for it, and letting go docks it.
+    await pointer(panel().querySelector("header")!, "pointerdown", 300);
+    await pointer(window, "pointermove", 900); // its right side is still short of the edge
+    expect(root.querySelector(".dock-zone")).toBeNull();
+    await pointer(window, "pointermove", 980);
+    expect(root.querySelector(".dock-zone")).not.toBeNull();
+    await pointer(window, "pointerup", 980);
+    expect(panel().classList.contains("floating")).toBe(false);
+    expect(root.querySelector(".dock-zone")).toBeNull();
+  });
+
+  it("opens two sources at once, top and bottom, each docked or floating on its own", async () => {
+    const second = { ...source, n: 2, file: "notes.txt", label: "lines 1-3", location: { kind: "text" } };
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [
+            {
+              id: 2,
+              role: "assistant",
+              content: "Three years [1] [2].",
+              provider: "local",
+              model: "qwen",
+              created_at: "t",
+              sources: [source, second],
+            },
+          ],
+        }),
+      "POST /api/attribution": () => json({ matches: [] }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    const root = view.container.querySelector<HTMLElement>(".chat-view")!;
+    const titles = (where: string) =>
+      [...root.querySelectorAll(`${where} .source-panel header strong`)].map((title) => title.textContent);
+    const [lease, notes] = view.container.querySelectorAll(".source-card");
+    await click(lease);
+    await click(notes);
+    await click(lease); // already open: no third card
+    expect(titles(".source-column")).toEqual(["lease.pdf", "notes.txt"]);
+    expect(root.querySelector('.source-column > [role="separator"]')).not.toBeNull();
+
+    // The top one pops out on its own; pushed back against the top half of the edge, it docks on top.
+    await click(root.querySelector('.source-column button[aria-label="Pop out the source"]'));
+    expect(titles(".source-column")).toEqual(["notes.txt"]);
+    expect(titles(".card-slot.floating")).toEqual(["lease.pdf"]);
+    root.getBoundingClientRect = () => new DOMRect(0, 0, 1000, 700);
+    const pointer = (target: EventTarget, type: string, x: number, y: number) =>
+      act(async () => {
+        target.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }));
+      });
+    await pointer(root.querySelector(".card-slot.floating header")!, "pointerdown", 300, 30);
+    await pointer(window, "pointermove", 990, 100);
+    expect(root.querySelector(".source-column > :first-child")?.classList.contains("dock-zone")).toBe(true);
+    await pointer(window, "pointerup", 990, 100);
+    expect(titles(".source-column")).toEqual(["lease.pdf", "notes.txt"]);
+    expect(root.querySelector(".card-slot.floating")).toBeNull();
+
+    // A third thing to show takes the place of the card used least recently (notes, not lease).
+    await click(view.container.querySelectorAll("button.cite")[1]);
+    const panels = [...root.querySelectorAll(".source-panel")];
+    expect(panels).toHaveLength(2);
+    expect(panels[0].querySelector("header strong")?.textContent).toBe("lease.pdf");
+    expect(panels[1].querySelector(".compare")).not.toBeNull();
   });
 
   it("creates the chat on the first question", async () => {

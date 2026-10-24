@@ -9,6 +9,13 @@ const MAX_IN_FLIGHT = 2;
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 3;
 
+/**
+ * Bring an element into view in its nearest scroller only (Chromium's `container` option), so a
+ * passage shown in a source card does not scroll what is around the card; and no further than it
+ * takes, so Compare above the page stays in view where it can.
+ */
+export const IN_CARD_VIEW = { block: "nearest", container: "nearest" } as ScrollIntoViewOptions;
+
 let active = 0;
 const waiting: Array<() => void> = [];
 
@@ -226,9 +233,10 @@ export default function PdfPage({ fileId, file, page, zoom, highlight, fit = fal
       ? `${Math.round(fullWidth * shown.zoom) / 100}px`
       : null;
   const sized = !!shown && loadedUrl === shown.url;
-  // Scroll to the first box when the marks appear on a loaded image (a new image or a new passage).
+  // Scroll to the first box when the marks appear on a loaded image (a new image or a new passage):
+  // a fitted page (in a source card) only within its card, the viewer's to the middle.
   useEffect(() => {
-    if (sized && marks.length > 0) firstBox.current?.scrollIntoView?.({ block: "center" });
+    if (sized && marks.length > 0) firstBox.current?.scrollIntoView?.(fit ? IN_CARD_VIEW : { block: "center" });
   }, [markKey, sized]);
 
   const current = shown?.page === page && shown.scale === scale;
