@@ -72,6 +72,13 @@ export const en = {
   "project.settings": "Project settings",
   "project.delete": "Delete project",
   "project.nameLabel": "Project name",
+  "project.notesLabel": "Notes",
+  "project.notesHelp":
+    "Tamra gives these notes to the model in every chat of this project, to understand your questions and shape its answers. They are not a source: answers still cite your documents.",
+  "project.notesCount": "{used} / {max}",
+  "project.notes": "Notes",
+  "project.addNotes": "Add notes",
+  "project.err.notes": "Notes can be at most 1,000 characters, without control characters.",
   "project.folderLabel": "Documents folder",
 
   "project.new.title": "New project",
@@ -80,7 +87,7 @@ export const en = {
   "project.new.hint": "Reads PDF, Word, TXT, and Markdown. Your files are never changed.",
   "project.new.create": "Create project",
 
-  "project.settings.text": "Name the project, choose its folder, and check its search index.",
+  "project.settings.text": "Name the project, write its notes, choose its folder, and check its search index.",
   "project.settings.index": "Search index",
   "project.settings.save": "Save",
 

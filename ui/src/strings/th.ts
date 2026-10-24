@@ -72,6 +72,13 @@ export const th: Record<TranslationKey, string> = {
   "project.settings": "การตั้งค่าโปรเจกต์",
   "project.delete": "ลบโปรเจกต์",
   "project.nameLabel": "ชื่อโปรเจกต์",
+  "project.notesLabel": "โน้ต",
+  "project.notesHelp":
+    "Tamra ให้โมเดลอ่านโน้ตนี้ในทุกแชทของโปรเจกต์ เพื่อเข้าใจคำถามและปรับวิธีตอบ โน้ตไม่ใช่แหล่งข้อมูล คำตอบยังอ้างอิงจากเอกสารของคุณเสมอ",
+  "project.notesCount": "{used} / {max}",
+  "project.notes": "โน้ต",
+  "project.addNotes": "เพิ่มโน้ต",
+  "project.err.notes": "โน้ตยาวได้ไม่เกิน 1,000 ตัวอักษร และต้องไม่มีอักขระควบคุม",
   "project.folderLabel": "โฟลเดอร์เอกสาร",
 
   "project.new.title": "โปรเจกต์ใหม่",
@@ -80,7 +87,7 @@ export const th: Record<TranslationKey, string> = {
   "project.new.hint": "อ่านไฟล์ PDF, Word, TXT และ Markdown ไฟล์ของคุณจะไม่ถูกแก้ไข",
   "project.new.create": "สร้างโปรเจกต์",
 
-  "project.settings.text": "ตั้งชื่อโปรเจกต์ เลือกโฟลเดอร์ และดูสถานะดัชนีการค้นหา",
+  "project.settings.text": "ตั้งชื่อโปรเจกต์ เขียนโน้ต เลือกโฟลเดอร์ และดูสถานะดัชนีการค้นหา",
   "project.settings.index": "ดัชนีการค้นหา",
   "project.settings.save": "บันทึก",
 

@@ -16,6 +16,7 @@ const project = (index: IndexStatusType = idle): Project => ({
   id: 1,
   name: "Contracts",
   folder_path: "C:/contracts",
+  notes: "",
   index,
 });
 
@@ -28,6 +29,7 @@ describe("IndexStatus", () => {
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
+      onNotes={vi.fn()}
       />,
     );
     const text = view.container.textContent ?? "";
@@ -49,6 +51,7 @@ describe("IndexStatus", () => {
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
+      onNotes={vi.fn()}
       />,
     );
     expect(view.container.textContent).toContain("128 files indexed");
@@ -69,6 +72,7 @@ describe("IndexStatus", () => {
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
+      onNotes={vi.fn()}
       />,
     );
     const pill = buttonByText(view.container, "1 file needs attention");
@@ -95,6 +99,7 @@ describe("IndexStatus", () => {
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
+      onNotes={vi.fn()}
       />,
     );
     expect(buttonByText(view.container, "3 files need attention")).toBeDefined();
@@ -108,6 +113,7 @@ describe("IndexStatus", () => {
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
+      onNotes={vi.fn()}
       />,
     );
     expect(view.container.textContent).toContain("Indexing scan.pdf");
@@ -131,6 +137,7 @@ describe("IndexStatus", () => {
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
         onOpenModelSettings={onOpenModelSettings}
+      onNotes={vi.fn()}
       />,
     );
     await click(buttonByText(view.container, "1 file needs attention"));
@@ -151,10 +158,31 @@ describe("IndexStatus", () => {
         disabled={false}
         onChangeFolder={vi.fn()}
         onRebuild={onRebuild}
+      onNotes={vi.fn()}
       />,
     );
     await click(buttonByText(view.container, "Rebuild index"));
     expect(onRebuild).toHaveBeenCalled();
+  });
+
+  it("links to the project's notes: Add notes, or Notes once there are some", async () => {
+    const onNotes = vi.fn();
+    view = await mount(
+      <IndexStatus project={project()} disabled={false} onChangeFolder={vi.fn()} onRebuild={vi.fn()} onNotes={onNotes} />,
+    );
+    await click(buttonByText(view.container, "Add notes"));
+    expect(onNotes).toHaveBeenCalled();
+    await view.unmount();
+    view = await mount(
+      <IndexStatus
+        project={{ ...project(), notes: "I am the tenant." }}
+        disabled={true}
+        onChangeFolder={vi.fn()}
+        onRebuild={vi.fn()}
+        onNotes={onNotes}
+      />,
+    );
+    expect(buttonByText(view.container, "Notes")?.disabled).toBe(false); // notes can change mid-answer
   });
 
   it("opens the folder dialog from Change folder", async () => {
@@ -165,6 +193,7 @@ describe("IndexStatus", () => {
         disabled={false}
         onChangeFolder={onChangeFolder}
         onRebuild={vi.fn()}
+      onNotes={vi.fn()}
       />,
     );
     await click(buttonByText(view.container, "Change folder"));
@@ -187,6 +216,7 @@ describe("IndexStatus", () => {
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
         onOpenModelSettings={onOpenModelSettings}
+      onNotes={vi.fn()}
       />,
     );
     const text = view.container.textContent ?? "";
@@ -205,6 +235,7 @@ describe("IndexStatus", () => {
         onChangeFolder={vi.fn()}
         onRebuild={vi.fn()}
         onOpenModelSettings={vi.fn()}
+      onNotes={vi.fn()}
       />,
     );
     expect(view.container.textContent).toContain("Folder not found: C:/x");

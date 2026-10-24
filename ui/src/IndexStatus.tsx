@@ -149,15 +149,18 @@ type Props = {
   onChangeFolder: () => void;
   onRebuild: () => void;
   onOpenModelSettings?: () => void;
+  /** Open the project's settings on its notes. */
+  onNotes: () => void;
 };
 
-/** The sidebar card for the active project: its folder, indexing progress, and files that need attention. */
+/** The sidebar card for the active project: its folder, indexing progress, files that need attention, and a link to its notes. */
 export default function IndexStatus({
   project,
   disabled,
   onChangeFolder,
   onRebuild,
   onOpenModelSettings,
+  onNotes,
 }: Props) {
   const t = useT();
   return (
@@ -175,9 +178,15 @@ export default function IndexStatus({
         onOpenModelSettings={onOpenModelSettings}
         disabled={disabled}
       />
-      <button type="button" className="link-button" onClick={onChangeFolder} disabled={disabled}>
-        {t("index.changeFolder")}
-      </button>
+      <div className="collection-links">
+        <button type="button" className="link-button" onClick={onChangeFolder} disabled={disabled}>
+          {t("index.changeFolder")}
+        </button>
+        {/* Notes can change while an answer is written: it keeps the notes it started with. */}
+        <button type="button" className="link-button" onClick={onNotes}>
+          {project.notes ? t("project.notes") : t("project.addNotes")}
+        </button>
+      </div>
     </section>
   );
 }

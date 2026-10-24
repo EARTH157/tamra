@@ -27,7 +27,7 @@ export type IndexStatus = {
 };
 
 /** A project: a name and one folder of documents with its own search index (GET /api/projects). */
-export type Project = { id: number; name: string; folder_path: string; index: IndexStatus };
+export type Project = { id: number; name: string; folder_path: string; notes: string; index: IndexStatus };
 
 export type Chat = {
   id: number;

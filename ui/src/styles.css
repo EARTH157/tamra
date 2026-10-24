@@ -893,7 +893,10 @@ svg.lucide {
   color: var(--error-text);
 }
 
-.collection-card > .link-button {
+.collection-card > .collection-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
   margin-top: 10px;
 }
 
@@ -2963,6 +2966,40 @@ svg.lucide {
 
 .field-input:focus {
   border-color: var(--primary-ink); /* the global focus ring still shows */
+}
+
+/* Project notes: a few lines that grow on demand, with the help text and the counter under it. */
+.field-input.notes-input {
+  height: auto;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  resize: vertical;
+}
+
+.notes-foot {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.notes-foot .field-help {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.notes-count {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.notes-count.over {
+  color: var(--error-text);
 }
 
 .field-input:disabled {

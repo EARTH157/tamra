@@ -9,6 +9,17 @@ const FILE_TYPE_REFUSAL = "Only PDF, DOCX, TXT and MD files can be added.";
 /** The longest project name the core accepts. */
 export const NAME_MAX = 80;
 
+/** What project settings can change (PATCH /api/projects/{id}); fields left out stay as they are. */
+export type ProjectChanges = { name?: string; notes?: string };
+
+/** The longest project notes the core accepts, in characters (src/tamra/core.py MAX_NOTES). */
+export const NOTES_MAX = 1000;
+
+/** Notes' length as the core counts it: code points of the stripped text, so an emoji is one. */
+export function noteLength(notes: string): number {
+  return [...notes.trim()].length;
+}
+
 /** How often the projects are reloaded while a project is indexing, or while the core is unreachable. */
 export const FAST_POLL_MS = 2000;
 /** How often they are reloaded otherwise, to notice files the folder watchers found. */
@@ -76,8 +87,8 @@ export function useProjects(onReconnect?: () => void) {
     return project;
   }
 
-  async function rename(id: number, name: string): Promise<void> {
-    await api<Project>("PATCH", `/api/projects/${id}`, { name });
+  async function change(id: number, changes: ProjectChanges): Promise<void> {
+    await api<Project>("PATCH", `/api/projects/${id}`, changes);
     await refresh();
   }
 
@@ -114,5 +125,5 @@ export function useProjects(onReconnect?: () => void) {
     return refused;
   }
 
-  return { projects, offline, refresh, create, rename, changeFolder, rebuild, remove, addFiles };
+  return { projects, offline, refresh, create, change, changeFolder, rebuild, remove, addFiles };
 }
