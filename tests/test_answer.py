@@ -16,6 +16,7 @@ from tamra.answer import (
     detect_language,
     estimate_tokens,
     location_label,
+    notes_text,
     source_payloads,
 )
 from tamra.embedder import EmbedderUnavailable
@@ -1018,3 +1019,74 @@ def test_passages_are_empty_below_the_not_found_gate(two):
     vector = FakeEmbedder().embed([query])[0]
     ids = [projects["A"].id, projects["B"].id]
     assert make(FakeLLM()).passages(ids, vector, query, 4) == []
+
+
+NOTES = "I am the tenant of unit 1204.\nAnswer in Thai, as a numbered list."
+
+
+def test_empty_notes_leave_both_prompts_as_they_were():
+    plain = build_messages("q", [], [], "en")
+    assert build_messages("q", [], [], "en", notes="") == plain
+    assert "<notes>" not in plain[0]["content"]
+    assert chat_messages("q", [], "en", notes="") == chat_messages("q", [], "en")
+    assert notes_text("") == ""
+
+
+def test_notes_sit_between_the_rules_and_the_sources_and_are_not_a_source():
+    location = {"kind": "text", "line_start": 1, "line_end": 1}
+    text = "The lease term is three years."
+    source = SourceRecord(1, None, None, "lease.md", text, location, None)
+    system = build_messages("q", [], [source], "en", notes=NOTES)[0]["content"]
+    assert "They are not a source: never state a" in system
+    block = f"The user's notes for this project:\n<notes>\n{NOTES}\n</notes>"
+    assert block in system
+    assert system.index("- Be concise.") < system.index(block) < system.index("Sources:")
+    assert "[1] lease.md" in system  # the sources keep their numbers; the notes have none
+
+
+def test_chat_mode_has_the_notes_after_its_rules():
+    system = chat_messages("q", [], "th", notes=NOTES)[0]["content"]
+    assert system.endswith(f"<notes>\n{NOTES}\n</notes>")
+    assert "cannot see the user's\ndocuments" in system
+
+
+def test_notes_braces_are_text_not_template_fields():
+    system = build_messages("q", [], [], "en", notes="Use {curly} braces")[0]["content"]
+    assert "<notes>\nUse {curly} braces\n</notes>" in system
+
+
+def test_the_context_event_counts_the_notes_apart(env):
+    store, make, chat = env
+    store.set_collection_notes(chat.collection_id, NOTES)
+    llm = FakeLLM(("Three years [1].",))
+    events = list(make(llm).ask(chat.id, "How long is the lease term?"))
+    context = next(e for e in events if e["type"] == "context")
+    parts = context["parts"]
+    assert parts["notes"] == estimate_tokens(notes_text(NOTES))
+    assert sum(parts.values()) == context["prompt_tokens"]
+    assert f"<notes>\n{NOTES}\n</notes>" in llm.calls[-1][0]["content"]
+
+
+def test_a_chat_uses_only_its_home_projects_notes(env):
+    store, make, chat = env
+    other = store.create_collection("Other", "C:/other", "m")
+    store.set_collection_notes(other.id, "Other project's notes")
+    store.set_chat_scope(chat.id, [chat.collection_id, other.id])
+    llm = FakeLLM(("Three years [1].",))
+    list(make(llm).ask(chat.id, "How long is the lease term?"))
+    assert "<notes>" not in llm.calls[-1][0]["content"]  # its home has none
+    store.set_collection_notes(chat.collection_id, NOTES)
+    list(make(llm).ask(chat.id, "And the rent?", mode="chat"))
+    system = llm.calls[-1][0]["content"]
+    assert NOTES in system and "Other project's notes" not in system
+
+
+def test_a_general_chat_has_no_notes(env):
+    store, make, chat = env
+    store.set_collection_notes(chat.collection_id, NOTES)
+    general = store.create_chat("", None)
+    llm = FakeLLM(("Hi!",))
+    events = list(make(llm).ask(general.id, "hello", mode="chat"))
+    assert "<notes>" not in llm.calls[-1][0]["content"]
+    context = next(e for e in events if e["type"] == "context")
+    assert context["parts"]["notes"] == 0
