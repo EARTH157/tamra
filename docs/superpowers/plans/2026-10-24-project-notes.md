@@ -993,7 +993,7 @@ def lease_source(n: int = 1) -> SourceRecord:
 
 
 def test_without_notes_both_prompts_are_as_they_were():
-    plain = build_messages("q", [lease_source()], [], "en")
+    plain = build_messages("q", [], [lease_source()], "en")
     assert NOTES_SOURCE_NAME not in plain[0]["content"] and "<notes>" not in plain[0]["content"]
     assert chat_messages("q", [], "en", notes="") == chat_messages("q", [], "en")
     assert notes_text("") == ""
@@ -1043,7 +1043,8 @@ def test_search_only_and_not_found_never_use_the_notes(env):
     events = list(make(llm).ask(chat.id, "How long is the lease term?", mode="search"))
     shown = next(e for e in events if e["type"] == "sources")["sources"]
     assert shown and all(s["file"] != NOTES_SOURCE_NAME for s in shown)
-    events = list(make(llm).ask(chat.id, "ใครเป็นผู้จัดการฝ่ายขาย"))  # nothing in the documents
+    fresh = store.create_chat(collection_id=chat.collection_id)  # no earlier question to reuse
+    events = list(make(llm).ask(fresh.id, "ใครเป็นผู้จัดการฝ่ายขาย"))  # nothing in the documents
     assert next(e for e in events if e["type"] == "sources")["sources"] == []
     assert llm.calls == []  # not found: the model is not asked, whatever the notes say
 ```

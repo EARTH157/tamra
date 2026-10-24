@@ -6,7 +6,7 @@ import pytest
 from docgen import make_pdf
 from fakes import FakeEmbedder, FakeLLM, FakeLocalLLM, FakeOcr, fake_spans
 
-from tamra.answer import API_CONTEXT_TOKENS, AnswerSettings
+from tamra.answer import API_CONTEXT_TOKENS, AnswerSettings, notes_source
 from tamra.core import (
     AnswerBusy,
     BadName,
@@ -263,6 +263,10 @@ def test_change_project_renames_and_sets_notes_all_or_nothing(core, tmp_path):
     with pytest.raises(ValueError, match="name taken"):
         core.change_project(first.id, name="Other", notes="Not saved")
     assert core.store.get_collection(first.id).notes == ""
+
+
+def test_a_notes_source_never_counts_as_changed(core):
+    assert core.source_changed(notes_source("I am the tenant.", 3)) is False
 
 
 @pytest.mark.parametrize(

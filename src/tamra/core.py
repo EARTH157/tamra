@@ -16,7 +16,14 @@ from pathlib import Path
 import numpy as np
 
 from tamra import secrets
-from tamra.answer import API_CONTEXT_TOKENS, AnswerService, AnswerSettings, Route, source_payloads
+from tamra.answer import (
+    API_CONTEXT_TOKENS,
+    AnswerService,
+    AnswerSettings,
+    Route,
+    is_notes,
+    source_payloads,
+)
 from tamra.attribution import Attributor, Match
 from tamra.drives import is_removable
 from tamra.embedder import MODEL_ID, Embedder, EmbedderUnavailable
@@ -658,6 +665,8 @@ class Core:
     def source_changed(self, source: SourceRecord) -> bool:
         """Whether the file no longer matches what the answer was given: it is gone or refused,
         it was re-indexed with other content, or it was edited since it was last indexed."""
+        if is_notes(source):
+            return False  # the saved notes are what the answer saw; there is no file to change
         if source.file_id is None:
             return True
         try:
