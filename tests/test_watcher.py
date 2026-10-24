@@ -1,5 +1,6 @@
 import threading
 import time
+from itertools import pairwise
 
 import pytest
 
@@ -81,20 +82,25 @@ def test_stop_inside_the_debounce_window_cancels_the_call(tmp_path):
 
 
 def test_changes_spaced_inside_the_debounce_fire_once_after_the_last(tmp_path):
+    # The debounce is long next to the 0.15 s spacing. With 0.3 s, one write a busy CI runner
+    # delayed to 0.4 s (antivirus scans each new file) rightly fired twice, and the test failed.
+    debounce = 1.0
     calls = []
-    watcher = FolderWatcher(lambda cid: calls.append(time.monotonic()), debounce=0.3)
+    watcher = FolderWatcher(lambda cid: calls.append(time.monotonic()), debounce=debounce)
     watcher.watch(1, tmp_path)
     try:
+        written = []
         for i in range(3):
-            last_write = time.monotonic()  # taken before the write: its events may arrive early
+            written.append(time.monotonic())  # before the write: its events may arrive early
             (tmp_path / f"f{i}.md").write_text("x", encoding="utf-8")
             time.sleep(0.15)
+        gaps = [later - earlier for earlier, later in pairwise(written)]
+        assert max(gaps) < debounce / 2, f"writes too slow to test the debounce: {gaps}"
         assert wait_for(lambda: calls)
-        time.sleep(0.8)
+        time.sleep(debounce)  # a second call would come within one debounce
         assert len(calls) == 1
-        # Debounce is 0.3 s; allow timer-clock slack. Firing off the first write would be
-        # about 0.3 s earlier than this bound.
-        assert calls[0] >= last_write + 0.25
+        # Firing off the first write would be about 0.3 s before this bound; allow timer slack.
+        assert calls[0] >= written[-1] + debounce - 0.05
     finally:
         watcher.stop()
 
