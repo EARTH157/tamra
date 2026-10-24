@@ -221,6 +221,7 @@ export const th: Record<TranslationKey, string> = {
   "settings.contextTooBig": "มากกว่าที่หน่วยความจำของเครื่องนี้รองรับได้ดี ({size}) คำตอบอาจช้าลง หรือโมเดลอาจไปรันบน CPU",
   "context.details": "รายละเอียด",
   "context.instructions": "คำสั่งระบบ",
+  "context.notes": "โน้ตของโปรเจกต์",
   "context.sources": "ข้อความจากเอกสารของคุณ",
   "context.sourceCount": "{count} ข้อความ",
   "context.history": "บทสนทนาก่อนหน้า",

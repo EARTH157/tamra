@@ -222,6 +222,7 @@ export const en = {
   "settings.contextTooBig": "More than this computer's memory fits well ({size}): answers may be slower, or the model may run on the CPU.",
   "context.details": "Details",
   "context.instructions": "Instructions",
+  "context.notes": "Project notes",
   "context.sources": "Passages from your documents",
   "context.sourceCount": "{count} passages",
   "context.history": "Earlier messages",

@@ -130,7 +130,8 @@ export type ContextEvent = {
   prompt_tokens: number;
   context_tokens: number;
   reply_tokens: number;
-  parts: { instructions: number; sources: number; history: number; question: number };
+  /** `notes` is missing from a context saved before project notes; read it as 0. */
+  parts: { instructions: number; notes?: number; sources: number; history: number; question: number };
   source_count: number;
   history_kept: number;
   history_total: number;

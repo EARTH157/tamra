@@ -378,6 +378,44 @@ describe("ChatView", () => {
     expect(summary?.textContent).toContain("2 older left out");
   });
 
+  it("lists the project notes in the context details, and not when a context has none", async () => {
+    const saved = (parts: Record<string, number>) => ({
+      prompt_tokens: 0,
+      context_tokens: 8192,
+      reply_tokens: 1024,
+      parts,
+      source_count: 0,
+      history_kept: 0,
+      history_total: 0,
+      measured: null,
+    });
+    const rows = () => [...view!.container.querySelectorAll(".context-parts li")].map((li) => li.textContent);
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [],
+          context: saved({ instructions: 100, notes: 50, sources: 0, history: 0, question: 20 }),
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    expect(view.container.querySelector(".context-summary")?.textContent).toContain("170");
+    await click(buttonByText(view.container, "Details"));
+    expect(rows().find((row) => row?.startsWith("Project notes"))).toBe("Project notes≈50");
+    await view.unmount();
+    mockFetch({
+      "GET /api/chats/5": () =>
+        json({
+          ...chat,
+          messages: [],
+          context: saved({ instructions: 100, sources: 0, history: 0, question: 20 }),
+        }),
+    });
+    view = await mount(<ChatView {...base} chatId={5} />);
+    await click(buttonByText(view.container, "Details"));
+    expect(rows().some((row) => row?.startsWith("Project notes"))).toBe(false);
+  });
+
   it("shows the context meter and the local model's token counts", async () => {
     let saved = false;
     const answer = {

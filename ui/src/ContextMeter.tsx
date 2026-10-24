@@ -9,7 +9,7 @@ export type ContextUse = {
   /** Kept for the reply: its max tokens, plus the thinking headroom where the provider adds it. */
   reply: number;
   /** The prompt's parts, estimated by the core. */
-  parts: { instructions: number; sources: number; history: number; question: number };
+  parts: ContextEvent["parts"];
   sourceCount: number;
   /** Earlier exchanges in the prompt, of the chat's answered ones. */
   kept: number;
@@ -47,11 +47,15 @@ export function compactTokens(n: number): string {
   return `${k >= 10 ? Math.round(k) : Math.round(k * 10) / 10}k`;
 }
 
+/** The prompt's estimated size: the sum of its parts. */
+function promptEstimate(parts: ContextUse["parts"]): number {
+  return parts.instructions + (parts.notes ?? 0) + parts.sources + parts.history + parts.question;
+}
+
 /** Tokens in use: the model's own count once it has one, else the estimate of the prompt. */
 export function usedTokens(use: ContextUse): number {
   if (use.measured) return use.measured.prompt + use.measured.generated;
-  const { instructions, sources, history, question } = use.parts;
-  return instructions + sources + history + question;
+  return promptEstimate(use.parts);
 }
 
 type Segment = { key: string; label: string; tokens: number; note?: string; estimated: boolean };
@@ -59,10 +63,11 @@ type Segment = { key: string; label: string; tokens: number; note?: string; esti
 /** The window, part by part: the prompt's parts, what the model wrote, the reply room, and free. */
 function segments(use: ContextUse, t: ReturnType<typeof useT>): Segment[] {
   // Once the model has counted its prompt, the estimated parts are scaled to that count.
-  const estimate = use.parts.instructions + use.parts.sources + use.parts.history + use.parts.question;
+  const estimate = promptEstimate(use.parts);
   const scale = use.measured && estimate > 0 ? use.measured.prompt / estimate : 1;
-  const [instructions, sources, history, question] = [
+  const [instructions, notes, sources, history, question] = [
     use.parts.instructions,
+    use.parts.notes ?? 0,
     use.parts.sources,
     use.parts.history,
     use.parts.question,
@@ -70,6 +75,7 @@ function segments(use: ContextUse, t: ReturnType<typeof useT>): Segment[] {
   const generated = use.measured?.generated ?? 0;
   const list: Segment[] = [
     { key: "instructions", label: t("context.instructions"), tokens: instructions, estimated: true },
+    { key: "notes", label: t("context.notes"), tokens: notes, estimated: true },
     {
       key: "sources",
       label: t("context.sources"),
@@ -89,7 +95,7 @@ function segments(use: ContextUse, t: ReturnType<typeof useT>): Segment[] {
   ];
   // The reply room shrinks as the model writes into it; what it has written is shown apart.
   const reply = Math.max(0, use.reply - generated);
-  const taken = instructions + sources + history + question + generated + reply;
+  const taken = instructions + notes + sources + history + question + generated + reply;
   list.push({ key: "reply", label: t("context.reply"), tokens: reply, estimated: false });
   list.push({
     key: "free",
