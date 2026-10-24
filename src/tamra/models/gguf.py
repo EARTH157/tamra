@@ -28,35 +28,51 @@ class GGUFError(Exception):
     """Not a GGUF file, or one whose metadata cannot be read."""
 
 
-def _read(f: BinaryIO, n: int) -> bytes:
-    # A damaged length must not make read() allocate more than the file holds.
-    if n > os.fstat(f.fileno()).st_size - f.tell():
-        raise GGUFError("the file ends inside its metadata")
-    data = f.read(n)
-    if len(data) != n:
-        raise GGUFError("the file ends inside its metadata")
-    return data
+class _Reader:
+    """A GGUF file read from its start. The size is asked for once: a vocabulary holds hundreds of
+    thousands of strings, and asking for every one took seconds."""
+
+    def __init__(self, f: BinaryIO):
+        self._f = f
+        self._left = os.fstat(f.fileno()).st_size
+
+    def _take(self, n: int) -> None:
+        # A damaged length must not make read() allocate, or seek past, more than the file holds.
+        if n > self._left:
+            raise GGUFError("the file ends inside its metadata")
+        self._left -= n
+
+    def read(self, n: int) -> bytes:
+        self._take(n)
+        data = self._f.read(n)
+        if len(data) != n:
+            raise GGUFError("the file ends inside its metadata")
+        return data
+
+    def skip(self, n: int) -> None:
+        self._take(n)
+        self._f.seek(n, 1)
 
 
-def _u32(f: BinaryIO) -> int:
-    return struct.unpack("<I", _read(f, 4))[0]
+def _u32(f: _Reader) -> int:
+    return struct.unpack("<I", f.read(4))[0]
 
 
-def _u64(f: BinaryIO) -> int:
-    return struct.unpack("<Q", _read(f, 8))[0]
+def _u64(f: _Reader) -> int:
+    return struct.unpack("<Q", f.read(8))[0]
 
 
-def _string(f: BinaryIO) -> str:
-    return _read(f, _u64(f)).decode("utf-8", errors="replace")
+def _string(f: _Reader) -> str:
+    return f.read(_u64(f)).decode("utf-8", errors="replace")
 
 
-def _value(f: BinaryIO, kind: int, wanted: bool) -> object:
+def _value(f: _Reader, kind: int, wanted: bool) -> object:
     """One value: ints (and arrays of ints) when wanted, strings always; the rest is skipped."""
     if kind in _INTS:
-        raw = _read(f, _FIXED[kind])
+        raw = f.read(_FIXED[kind])
         return struct.unpack(_INTS[kind], raw)[0] if wanted else None
     if kind in _FIXED:
-        _read(f, _FIXED[kind])
+        f.skip(_FIXED[kind])
         return None
     if kind == _STRING:
         return _string(f)
@@ -65,8 +81,11 @@ def _value(f: BinaryIO, kind: int, wanted: bool) -> object:
         if wanted and item in _INTS:
             return [_value(f, item, True) for _ in range(count)]
         if item in _FIXED:
-            f.seek(_FIXED[item] * count, 1)
-        else:  # strings or nested arrays (a tokenizer's vocabulary): skipped one by one
+            f.skip(_FIXED[item] * count)
+        elif item == _STRING:  # a tokenizer's vocabulary: lengths only, nothing decoded
+            for _ in range(count):
+                f.skip(_u64(f))
+        else:  # nested arrays
             for _ in range(count):
                 _value(f, item, False)
         return None
@@ -77,8 +96,9 @@ def read_metadata(path: Path, keys: set[str] | None = None) -> dict[str, object]
     """The GGUF metadata: every string value, and the integer values whose key is in `keys`
     (an architecture's keys may be named with `{arch}`, filled in from general.architecture)."""
     found: dict[str, object] = {}
-    with path.open("rb") as f:
-        if _read(f, 4) != b"GGUF":
+    with path.open("rb") as file:
+        f = _Reader(file)
+        if f.read(4) != b"GGUF":
             raise GGUFError("not a GGUF file")
         version = _u32(f)
         if version < 2:
