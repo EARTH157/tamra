@@ -297,6 +297,14 @@ stored in `ocr_pages`.
   button, which opens the document viewer (§8). If `file_hash_at_answer` differs from the
   current file, the panel shows the snapshot with a "document changed since this answer"
   warning.
+- **Layout:** a source opens as a card with a tail pointing at the chip, card, or span that
+  opened it. Up to two cards are open at once. Opening a third replaces the one used least
+  recently, and opening one already shown goes to that card. Docked cards sit in a column at the
+  chat's right, one or two (split top and bottom), and the column's width can be dragged. A card
+  is dragged out by its header (or popped out with its button) to float anywhere over the chat,
+  resizable from its edges and corners. It docks again when pushed against the chat's right
+  edge, into the top or bottom half, and the chat makes room before it is let go. Inside a card,
+  Compare and the page scroll together.
 
 ## 8. Document viewer
 

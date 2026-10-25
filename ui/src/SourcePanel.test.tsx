@@ -2,7 +2,7 @@ import { act, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fitScale } from "./PdfPage";
 import SourcePanel, { answerFocus, type Check } from "./SourcePanel";
-import { buttonByText, click, json, type Mounted, mockFetch, mount, press, settle } from "./test-utils";
+import { buttonByText, click, json, type Mounted, mockFetch, mount, settle } from "./test-utils";
 import type { Match, Source } from "./types";
 
 let view: Mounted | undefined;
@@ -353,11 +353,13 @@ describe("SourcePanel", () => {
     expect(readout()).toBe("100%");
   });
 
-  it("scrolls when the page is dragged with the mouse, and sizes Compare from its bar", async () => {
+  it("scrolls Compare and the page together, also when the page is dragged with the mouse", async () => {
     mockFetch({ [locateUrl(1, match)]: () => json(locatePdf), ...pageRoutes });
     view = await mount(<SourcePanel {...base} check={check()} />);
     const panel = view.container.querySelector(".source-panel")!;
-    const body = panel.querySelector<HTMLElement>(".source-body")!;
+    const body = panel.querySelector<HTMLElement>(".source-scroll")!;
+    expect(body.querySelector(".compare")).not.toBeNull(); // one scroller, nothing between them
+    expect(panel.querySelector('[role="separator"]')).toBeNull();
     body.scrollLeft = 50;
     body.scrollTop = 80;
     const pointer = (target: EventTarget, type: string, x: number, y: number) =>
@@ -371,14 +373,6 @@ describe("SourcePanel", () => {
     expect([body.scrollLeft, body.scrollTop]).toEqual([80, 140]);
     await pointer(window, "pointerup", 70, 40);
     expect(body.classList.contains("panning")).toBe(false);
-
-    const compare = panel.querySelector<HTMLElement>(".compare")!;
-    const bar = panel.querySelector<HTMLElement>('[role="separator"]')!;
-    expect(bar.getAttribute("aria-label")).toBe("Resize Compare and the page");
-    expect(compare.classList.contains("sized")).toBe(false);
-    await press(bar, "Home");
-    expect(compare.classList.contains("sized")).toBe(true);
-    expect(compare.style.height).toBe("100px");
   });
 
   it("marks just the selected answer words when the passage has them word for word", async () => {

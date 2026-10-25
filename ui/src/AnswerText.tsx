@@ -11,8 +11,8 @@ type Props = {
   sourceCount: number;
   /** Called with the source number and the offset in `text` where the clicked marker starts. */
   onCite: (n: number, index: number) => void;
-  /** The citation whose source is open; its chips are drawn filled. */
-  active?: number | null;
+  /** The citations whose sources are open; their chips are drawn filled. */
+  active?: number[];
   /** The span being checked, drawn with the highlight colour. */
   highlight?: Highlight | null;
   /** The element that holds the rendered text, for mapping a selection back to `text`. */
@@ -153,7 +153,7 @@ export default function AnswerText({
   text,
   sourceCount,
   onCite,
-  active = null,
+  active = [],
   highlight = null,
   ref,
 }: Props) {
@@ -181,9 +181,9 @@ export default function AnswerText({
           <button
             key={i}
             type="button"
-            className={segment.n === active ? "cite active" : "cite"}
+            className={active.includes(segment.n) ? "cite active" : "cite"}
             aria-label={t("chat.cite", { n: segment.n })}
-            aria-pressed={segment.n === active}
+            aria-pressed={active.includes(segment.n)}
             data-start={segment.start}
             data-end={segment.end}
             data-cite={segment.n}

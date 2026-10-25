@@ -1032,6 +1032,8 @@ svg.lucide {
 /* Chat ------------------------------------------------------------------------------------ */
 
 .chat-view {
+  position: relative; /* a floating source panel is placed over it */
+  isolation: isolate; /* the source cards and tails stack inside it */
   display: flex;
   flex: 1;
   min-height: 0;
@@ -1871,14 +1873,200 @@ svg.lucide {
 
 /* Source panel */
 
-.source-panel {
+/* The column at the chat's right with one or two source cards, top and bottom (SourceDock). */
+.source-column {
   display: flex;
   flex: none;
   flex-direction: column;
+  gap: 6px; /* either side of the splitter between two cards */
   width: var(--panel-width);
-  max-width: calc(100% - 400px); /* the chat keeps at least this much (CHAT_MIN in ChatView) */
-  border-left: 1px solid var(--border);
+  max-width: calc(100% - 428px); /* the chat's 400px plus this margin (CHAT_MIN in SourceDock) */
+  min-height: 0;
+  margin: 16px 16px 16px 12px;
+}
+
+.card-slot {
+  position: relative; /* for its tail's neck */
+  z-index: 2; /* over the tails */
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* Two cards split the column evenly until the splitter between them is dragged. */
+.source-column.sized > .card-slot:first-child {
+  flex: 0 0 var(--split);
+}
+
+/* Out of the column: over the chat wherever it was put, its header always in reach, and it ends
+   inside the chat when the window gets smaller. */
+.card-slot.floating {
+  position: absolute;
+  top: min(var(--float-y), 100% - 65px);
+  left: min(var(--float-x), 100% - 160px);
+  width: var(--float-w);
+  max-width: calc(100% - min(var(--float-x), 100% - 160px));
+  height: var(--float-h);
+  max-height: calc(100% - min(var(--float-y), 100% - 65px));
+}
+
+/* A source card, with a tail pointing at what opened it. */
+.source-panel {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  overflow: clip; /* not hidden: that can still be scrolled (by focus), hiding the header */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-dialog);
   background: var(--sidebar);
+  box-shadow: var(--shadow-dialog);
+  transform-origin: left 32px;
+  animation: source-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+/* A tail: a wedge from a card's edge to what opened it, over the chat and under the cards. */
+.source-tail {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* A tail's neck: its part next to the card drawn again with the card, over the card's border and
+   shadow so the two read as one shape, and under a card in front. */
+.tail-neck {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.source-tail .fill,
+.tail-neck .fill {
+  fill: var(--surface); /* the header's, where it meets the card */
+}
+
+.source-tail .outline,
+.tail-neck .outline {
+  fill: none;
+  stroke: var(--border);
+  stroke-linejoin: round;
+}
+
+.source-tail[data-hidden],
+.tail-neck[data-hidden] {
+  display: none;
+}
+
+.source-panel header.grab {
+  cursor: grab;
+  touch-action: none;
+}
+
+/* Bars along a floating card's edges to resize it by, clear of its round corners. */
+.float-edge {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+}
+
+.float-edge.left,
+.float-edge.right {
+  top: 16px;
+  bottom: 16px;
+  width: 8px;
+}
+
+.float-edge.left {
+  left: 0;
+}
+
+.float-edge.right {
+  right: 0;
+}
+
+.float-edge.bottom {
+  right: 16px;
+  bottom: 0;
+  left: 16px;
+  flex-direction: column;
+  height: 8px;
+}
+
+.float-edge .splitter {
+  flex: 1;
+  margin: 0;
+}
+
+/* Its corners resize it both ways. */
+.float-corner {
+  position: absolute;
+  z-index: 4;
+  width: 16px;
+  height: 16px;
+}
+
+.float-corner.top {
+  top: 0;
+}
+
+.float-corner.bottom {
+  bottom: 0;
+}
+
+.float-corner.left {
+  left: 0;
+}
+
+.float-corner.right {
+  right: 0;
+}
+
+.float-corner.top.left,
+.float-corner.bottom.right {
+  cursor: nwse-resize;
+}
+
+.float-corner.top.right,
+.float-corner.bottom.left {
+  cursor: nesw-resize;
+}
+
+/* A card's slot in the column while it is pushed against the edge: letting go docks it there. */
+.dock-zone {
+  flex: 1 1 0;
+  min-height: 0;
+  border: 2px dashed var(--primary);
+  border-radius: var(--radius-dialog);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  pointer-events: none;
+  animation: dock-zone-in 140ms ease-out;
+}
+
+@keyframes dock-zone-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes source-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-12px) scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-panel {
+    animation: none;
+  }
 }
 
 .source-panel header {
@@ -1924,7 +2112,8 @@ svg.lucide {
 
 /* Compare: the selected answer text beside the passage it matches */
 .compare {
-  flex: none;
+  position: sticky; /* stays put while a zoomed page is panned sideways */
+  left: 0;
   padding: 16px 20px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -1974,23 +2163,6 @@ svg.lucide {
   white-space: pre-wrap;
 }
 
-/* Dragged to a height: the Document text grows to fill it, and a short Compare scrolls. */
-.compare.sized {
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-
-.compare.sized .compare-row.document {
-  flex: 1;
-  min-height: 3em;
-}
-
-.compare.sized .compare-row.document .compare-text {
-  align-self: stretch;
-  max-height: none;
-}
-
 .compare-bar {
   display: flex;
   align-items: center;
@@ -2022,19 +2194,27 @@ svg.lucide {
   font-size: 12px;
 }
 
-.source-body {
+/* Everything below a card's header, scrolled as one: Compare, the zoom and the page. */
+.source-scroll {
   flex: 1;
   min-height: 0;
-  padding: 20px;
-  overflow: auto; /* a zoomed page scrolls here, not the window */
+  overflow: auto; /* a zoomed page scrolls here too, not the window */
 }
 
-/* Outside .source-body, so the zoom stays in view while a zoomed page scrolls. */
+.source-body {
+  padding: 20px;
+}
+
+/* The zoom stays in view while the page scrolls under it. */
 .source-zoom {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  left: 0;
   display: flex;
-  flex: none;
   justify-content: flex-end;
-  padding: 12px 20px 0;
+  padding: 12px 20px;
+  background: var(--sidebar);
 }
 
 .source-state {

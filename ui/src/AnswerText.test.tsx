@@ -35,7 +35,7 @@ describe("AnswerText", () => {
 
   it("marks the chips of the open source", async () => {
     view = await mount(
-      <AnswerText text="A [1] B [2] C [1]" sourceCount={2} onCite={() => {}} active={1} />,
+      <AnswerText text="A [1] B [2] C [1]" sourceCount={2} onCite={() => {}} active={[1]} />,
     );
     const chips = [...view.container.querySelectorAll("button.cite")];
     expect(chips.map((chip) => chip.classList.contains("active"))).toEqual([true, false, true]);
