@@ -17,7 +17,7 @@ from tamra.core import Core
 from tamra.discovery import remove_discovery, write_discovery
 from tamra.logs import setup_logging
 from tamra.net import free_port
-from tamra.paths import data_dir, models_dir, resource_dir
+from tamra.paths import data_dir, llama_server, models_dir, resource_dir
 from tamra.server import create_app
 
 log = logging.getLogger(__name__)
@@ -31,12 +31,7 @@ _instance_mutex = None  # held for the process lifetime: Windows frees it when t
 
 def build_core() -> Core:
     """Core with data in data_dir(), models in models_dir(), and the bundled llama-server."""
-    return Core(
-        data_dir(),
-        models_dir(),
-        resource_dir() / "vendor" / "llama" / "llama-server.exe",
-        warm_attribution=True,
-    )
+    return Core(data_dir(), models_dir(), llama_server(), warm_attribution=True)
 
 
 class FolderPicker:

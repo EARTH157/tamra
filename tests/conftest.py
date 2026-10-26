@@ -41,7 +41,22 @@ def qwen_gguf() -> Path:
 
 @pytest.fixture(scope="session")
 def llama_exe() -> Path:
-    return _require(ROOT / "vendor" / "llama" / "llama-server.exe")
+    from tamra.paths import llama_server
+
+    return _require(llama_server())
+
+
+@pytest.fixture(autouse=True)
+def _no_real_key_store():
+    """Tests never read or write this machine's credential store: it may hold the user's real
+    keys, and a locked GNOME Keyring would wait for a password prompt."""
+    import keyring
+    from fakes import MemoryKeyring
+
+    previous = keyring.get_keyring()
+    keyring.set_keyring(MemoryKeyring())
+    yield
+    keyring.set_keyring(previous)
 
 
 @pytest.fixture(autouse=True)

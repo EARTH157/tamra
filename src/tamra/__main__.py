@@ -22,14 +22,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.command == "selfcheck":
-        from tamra.paths import resource_dir
+        from tamra.paths import llama_server
         from tamra.selfcheck import run_selfcheck
 
-        report = run_selfcheck(
-            args.embed_model_dir,
-            args.llm_model,
-            resource_dir() / "vendor" / "llama" / "llama-server.exe",
-        )
+        report = run_selfcheck(args.embed_model_dir, args.llm_model, llama_server())
         # Write report file first (with full Unicode, before stdout encoding can fail)
         if args.report:
             args.report.parent.mkdir(parents=True, exist_ok=True)
