@@ -1,9 +1,12 @@
 import dataclasses
+from pathlib import Path
 
 import pytest
 
 from tamra.settings import Settings, load_settings, save_settings
 from tamra.store import Store
+
+ABSOLUTE_MODEL = str(Path("/Models/a.gguf").absolute())  # C:\Models\a.gguf on Windows
 
 
 @pytest.fixture
@@ -49,7 +52,7 @@ def test_every_field_round_trips(store):
         "text_size": "large",
         "spacing": "compact",
         "ask_before_delete": False,
-        "linked_models": ({"path": "D:\\Models\\a.gguf", "size": 5, "sha256": "a" * 64},),
+        "linked_models": ({"path": ABSOLUTE_MODEL, "size": 5, "sha256": "a" * 64},),
         "mcp_enabled": True,
     }
     assert set(changes) == {f.name for f in dataclasses.fields(Settings)}
@@ -167,7 +170,7 @@ def test_invalid_api_base_urls_are_rejected(store, url):
     assert store.all_settings() == {}
 
 
-LINK = {"path": "D:\\Models\\a.gguf", "size": 5, "sha256": "a" * 64}
+LINK = {"path": ABSOLUTE_MODEL, "size": 5, "sha256": "a" * 64}
 
 
 def test_linked_models_default_to_empty_and_load_as_a_tuple(store):

@@ -1,8 +1,21 @@
 """The MCP discovery file (docs/superpowers/specs/2026-10-22-tamra-mcp-design.md §4)."""
 
+import stat
+import sys
+
 import pytest
 
 from tamra.discovery import FILE_NAME, read_discovery, remove_discovery, write_discovery
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_the_file_is_readable_only_by_this_user_even_after_a_leftover(tmp_path):
+    leftover = tmp_path / (FILE_NAME + ".tmp")
+    leftover.write_text("old")
+    leftover.chmod(0o644)
+    write_discovery(tmp_path, 8765, "secret")
+    assert stat.S_IMODE((tmp_path / FILE_NAME).stat().st_mode) == 0o600
+    assert read_discovery(tmp_path) == (8765, "secret")
 
 
 def test_written_values_read_back_and_no_temporary_file_is_left(tmp_path):

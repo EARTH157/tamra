@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   api_key_hint: null,
   data_dir: "", // unknown until the core answers
   mcp_command: [], // unknown until the core answers
+  platform: "windows", // until the core answers
 };
 
 const RETRY_MS = 3000; // wait before asking again when the core did not answer

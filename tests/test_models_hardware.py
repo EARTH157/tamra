@@ -1,8 +1,11 @@
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from tamra.childproc import NO_WINDOW
 from tamra.models import hardware
 from tamra.models.catalog import Catalog, load_catalog
 from tamra.models.gguf import ModelShape
@@ -122,6 +125,28 @@ def test_recommend_classifies_discrete_and_integrated_names(catalog, name, vram_
     assert recommend(hw(gpu(name, vram_gb)), catalog) == tier
 
 
+@pytest.mark.parametrize(
+    "name, vram_gb, tier",
+    [
+        ("AMD Radeon 780M (RADV PHOENIX)", 16, "small"),
+        ("AMD Radeon Graphics (RADV RENOIR)", 16, "small"),
+        ("AMD Radeon RX 7800 XT (RADV NAVI32)", 16, "large"),
+        ("AMD Radeon Pro W7800 (RADV NAVI31)", 32, "large"),
+        ("Intel(R) Arc(tm) A770 Graphics (DG2)", 16, "large"),
+        ("Intel(R) Graphics (RPL-P)", 16, "small"),
+        ("NVIDIA GeForce RTX 4060 (NVK AD107)", 8, "medium"),
+    ],
+)
+def test_recommend_classifies_mesa_names(catalog, name, vram_gb, tier):
+    assert recommend(hw(gpu(name, vram_gb)), catalog) == tier
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="sysconf")
+def test_ram_on_linux_is_the_physical_memory():
+    expected = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1024**3
+    assert hardware._ram_gb() == pytest.approx(expected)
+
+
 def test_recommend_with_no_llm_in_the_catalog_gives_small():
     assert recommend(hw(gpu("NVIDIA GeForce RTX 3060", 12)), Catalog([])) == "small"
 
@@ -143,7 +168,7 @@ def test_detect_parses_the_command_output(monkeypatch):
     assert result.ram_gb > 0
     assert calls["args"] == [str(Path("llama-server.exe")), "--list-devices"]
     assert calls["kwargs"]["timeout"] == 15
-    assert calls["kwargs"]["creationflags"] == subprocess.CREATE_NO_WINDOW
+    assert calls["kwargs"]["creationflags"] == NO_WINDOW
 
 
 @pytest.mark.parametrize("exc", [OSError("missing"), subprocess.TimeoutExpired("x", 15)])

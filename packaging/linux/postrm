@@ -1,0 +1,8 @@
+#!/bin/sh
+# Unload the profile when Tamra is removed. The data in ~/.local/share/tamra stays.
+set -e
+if [ "$1" = "remove" ] && [ -d /sys/kernel/security/apparmor ] \
+    && command -v apparmor_parser >/dev/null 2>&1; then
+    apparmor_parser -R /etc/apparmor.d/tamra 2>/dev/null || true
+fi
+exit 0

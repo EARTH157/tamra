@@ -1,10 +1,8 @@
 """Desktop entry: start Core and the API on 127.0.0.1, then show the window (or dev mode)."""
 
-import ctypes
-import hashlib
 import logging
-import os
 import secrets
+import sys
 import threading
 import time
 from pathlib import Path
@@ -14,29 +12,27 @@ import truststore
 import uvicorn
 
 from tamra.core import Core
+from tamra.desktop import alert as _alert
+from tamra.desktop import open_path, window_options
+from tamra.desktop import release_instance as _release_instance
+from tamra.desktop import single_instance as _single_instance
 from tamra.discovery import remove_discovery, write_discovery
 from tamra.logs import setup_logging
 from tamra.net import free_port
-from tamra.paths import data_dir, models_dir, resource_dir
+from tamra.paths import data_dir, llama_server, models_dir, resource_dir
 from tamra.server import create_app
 
 log = logging.getLogger(__name__)
 
 DEV_PORT = 8765
 DEV_TOKEN = "dev"
-ERROR_ALREADY_EXISTS = 183
 
-_instance_mutex = None  # held for the process lifetime: Windows frees it when the process exits
+_instance_lock = None  # held for the process lifetime: the OS frees it when the process exits
 
 
 def build_core() -> Core:
     """Core with data in data_dir(), models in models_dir(), and the bundled llama-server."""
-    return Core(
-        data_dir(),
-        models_dir(),
-        resource_dir() / "vendor" / "llama" / "llama-server.exe",
-        warm_attribution=True,
-    )
+    return Core(data_dir(), models_dir(), llama_server(), warm_attribution=True)
 
 
 class FolderPicker:
@@ -74,13 +70,13 @@ class FilePicker:
 
 
 def open_data_folder() -> None:
-    """Show Tamra's data folder in Explorer. The path is never taken from a request."""
-    os.startfile(data_dir())  # type: ignore[attr-defined]  # Windows only
+    """Show Tamra's data folder in the file manager. The path is never taken from a request."""
+    open_path(data_dir())
 
 
 def open_external(path: Path) -> None:
     """Open a file in its default app. The server passes only paths it resolved from the store."""
-    os.startfile(path)  # type: ignore[attr-defined]  # Windows only
+    open_path(path)
 
 
 def _publish_mcp(port: int, token: str) -> None:
@@ -115,41 +111,11 @@ def _wait_until_up(
     raise RuntimeError("Tamra core did not start")
 
 
-def _kernel32():
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
-    kernel32.CreateMutexW.restype = ctypes.c_void_p
-    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-    kernel32.CloseHandle.restype = ctypes.c_int
-    return kernel32
-
-
-def _close_handle(handle) -> None:
-    _kernel32().CloseHandle(handle)
-
-
-def _single_instance(data_dir_: Path):
-    """Take the named mutex for this data folder; None when another Tamra already holds it.
-
-    The name carries a hash of the folder, so a run with its own TAMRA_DATA_DIR never collides.
-    """
-    digest = hashlib.sha1(str(data_dir_.resolve()).lower().encode("utf-8")).hexdigest()[:12]
-    ctypes.set_last_error(0)
-    handle = _kernel32().CreateMutexW(None, 0, f"Local\\Tamra-{digest}")
-    error = ctypes.get_last_error()
-    if not handle:
-        raise ctypes.WinError(error)
-    if error == ERROR_ALREADY_EXISTS:
-        _close_handle(handle)
-        return None
-    return handle
-
-
 def run(dev: bool = False, token: str | None = None) -> None:
     """Start Tamra. In dev mode the API listens on DEV_PORT with `token` (default "dev")."""
-    global _instance_mutex
-    _instance_mutex = _single_instance(data_dir())
-    if _instance_mutex is None:
+    global _instance_lock
+    _instance_lock = _single_instance(data_dir())
+    if _instance_lock is None:
         if dev:
             raise RuntimeError("Tamra is already running")
         _alert("Tamra is already running.")
@@ -157,8 +123,8 @@ def run(dev: bool = False, token: str | None = None) -> None:
     try:
         _serve(dev, token or DEV_TOKEN)
     finally:
-        _close_handle(_instance_mutex)
-        _instance_mutex = None
+        _release_instance(_instance_lock)
+        _instance_lock = None
 
 
 def _serve(dev: bool, dev_token: str) -> None:
@@ -247,9 +213,5 @@ def _show_window(
     if file_picker is not None:
         file_picker.window = picker.window
     # pywebview otherwise uses sys.executable's icon, which is python.exe's when run from source.
-    webview.start(icon=str(resource_dir() / "packaging" / "tamra.ico"))
-
-
-def _alert(message: str) -> None:
-    """A Windows message box: the windowed exe has no console to print to."""
-    ctypes.windll.user32.MessageBoxW(None, message, "Tamra", 0x10)  # MB_ICONERROR
+    icon = "tamra.ico" if sys.platform == "win32" else "tamra.png"
+    webview.start(icon=str(resource_dir() / "packaging" / icon), **window_options())

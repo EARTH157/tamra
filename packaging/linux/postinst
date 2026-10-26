@@ -1,0 +1,8 @@
+#!/bin/sh
+# Load the profile that lets Tamra's web engine use its sandbox, where AppArmor is on.
+set -e
+if [ "$1" = "configure" ] && [ -d /sys/kernel/security/apparmor ] \
+    && command -v apparmor_parser >/dev/null 2>&1; then
+    apparmor_parser -r -T -W /etc/apparmor.d/tamra || true
+fi
+exit 0

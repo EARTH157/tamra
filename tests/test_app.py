@@ -1,4 +1,5 @@
 import logging
+import sys
 import threading
 from pathlib import Path
 
@@ -9,6 +10,12 @@ from tamra import app
 from tamra.discovery import read_discovery
 from tamra.logs import shutdown_logging
 from tamra.net import free_port
+
+
+@pytest.fixture(autouse=True)
+def _no_platform_window_options(monkeypatch):
+    """The window tests check Tamra's own options; desktop.window_options has its own tests."""
+    monkeypatch.setattr(app, "window_options", lambda: {})
 
 
 class FakeWindow:
@@ -38,8 +45,17 @@ def test_the_window_shows_the_tamra_icon(monkeypatch):
     monkeypatch.setattr(webview, "start", lambda **k: started.update(k))
     app._show_window(8765, "t", app.FolderPicker())
     # Without it the title bar shows python.exe's icon when run from source.
-    assert started["icon"].endswith("tamra.ico")
+    assert started["icon"].endswith("tamra.ico" if sys.platform == "win32" else "tamra.png")
     assert Path(started["icon"]).is_file()
+
+
+def test_the_window_uses_the_platform_options(monkeypatch):
+    started = {}
+    monkeypatch.setattr(webview, "create_window", lambda *a, **k: FakeWindow(None))
+    monkeypatch.setattr(webview, "start", lambda **k: started.update(k))
+    monkeypatch.setattr(app, "window_options", lambda: {"gui": "qt"})
+    app._show_window(8765, "t", app.FolderPicker())
+    assert started["gui"] == "qt"
 
 
 def test_the_folder_picker_returns_the_chosen_folder():
@@ -81,7 +97,7 @@ def test_the_file_picker_handles_cancel():
 def test_open_data_folder_opens_only_the_data_directory(monkeypatch, tmp_path):
     monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path / "data"))
     opened = []
-    monkeypatch.setattr(app.os, "startfile", opened.append, raising=False)  # never the real one
+    monkeypatch.setattr(app, "open_path", opened.append)  # never the real one
     app.open_data_folder()
     assert opened == [tmp_path / "data"]
 
@@ -131,21 +147,6 @@ def test_a_failing_core_is_logged_and_shown_after_cleanup(monkeypatch, tmp_path)
     assert started == []
 
 
-def test_a_second_instance_for_the_same_data_folder_is_refused(tmp_path):
-    first = app._single_instance(tmp_path)
-    try:
-        assert first is not None
-        assert app._single_instance(tmp_path) is None
-        other = app._single_instance(tmp_path / "other")  # another data folder is independent
-        assert other is not None
-        app._close_handle(other)
-    finally:
-        app._close_handle(first)
-    again = app._single_instance(tmp_path)  # closing the handle released the name
-    assert again is not None
-    app._close_handle(again)
-
-
 def test_run_refuses_a_second_instance(monkeypatch, tmp_path):
     monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path))
     alerts = []
@@ -158,7 +159,7 @@ def test_run_refuses_a_second_instance(monkeypatch, tmp_path):
         with pytest.raises(RuntimeError, match="already running"):
             app.run(dev=True)
     finally:
-        app._close_handle(held)
+        app._release_instance(held)
 
 
 class FakeCore:

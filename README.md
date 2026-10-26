@@ -3,7 +3,7 @@
 **Ask questions about your own documents and check every answer against its source.**
 
 Tamra (ตำรา, Thai for "textbook" or "authoritative reference") is an open-source desktop
-app for Windows. Point it at a folder of documents and ask questions in Thai, English, or
+app for Windows and Ubuntu. Point it at a folder of documents and ask questions in Thai, English, or
 Chinese. Answers cite the passages they came from, and you can select any part of an
 answer to see the exact source text that supports it.
 
@@ -26,6 +26,8 @@ answer to see the exact source text that supports it.
 - PDF, Word (.docx), TXT, and Markdown, including scanned PDFs (OCR in Thai, English and Chinese).
 
 ## Install
+
+### Windows
 
 You need Windows 10 (version 1809 or later) or Windows 11, 64-bit.
 
@@ -52,9 +54,31 @@ Then download a model in **Settings > AI model** (see [Models](#models)).
   that folder by hand after uninstalling. Your document folders are never touched. API keys
   are kept in Windows Credential Manager (see [Cloud API](#cloud-api)).
 
+### Ubuntu
+
+You need Ubuntu 24.04 or later, 64-bit (x86_64).
+
+1. Download `tamra_<version>_amd64.deb` (and its `.sha256`) from the
+   [Releases page](https://github.com/EARTH157/tamra/releases).
+2. Install it: `sudo apt install ./tamra_<version>_amd64.deb`. apt also installs the libraries
+   Tamra needs. Tamra appears in the app menu, and `tamra` starts it from a terminal.
+3. Then download a model in **Settings > AI model** (see [Models](#models)). A GPU is used
+   through Vulkan (Mesa or the NVIDIA driver); without one, Tamra runs the model on the CPU.
+
+- **Your data** is in `~/.local/share/tamra` (or `$XDG_DATA_HOME/tamra`), readable only by you.
+  API keys are kept in GNOME Keyring.
+- **Upgrade.** Install the newer `.deb` the same way, then restart Tamra.
+- **Uninstall.** `sudo apt remove tamra` removes the program only. To remove your data too,
+  delete `~/.local/share/tamra`. Your document folders are never touched.
+- **A blank window** in a virtual machine or with an unusual GPU driver: start Tamra with
+  `QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu tamra`. Answers still use the GPU, which
+  llama.cpp drives separately.
+
 ## Try it from source
 
-You need Windows 10 or 11, [uv](https://docs.astral.sh/uv/), and Node.js 24.
+You need Windows 10 or 11, or Ubuntu 24.04 or later, plus [uv](https://docs.astral.sh/uv/)
+and Node.js 24. On Ubuntu, first install the libraries Tamra's window and llama.cpp load:
+`sudo apt install $(cat packaging/linux/build-packages.txt)`.
 
     uv sync
     uv run python scripts/fetch_assets.py   # llama.cpp, bge-m3, the OCR models, and a small test model (~1.1 GB)
@@ -69,6 +93,12 @@ Create a project from a folder of PDF, Word, text, or Markdown files, wait for i
 `Tamra.exe` looks for models in `%LOCALAPPDATA%\Tamra\models` or in the folder named by
 `TAMRA_MODELS_DIR`; see [Models](#models). The Qwen2.5-0.5B test model that `fetch_assets.py`
 downloads is very small, so expect rough answers from it, especially in Thai and Chinese.
+
+On Ubuntu, `./scripts/build.sh` packages the app as `dist/tamra/tamra`, and
+`./scripts/build.sh --deb` also builds `dist/tamra_<version>_amd64.deb`. Ubuntu 23.10 and later
+let only programs with an AppArmor profile use the sandbox of Tamra's web engine. The `.deb`
+installs that profile, but a run from source has none, so start it there with
+`QTWEBENGINE_DISABLE_SANDBOX=1 uv run tamra`.
 
 ## Projects
 
@@ -161,10 +191,11 @@ Paste your API key and press **Test connection**.
   question itself, are sent to the provider. So are the previous question of the chat and up
   to 600 characters of its answer, which help the model follow a follow-up. Your files and the
   search index stay on your computer. Use a local model if your documents must not leave it.
-- **Where the key is stored.** In Windows Credential Manager, under the name `Tamra` (the user
-  name is the provider: `anthropic` or `openai`). It is never written to Tamra's files, database,
-  or logs. To remove it, press **Remove key** next to the key field in **Settings > AI model**
-  and confirm, or delete the `Tamra` entry in Credential Manager.
+- **Where the key is stored.** In Windows Credential Manager (on Ubuntu, GNOME Keyring), under
+  the name `Tamra` (the user name is the provider: `anthropic` or `openai`). It is never written
+  to Tamra's files, database, or logs. To remove it, press **Remove key** next to the key field
+  in **Settings > AI model** and confirm, or delete the `Tamra` entry in Credential Manager (or
+  in Passwords and Keys on Ubuntu).
 
 ## AI apps (MCP)
 
@@ -198,13 +229,14 @@ language is.
 | M4 | Projects (several folders, each with its own index and chats) and a search scope per chat |
 | M5 | OCR for scanned documents |
 | M6 | Windows installer and release workflow |
+| — | Ubuntu 24.04+: the same app as a `.deb` ([spec](docs/superpowers/specs/2026-10-26-ubuntu-support-design.md)) |
 
 The full design is in [docs/superpowers/specs/2026-10-02-tamra-design.md](docs/superpowers/specs/2026-10-02-tamra-design.md).
 
 ## Built with
 
 Python (FastAPI, ONNX Runtime, SQLite + sqlite-vec) · React + TypeScript (Vite) ·
-pywebview · [llama.cpp](https://github.com/ggml-org/llama.cpp) ·
+pywebview (WebView2 on Windows, Qt WebEngine via PySide6 on Ubuntu) · [llama.cpp](https://github.com/ggml-org/llama.cpp) ·
 [bge-m3](https://huggingface.co/BAAI/bge-m3) embeddings ·
 [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5 models, with detection geometry
 adapted from [RapidOCR](https://github.com/RapidAI/RapidOCR) (see [NOTICE](NOTICE)) ·
@@ -212,7 +244,7 @@ the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 
 ## ภาษาไทย
 
-Tamra คือแอปบน Windows สำหรับถามคำถามจากเอกสารของคุณเอง รองรับภาษาไทย อังกฤษ และจีน
+Tamra คือแอปบน Windows และ Ubuntu สำหรับถามคำถามจากเอกสารของคุณเอง รองรับภาษาไทย อังกฤษ และจีน
 ใช้งานแบบ offline ได้ และทุกคำตอบอ้างอิงแหล่งที่มา คลุมข้อความในคำตอบเพื่อดูต้นฉบับที่ใช้ตอบได้ทันที
 ตอนนี้ (M5) ใช้งานจากซอร์สโค้ดได้แล้ว: สร้างโปรเจกต์จากโฟลเดอร์เอกสารได้หลายโปรเจกต์ เลือกว่าจะค้นในโปรเจกต์ไหน ถามคำถาม แล้วได้คำตอบพร้อมอ้างอิง [n]
 จากโมเดลในเครื่องหรือ API บนคลาวด์ มีหน้าตั้งค่าและเปลี่ยนภาษาของแอปเป็นไทยได้
@@ -228,7 +260,13 @@ Tamra คือแอปบน Windows สำหรับถามคำถา�
   เพื่อใช้ไฟล์ .gguf ที่มีอยู่แล้วโดยไม่ต้องต่ออินเทอร์เน็ต
 - **API บนคลาวด์:** รองรับ Anthropic และเซิร์ฟเวอร์ที่เข้ากันได้กับ OpenAI เมื่อใช้โหมดนี้
   ข้อความที่ค้นพบสำหรับแต่ละคำถามจะถูกส่งไปยังผู้ให้บริการ ส่วนไฟล์และดัชนีค้นหายังอยู่ในเครื่อง
-- **ที่เก็บ API key:** Windows Credential Manager ภายใต้ชื่อ Tamra ไม่เขียนลงไฟล์ของ Tamra
+- **ที่เก็บ API key:** Windows Credential Manager (บน Ubuntu คือ GNOME Keyring) ภายใต้ชื่อ Tamra
+  ไม่เขียนลงไฟล์ของ Tamra
+- **ติดตั้งบน Ubuntu 24.04 ขึ้นไป (64 บิต):** ดาวน์โหลด `tamra_<version>_amd64.deb` จากหน้า
+  [Releases](https://github.com/EARTH157/tamra/releases) แล้วรัน `sudo apt install ./tamra_<version>_amd64.deb`
+  apt จะติดตั้งไลบรารีที่ต้องใช้ให้ด้วย แล้ว Tamra จะอยู่ในเมนูแอป ข้อมูลอยู่ที่ `~/.local/share/tamra`
+  ซึ่งมีแค่คุณที่อ่านได้ ถอนการติดตั้งด้วย `sudo apt remove tamra` ข้อมูลจะยังอยู่ ถ้าต้องการลบด้วย
+  ให้ลบโฟลเดอร์ `~/.local/share/tamra`
 
 ## License
 

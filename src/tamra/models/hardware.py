@@ -1,11 +1,14 @@
 """Detect RAM and GPUs, and recommend a model tier and a context size."""
 
 import ctypes
+import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tamra.childproc import NO_WINDOW
 from tamra.models.catalog import Catalog
 from tamra.models.gguf import ModelShape
 
@@ -36,6 +39,9 @@ def parse_devices(output: str) -> list[Gpu]:
 
 
 def _ram_gb() -> float:
+    if sys.platform != "win32":
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1024**3
+
     class MemoryStatus(ctypes.Structure):
         _fields_ = [
             ("dwLength", ctypes.c_ulong),
@@ -67,7 +73,7 @@ def detect(llama_exe: Path) -> Hardware:
             errors="replace",
             timeout=15,
             stdin=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=NO_WINDOW,
         )
         gpus = parse_devices(done.stdout)
     except (OSError, subprocess.SubprocessError):
@@ -75,16 +81,20 @@ def detect(llama_exe: Path) -> Hardware:
     return Hardware(ram_gb=_ram_gb(), gpus=gpus)
 
 
-_INTEL_DISCRETE = re.compile(r"Arc\(TM\) [AB]\d{3}")
+_INTEL_DISCRETE = re.compile(r"Arc\(TM\) [AB]\d{3}", re.IGNORECASE)  # Mesa writes "Arc(tm)"
 _AMD_DISCRETE = re.compile(r"\b(Pro|RX)\b")
 
 
 def _is_integrated(gpu: Gpu) -> bool:
-    """Intel (except Arc A/B cards) and "Radeon(TM) ... Graphics" (except Pro/RX) are iGPUs."""
+    """Intel (except Arc A/B cards) and AMD's integrated Radeons (except Pro/RX) are iGPUs.
+
+    Windows names an AMD iGPU "AMD Radeon(TM) 780M Graphics"; Mesa names every AMD GPU
+    "AMD Radeon ... (RADV <chip>)". llama-server --list-devices does not say which memory is
+    shared, so the name is all there is."""
     name = gpu.name
     if "Intel" in name:
         return not _INTEL_DISCRETE.search(name)
-    if "Radeon(TM)" in name and "Graphics" in name:
+    if ("Radeon(TM)" in name and "Graphics" in name) or "(RADV " in name:
         return not _AMD_DISCRETE.search(name)
     return False
 

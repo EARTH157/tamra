@@ -170,13 +170,49 @@ def _check_llm(llama_exe: Path, model: Path, log_dir: Path | None) -> dict:
     }
 
 
+DRAWN = 'document.getElementById("root").childElementCount > 0'
+
+
+def _check_window(ui_dir: Path, timeout: float = 30.0) -> dict:
+    """Open a real window on the bundled UI and wait until React has drawn into #root: the web
+    engine, its sandbox and the UI files all work. The window closes itself."""
+    index = ui_dir / "index.html"
+    if not index.is_file():
+        return {"ok": False, "detail": f"missing {index}"}
+    import webview
+
+    from tamra import desktop
+
+    state = {"ok": False, "detail": f"the page did not draw within {timeout:.0f} s"}
+
+    def probe(window) -> None:
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    if window.evaluate_js(DRAWN):
+                        state.update(ok=True, detail="drawn")
+                        return
+                except Exception as e:  # still loading, or the engine failed
+                    state["detail"] = f"{type(e).__name__}: {e}"
+                time.sleep(0.25)
+        finally:
+            window.destroy()
+
+    window = webview.create_window("Tamra selfcheck", str(index), width=800, height=600)
+    webview.start(probe, window, http_server=True, **desktop.window_options())
+    return state
+
+
 def run_selfcheck(
     embed_model_dir: Path | None,
     llm_model: Path | None,
     llama_exe: Path,
     log_dir: Path | None = None,
+    ui_dir: Path | None = None,
 ) -> dict:
-    """Run the checks; log_dir (for llama-server's log) defaults to data_dir()/logs."""
+    """Run the checks; log_dir (for llama-server's log) defaults to data_dir()/logs. With
+    ui_dir, also open a window on it."""
     checks = {"sqlite": _guard(_check_sqlite)}
     checks["documents"] = _guard(_check_documents)
     checks["providers"] = _guard(_check_providers)
@@ -184,4 +220,6 @@ def run_selfcheck(
         checks["embedding"] = _guard(lambda: _check_embedding(embed_model_dir))
     if llm_model is not None:
         checks["llm"] = _guard(lambda: _check_llm(llama_exe, llm_model, log_dir))
+    if ui_dir is not None:
+        checks["window"] = _guard(lambda: _check_window(ui_dir))
     return {"ok": all(c["ok"] for c in checks.values()), "checks": checks}

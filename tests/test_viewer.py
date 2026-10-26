@@ -1,4 +1,5 @@
 import struct
+import sys
 import threading
 import zlib
 
@@ -57,7 +58,10 @@ def test_resolve_file_refuses_escapes(tmp_path):
     (tmp_path / "docs-other").mkdir()
     (tmp_path / "docs-other" / "x.txt").write_text("secret")
     (tmp_path / "x.txt").write_text("secret")
-    for rel in ("..\\..\\x", "../x.txt", "../docs-other/x.txt", str(tmp_path / "x.txt")):
+    escapes = ["../x.txt", "../docs-other/x.txt", str(tmp_path / "x.txt")]
+    if sys.platform == "win32":  # elsewhere a backslash is a file name character
+        escapes.append("..\\..\\x")
+    for rel in escapes:
         with pytest.raises(ViewerError, match="outside the collection folder"):
             resolve_file(str(folder), rel)
 
@@ -292,7 +296,7 @@ def test_render_ignores_a_nan_scale_and_caps_the_pixel_count(tmp_path, fonts, mo
 
 def test_resolve_file_refuses_drive_relative_unc_and_nul_paths(tmp_path):
     (tmp_path / "x.txt").write_text("x")
-    for rel in ("D:x.txt", "\\\\host\\share\\x.txt"):
+    for rel in ("D:x.txt", "\\\\host\\share\\x.txt") if sys.platform == "win32" else ():
         with pytest.raises(ViewerError, match="outside the collection folder"):
             resolve_file(str(tmp_path), rel)
     with pytest.raises(ViewerError):

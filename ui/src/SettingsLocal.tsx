@@ -274,7 +274,11 @@ export default function SettingsLocal({ models, refresh }: ModelsApi) {
           <label className="path-field">
             <input
               aria-label={t("settings.importPathLabel")}
-              placeholder={t("settings.importPathPlaceholder")}
+              placeholder={t(
+                settings.platform === "linux"
+                  ? "settings.importPathPlaceholder.linux"
+                  : "settings.importPathPlaceholder",
+              )}
               value={path}
               onChange={(e) => setPath(e.target.value)}
               data-autofocus

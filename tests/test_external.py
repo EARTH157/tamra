@@ -3,9 +3,11 @@
 import hashlib
 import json
 import os
+import sys
 
 import pytest
 
+from tamra.models import external
 from tamra.models.external import ExternalModel, scan
 
 HEX_A = "a" * 64
@@ -37,6 +39,27 @@ def gguf(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(GGUF)
     return path
+
+
+@pytest.fixture(autouse=True)
+def _no_ollama_service(monkeypatch, tmp_path):
+    """Keep this machine's Ollama service folder (Linux) out of every test."""
+    monkeypatch.setattr(external, "_OLLAMA_SERVICE", tmp_path / "no-service")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Ollama's Linux service folder")
+def test_ollama_installed_as_a_service_is_found_too(tmp_path, monkeypatch):
+    service = tmp_path / "service"
+    blob = ollama_model(service, "qwen3", "4b", HEX_A)
+    monkeypatch.setattr(external, "_OLLAMA_SERVICE", service)
+    assert scan(tmp_path, {}) == [ExternalModel("ollama", "qwen3:4b", blob, HEX_A)]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Ollama's Linux service folder")
+def test_ollama_models_set_by_the_user_replace_the_service_folder(tmp_path, monkeypatch):
+    ollama_model(tmp_path / "service", "qwen3", "4b", HEX_A)
+    monkeypatch.setattr(external, "_OLLAMA_SERVICE", tmp_path / "service")
+    assert scan(tmp_path, {"OLLAMA_MODELS": str(tmp_path / "elsewhere")}) == []
 
 
 def test_nothing_installed_gives_nothing(tmp_path):

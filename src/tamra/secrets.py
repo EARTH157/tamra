@@ -1,4 +1,5 @@
-"""API keys live only in the OS credential store (Windows Credential Manager), never in files.
+"""API keys live only in the OS credential store, never in files: Windows Credential Manager, or
+on Linux the Secret Service (GNOME Keyring).
 
 Entries use service "Tamra" and the provider name as the user name. Keys are never logged.
 """

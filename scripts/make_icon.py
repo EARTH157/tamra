@@ -2,7 +2,8 @@
 # requires-python = ">=3.12"
 # dependencies = ["pillow"]
 # ///
-"""Render packaging/tamra.ico (the exe and installer icon) from the logo in ui/src/logo.svg.
+"""Render packaging/tamra.ico (the exe and installer icon) and packaging/tamra.png (the Linux
+window and menu icon, 256 px) from the logo in ui/src/logo.svg.
 
 Run: uv run scripts/make_icon.py. Pillow is a build-time tool here, not a Tamra dependency.
 """
@@ -49,6 +50,8 @@ def main() -> None:
     assert big.getpixel((64, 128))[:3] == (0xFF, 0xFF, 0xFF), "[ side should be white"
     big.save(OUT, sizes=[im.size for im in images], append_images=images[:-1])
     print(f"wrote {OUT}")
+    big.save(OUT.with_suffix(".png"))
+    print(f"wrote {OUT.with_suffix('.png')}")
 
 
 if __name__ == "__main__":

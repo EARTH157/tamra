@@ -1,7 +1,6 @@
-import _winapi
-import ctypes
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -92,6 +91,11 @@ def test_deleted_files_leave_the_index(env):
     assert not keyword(store, "Lease")
 
 
+def test_folders_compare_without_case_only_on_windows():
+    assert indexer_module._under("docs/a.md", ["docs"]) is True
+    assert indexer_module._under("Docs/a.md", ["docs"]) is (sys.platform == "win32")
+
+
 def test_scan_skips_lock_hidden_dot_and_unsupported_files(tmp_path):
     (tmp_path / "keep.md").write_text("x", encoding="utf-8")
     (tmp_path / "~$report.docx").write_bytes(b"lock")
@@ -101,8 +105,14 @@ def test_scan_skips_lock_hidden_dot_and_unsupported_files(tmp_path):
     (tmp_path / ".git" / "inside.md").write_text("x", encoding="utf-8")
     hidden = tmp_path / "hidden.md"
     hidden.write_text("x", encoding="utf-8")
-    ctypes.windll.kernel32.SetFileAttributesW(str(hidden), 0x2)  # FILE_ATTRIBUTE_HIDDEN
-    assert set(scan_folder(tmp_path)[0]) == {"keep.md"}
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.kernel32.SetFileAttributesW(str(hidden), 0x2)  # FILE_ATTRIBUTE_HIDDEN
+        expected = {"keep.md"}
+    else:
+        expected = {"keep.md", "hidden.md"}  # Linux has no hidden attribute, only dot files
+    assert set(scan_folder(tmp_path)[0]) == expected
 
 
 def test_a_broken_file_fails_alone(env):
@@ -437,9 +447,12 @@ def test_scan_skips_directory_junctions_and_symlinks(tmp_path):
     folder = tmp_path / "docs"
     (folder / "real").mkdir(parents=True)
     (folder / "real" / "kept.md").write_text("x", encoding="utf-8")
-    _winapi.CreateJunction(str(outside), str(folder / "junction"))
-    assert (folder / "junction" / "secret.md").exists()  # the junction really leads outside
-    assert set(scan_folder(folder)[0]) == {"real/kept.md"}
+    if sys.platform == "win32":
+        import _winapi
+
+        _winapi.CreateJunction(str(outside), str(folder / "junction"))
+        assert (folder / "junction" / "secret.md").exists()  # the junction really leads outside
+        assert set(scan_folder(folder)[0]) == {"real/kept.md"}
 
     try:
         (folder / "dirlink").symlink_to(outside, target_is_directory=True)

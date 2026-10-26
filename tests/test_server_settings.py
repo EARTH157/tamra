@@ -223,6 +223,7 @@ def test_get_settings_has_every_setting_and_the_key_state(env):
         "api_key_hint": None,
         "data_dir": str(tmp_path / "data"),
         "mcp_command": [sys.executable, "-m", "tamra", "mcp"],
+        "platform": "windows" if sys.platform == "win32" else "linux",
     }
 
 
@@ -585,9 +586,10 @@ def test_get_models_marks_integrated_gpus(env):
     ]
 
 
-def test_put_settings_refuses_the_read_only_data_dir(env):
+@pytest.mark.parametrize("field, value", [("data_dir", "C:/elsewhere"), ("platform", "linux")])
+def test_put_settings_refuses_the_read_only_fields(env, field, value):
     client, _, _ = env
-    response = client.put("/api/settings", headers=AUTH, json={"data_dir": "C:/elsewhere"})
+    response = client.put("/api/settings", headers=AUTH, json={field: value})
     assert response.status_code == 400
 
 
@@ -624,7 +626,9 @@ def test_active_model_is_the_selected_one_when_it_is_installed(env):
     assert active_of(client)["id"] == "small"  # nothing selected: the first installed
     client.put("/api/settings", headers=AUTH, json={"local_model_id": "medium"})
     assert active_of(client) == {"mode": "local", "label": "Medium", "id": "medium"}
-    client.put("/api/settings", headers=AUTH, json={"local_model_id": "import:mine.GGUF"})
+    # Windows ignores case in file names; Linux does not.
+    mine = "import:mine.GGUF" if sys.platform == "win32" else "import:Mine.gguf"
+    client.put("/api/settings", headers=AUTH, json={"local_model_id": mine})
     assert active_of(client) == {"mode": "local", "label": "Mine", "id": "import:Mine.gguf"}
     client.put("/api/settings", headers=AUTH, json={"local_model_id": "import:gone.gguf"})
     assert active_of(client)["id"] == "small"  # the selection is not installed: the fallback
@@ -836,6 +840,7 @@ def test_import_refuses_device_and_extended_length_paths(env, prefix):
     assert list(client.models_dir.iterdir()) == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="UNC paths are Windows'")
 def test_import_accepts_a_unc_path_shape(env, monkeypatch):
     client, core, _ = env
     seen = []

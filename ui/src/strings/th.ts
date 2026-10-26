@@ -40,6 +40,7 @@ export const th: Record<TranslationKey, string> = {
     "Tamra จะสร้างดัชนีของโฟลเดอร์ใหม่และตอบจากโฟลเดอร์นี้ ไฟล์ของคุณจะไม่ถูกแก้ไข",
   "folder.pathLabel": "ที่อยู่โฟลเดอร์",
   "folder.pathPlaceholder": "ใส่ที่อยู่โฟลเดอร์แบบเต็ม เช่น D:\\Work\\Documents",
+  "folder.pathPlaceholder.linux": "ใส่ที่อยู่โฟลเดอร์แบบเต็ม เช่น /home/me/Documents",
   "folder.browse": "เรียกดู…",
   "folder.use": "ใช้โฟลเดอร์นี้",
 
@@ -378,6 +379,8 @@ export const th: Record<TranslationKey, string> = {
     "Tamra ใช้ไฟล์จากที่เดิม ถ้าไฟล์อยู่บน USB หรือไดรฟ์ถอดได้จะคัดลอกเข้ามา และไฟล์โมเดลค้นหากับ OCR จะคัดลอกเสมอ",
   "settings.importPathLabel": "ที่อยู่ไฟล์โมเดล",
   "settings.importPathPlaceholder": "ใส่ที่อยู่ไฟล์ .gguf แบบเต็ม เช่น D:\\Models\\model.gguf",
+  "settings.importPathPlaceholder.linux":
+    "ใส่ที่อยู่ไฟล์ .gguf แบบเต็ม เช่น /home/me/Models/model.gguf",
   "settings.importGo": "นำเข้า",
   "settings.importing": "กำลังนำเข้า…",
   "settings.importedCatalogued": "นำเข้า {file} แล้ว ตรงกับแคตตาล็อกโมเดล",
@@ -398,10 +401,13 @@ export const th: Record<TranslationKey, string> = {
   "settings.apiKey": "คีย์ API",
   "settings.apiKeyPlaceholder": "วางคีย์ API ที่นี่",
   "settings.apiKeyNote": "เก็บไว้ใน Windows Credential Manager ไม่เก็บในไฟล์ของ Tamra",
+  "settings.apiKeyNote.linux": "เก็บไว้ใน GNOME Keyring ไม่เก็บในไฟล์ของ Tamra",
   "settings.removeKey": "ลบคีย์",
   "settings.removeKeyTitle": "ลบคีย์ API ของ {provider} หรือไม่",
   "settings.removeKeyText":
     "คีย์จะถูกลบออกจาก Windows Credential Manager หากต้องการใช้ผู้ให้บริการนี้อีก ต้องวางคีย์ใหม่",
+  "settings.removeKeyText.linux":
+    "คีย์จะถูกลบออกจาก GNOME Keyring หากต้องการใช้ผู้ให้บริการนี้อีก ต้องวางคีย์ใหม่",
   "settings.keyRemoved": "ลบคีย์แล้ว",
   "settings.modelRequired": "ต้องระบุชื่อโมเดล",
   "settings.baseUrlInvalid":
@@ -420,7 +426,7 @@ export const th: Record<TranslationKey, string> = {
   "settings.theme": "ธีม",
   "settings.theme.light": "สว่าง",
   "settings.theme.dark": "มืด",
-  "settings.theme.system": "ตาม Windows",
+  "settings.theme.system": "ตามระบบ",
   "settings.colourText": "สีและตัวอักษร",
   "settings.accent": "สีเน้น",
   "settings.accentHint": "ใช้กับปุ่ม ลิงก์ และเครื่องหมายอ้างอิง",

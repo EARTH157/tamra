@@ -4,7 +4,7 @@
 **Status:** Approved in brainstorming, pending written-spec review
 **License:** Apache-2.0 (open source, `github.com/EARTH157/tamra`)
 
-Tamra (ตำรา, "textbook / authoritative reference") is a Windows desktop app for asking
+Tamra (ตำรา, "textbook / authoritative reference") is a desktop app for Windows and Ubuntu for asking
 questions about your own documents. Every answer cites its sources, and any part of an
 answer can be checked against the exact passage it came from.
 
@@ -21,7 +21,8 @@ answer can be checked against the exact passage it came from.
   says that it is not from the documents instead (§6).
 
 **Non-goals for v1**
-- Platforms other than Windows 10/11 x64.
+- Platforms other than Windows 10/11 x64 and Ubuntu 24.04+ x86_64
+  (`docs/superpowers/specs/2026-10-26-ubuntu-support-design.md`).
 - File types beyond PDF, DOCX, TXT, MD (no XLSX, PPTX, HTML, images-as-files).
 - LLM-based query rewriting, auto-update, code signing, multi-user or server deployment,
   remote model catalog. (A reranking model was a non-goal too; it was added later as an
@@ -31,14 +32,14 @@ answer can be checked against the exact passage it came from.
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Stack | Python core + React/TypeScript UI in a pywebview (WebView2) window | Best local-AI ecosystem; web UI makes the popup and PDF highlighting easy; one installer |
+| Stack | Python core + React/TypeScript UI in a pywebview window (WebView2 on Windows, Qt WebEngine on Linux) | Best local-AI ecosystem; web UI makes the popup and PDF highlighting easy; one installer |
 | UI ↔ core | FastAPI on `127.0.0.1`, random port, per-launch token; SSE for streaming | Lets the UI be developed in a normal browser with hot reload |
 | Local LLM | llama.cpp's official prebuilt `llama-server.exe` (Vulkan build), run as a managed child process on `127.0.0.1` and called through its OpenAI-compatible API; CPU fallback via `--device none` | One build covers NVIDIA, AMD, and Intel GPUs. Prebuilt binaries ship every release (the Python binding needs a local Vulkan SDK compile). Reuses the OpenAI-compatible client. A llama.cpp crash cannot take down the app. |
 | API LLM | Anthropic, plus any OpenAI-compatible endpoint (Ollama, LM Studio, others) | User choice; the OpenAI-compatible option is nearly free once the interface exists |
 | Embedding | `bge-m3` via ONNX Runtime, **always local**, single fixed model | Strong multilingual (TH/EN/ZH) and cross-lingual retrieval; offline search; index never depends on LLM mode |
 | Storage | One SQLite database: metadata, chats, chunks, FTS5 (trigram) keyword index, and `sqlite-vec` for dense vectors | One file, one transaction across file/chunk updates; trigram FTS needs no Thai/Chinese word segmenter |
 | PDF text | `pypdfium2` | Permissive license (PyMuPDF is AGPL, incompatible with Apache-2.0 distribution); gives per-character boxes for highlighting |
-| Data location | `%LOCALAPPDATA%\Tamra\` (`tamra.db`, `models\`, `logs\`) | Standard per-user app data |
+| Data location | `%LOCALAPPDATA%\Tamra\` (`tamra.db`, `models\`, `logs\`); `~/.local/share/tamra` on Linux | Standard per-user app data |
 
 **Dependency rule:** every bundled dependency must be under a license compatible with
 Apache-2.0 distribution. No AGPL/GPL libraries. LLM weights are downloaded by the user and
@@ -430,6 +431,8 @@ Every type also has "Open with default app" (`os.startfile`) in the viewer.
   artifact. A tag run first checks that the tag is `v<tamra.__version__>`, then creates the
   GitHub release with the installer and its sha256.
 - v1 has no code signing (SmartScreen warns on first run) and no auto-update.
+- **Linux:** a `.deb` for Ubuntu 24.04+, built and checked by the same workflows; see
+  `docs/superpowers/specs/2026-10-26-ubuntu-support-design.md` §4–5.
 
 ## 12. Testing
 

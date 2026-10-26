@@ -22,7 +22,7 @@ def test_questions_are_well_formed():
 
 
 @pytest.mark.skipif(
-    not (LATIN_THAI.exists() and CJK.exists()), reason="needs Tahoma and Microsoft YaHei"
+    not (LATIN_THAI.exists() and CJK.exists()), reason="needs docgen's Thai and Chinese fonts"
 )
 def test_the_corpus_renders_into_parseable_documents(tmp_path):
     paths = build(tmp_path)

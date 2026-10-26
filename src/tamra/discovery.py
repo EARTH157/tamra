@@ -14,10 +14,14 @@ FILE_NAME = "mcp.json"
 
 
 def write_discovery(folder: Path, port: int, token: str) -> None:
-    """Write the file atomically: a reader sees the old content or the new, never half."""
+    """Write the file atomically (a reader sees the old content or the new, never half), readable
+    only by this user even in a data folder that others can read."""
     path = folder / FILE_NAME
     temporary = path.with_name(FILE_NAME + ".tmp")
-    temporary.write_text(json.dumps({"port": port, "token": token}), encoding="utf-8")
+    temporary.unlink(missing_ok=True)  # a leftover could carry a wider mode
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with open(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"port": port, "token": token}))
     os.replace(temporary, path)
 
 

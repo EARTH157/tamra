@@ -707,9 +707,14 @@ def test_open_never_takes_a_path_from_the_request(env, opener, txt):
     assert opener.paths == [txt["path"].resolve()]
 
 
-def test_open_refuses_a_path_outside_the_folder(env, opener, tmp_path):
+@pytest.mark.parametrize(
+    "rel",
+    # A backslash separates folders only on Windows; elsewhere it is part of a file name.
+    ["../outside.txt"] + (["..\\outside.txt"] if sys.platform == "win32" else []),
+)
+def test_open_refuses_a_path_outside_the_folder(env, opener, tmp_path, rel):
     (tmp_path / "outside.txt").write_text("secret", encoding="utf-8")
-    file_id = env.add_file("..\\outside.txt")
+    file_id = env.add_file(rel)
     client = client_for(env, open_external=opener)
     response = open_file(client, file_id)
     assert response.status_code == 400

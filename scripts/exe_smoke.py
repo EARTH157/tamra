@@ -2,6 +2,8 @@
 
     uv run python scripts/exe_smoke.py [--exe dist/Tamra/Tamra.exe] [--out report.json]
 
+(On Linux the default is dist/tamra/tamra.)
+
 Starts Tamra.exe in dev mode (API only on 127.0.0.1:8765; the packaged exe takes the token
 from TAMRA_DEV_TOKEN, and the smoke makes a fresh one that it never prints) with a scratch data
 folder and a scratch models folder that holds only the embedding, reranker and OCR models
@@ -66,6 +68,7 @@ from mcp import Client, StdioServerParameters
 from tamra import secrets as key_store
 from tamra.answer import NOT_FOUND
 from tamra.llm.llama_server import LlamaServer
+from tamra.paths import llama_server
 
 ROOT = Path(__file__).resolve().parents[1]
 PORT = 8765
@@ -87,7 +90,10 @@ def port_in_use(port: int) -> bool:
 
 
 def llama_server_pids() -> set[int]:
-    """PIDs of running llama-server.exe processes (read only: nothing is stopped by name)."""
+    """PIDs of running llama-server processes (read only: nothing is stopped by name)."""
+    if sys.platform != "win32":
+        found = subprocess.run(["pgrep", "-x", "llama-server"], capture_output=True, text=True)
+        return {int(pid) for pid in found.stdout.split()}  # pgrep exits 1 when there is none
     out = subprocess.run(
         ["tasklist", "/FI", "IMAGENAME eq llama-server.exe", "/FO", "CSV", "/NH"],
         capture_output=True,
@@ -710,12 +716,18 @@ def check_mcp(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="End-to-end check of the packaged Tamra.exe")
-    parser.add_argument("--exe", type=Path, default=ROOT / "dist" / "Tamra" / "Tamra.exe")
+    windows = sys.platform == "win32"
+    parser = argparse.ArgumentParser(description="End-to-end check of the packaged Tamra app")
+    parser.add_argument(
+        "--exe",
+        type=Path,
+        default=ROOT / "dist" / ("Tamra/Tamra.exe" if windows else "tamra/tamra"),
+    )
     parser.add_argument("--out", type=Path, help="also write the report as JSON")
     args = parser.parse_args()
     if not args.exe.is_file():
-        raise SystemExit(f"missing {args.exe}; build it with ./scripts/build.ps1")
+        script = "./scripts/build.ps1" if windows else "./scripts/build.sh"
+        raise SystemExit(f"missing {args.exe}; build it with {script}")
     if port_in_use(PORT):
         raise SystemExit(f"port {PORT} is in use; stop the other Tamra dev server first")
     ggufs = sorted((ROOT / ".models").glob("qwen2.5-0.5b-instruct*.gguf"))
@@ -808,7 +820,7 @@ def main() -> int:
                 report["watcher_s"] = round(time.monotonic() - started, 1)
                 api_mode_step(
                     client,
-                    ROOT / "vendor" / "llama" / "llama-server.exe",
+                    llama_server(),
                     dev_gguf,
                     Path(tmp),
                     scope,

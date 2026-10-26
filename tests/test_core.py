@@ -1,4 +1,5 @@
 import hashlib
+import sys
 import time
 
 import numpy as np
@@ -409,7 +410,9 @@ def test_the_local_model_is_the_selected_one_when_installed(tmp_path):
         assert local_label(c) == "b"
         c.apply_settings({"local_model_id": "not-installed"})
         assert local_label(c) == "a"
-        c.apply_settings({"local_model_id": "import:LOOSE.gguf"})
+        # Windows ignores case in file names; Linux does not.
+        loose = "import:LOOSE.gguf" if sys.platform == "win32" else "import:loose.gguf"
+        c.apply_settings({"local_model_id": loose})
         assert local_label(c) == "loose"
     finally:
         c.shutdown()
@@ -1145,7 +1148,11 @@ def test_unlinking_forgets_the_file_but_leaves_it_alone(tmp_path, monkeypatch):
     c = make_core(tmp_path, llm=None, catalog=catalog_of("a"))
     try:
         c.import_model(source)
-        c.unlink_model(str(source).upper())  # Windows paths ignore case
+        windows = sys.platform == "win32"  # Windows paths ignore case; Linux paths do not
+        if not windows:
+            with pytest.raises(KeyError):
+                c.unlink_model(str(source).upper())
+        c.unlink_model(str(source).upper() if windows else str(source))
         assert c.settings.linked_models == ()
         assert source.exists()
         with pytest.raises(KeyError):
