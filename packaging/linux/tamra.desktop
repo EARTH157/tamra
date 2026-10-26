@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Tamra
+GenericName=Document Q&A
+GenericName[th]=ถามตอบจากเอกสาร
+Comment=Ask questions about your own documents, with citations you can check
+Comment[th]=ถามคำถามจากเอกสารของคุณเอง พร้อมแหล่งอ้างอิงที่ตรวจสอบได้
+Exec=tamra
+Icon=tamra
+Terminal=false
+Categories=Office;
+Keywords=documents;search;citations;AI;
+StartupWMClass=tamra

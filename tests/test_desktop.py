@@ -53,6 +53,30 @@ def test_open_path_runs_xdg_open_without_a_shell(tmp_path, monkeypatch):
 
 
 @linux
+@pytest.mark.parametrize(
+    ("frozen", "env", "expected"),
+    [
+        (True, {"LD_LIBRARY_PATH": "/opt/tamra/_internal", "LD_LIBRARY_PATH_ORIG": "/x"}, "/x"),
+        (True, {"LD_LIBRARY_PATH": "/opt/tamra/_internal"}, None),
+        (False, {"LD_LIBRARY_PATH": "/mine"}, "/mine"),  # from source: the user's own value
+    ],
+)
+def test_programs_tamra_opens_do_not_load_the_bundles_libraries(
+    monkeypatch, tmp_path, frozen, env, expected
+):
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG", raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    calls = []
+    monkeypatch.setattr(desktop.subprocess, "Popen", lambda args, **k: calls.append(k["env"]))
+    desktop.open_path(tmp_path / "a.pdf")
+    assert calls[0].get("LD_LIBRARY_PATH") == expected
+    assert "LD_LIBRARY_PATH_ORIG" not in calls[0]
+
+
+@linux
 def test_alert_uses_zenity_without_markup(monkeypatch):
     runs = []
     monkeypatch.setattr(desktop.shutil, "which", lambda name: "/usr/bin/zenity")

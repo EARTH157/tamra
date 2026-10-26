@@ -54,6 +54,16 @@ a = Analysis(
     excludes=excludes,
 )
 if not WINDOWS:
+    # The .deb takes system libraries from the system (make_deb.py names their packages in
+    # Depends), never from the build machine: an old bundled libstdc++ breaks newer Mesa drivers.
+    # Python itself stays (libpython and lib-dynload): Ubuntu releases after 24.04 ship another.
+    a.binaries = [
+        b
+        for b in a.binaries
+        if not b[1].startswith(("/lib/", "/usr/lib/"))
+        or "/python3" in b[1]
+        or Path(b[0]).name.startswith("libpython")
+    ]
     # Qt's .qm translations are never loaded (Tamra installs no QTranslator), and Chromium's
     # locale packs fall back to en-US: keep the languages Tamra speaks.
     keep = {"en-US.pak", "th.pak", "zh-CN.pak", "zh-TW.pak"}

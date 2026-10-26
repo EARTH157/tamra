@@ -76,7 +76,21 @@ def open_path(path: Path) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,  # the opened app outlives Tamra
+        env=_system_env(),
     )
+
+
+def _system_env() -> dict[str, str]:
+    """The environment for a system program. PyInstaller's launcher points LD_LIBRARY_PATH at the
+    bundle (keeping the user's value in LD_LIBRARY_PATH_ORIG); a PDF viewer started with it would
+    load Tamra's Qt instead of its own."""
+    env = dict(os.environ)
+    original = env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original is not None:
+        env["LD_LIBRARY_PATH"] = original
+    elif getattr(sys, "frozen", False):
+        env.pop("LD_LIBRARY_PATH", None)
+    return env
 
 
 def alert(message: str) -> None:
@@ -94,6 +108,7 @@ def alert(message: str) -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
+                env=_system_env(),
             )
             return
         except OSError:

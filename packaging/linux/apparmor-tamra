@@ -1,0 +1,10 @@
+# Lets Tamra's web engine (Qt WebEngine, Chromium) create the user namespaces its sandbox needs.
+# Ubuntu 23.10 and later allow them only to programs with a profile like this, as for Chrome.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile tamra /opt/tamra/{tamra,_internal/PySide6/Qt/libexec/QtWebEngineProcess} flags=(unconfined) {
+  userns,
+
+  include if exists <local/tamra>
+}

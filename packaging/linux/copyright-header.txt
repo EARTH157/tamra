@@ -1,0 +1,12 @@
+Tamra
+Source: https://github.com/EARTH157/tamra
+
+Tamra is licensed under the Apache License, Version 2.0, below, with the notices in NOTICE.
+
+This package also contains Qt and PySide6 (Qt for Python), used under the GNU Lesser General
+Public License version 3 (LGPL-3.0-only). On Ubuntu its full text is in
+/usr/share/common-licenses/LGPL-3, and the GNU GPL version 3 it builds on is in
+/usr/share/common-licenses/GPL-3. They are shared libraries in /opt/tamra/_internal/PySide6 and
+can be replaced with compatible builds. Their source code: https://code.qt.io/.
+Qt WebEngine includes Chromium, under BSD-style licenses (see the Qt license files).
+llama.cpp (MIT) is in /opt/tamra/_internal/vendor/llama, with its LICENSE file.
