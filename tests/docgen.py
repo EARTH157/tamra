@@ -1,6 +1,8 @@
-"""Build small PDF and DOCX fixtures. Uses Windows system fonts (Tahoma, Microsoft YaHei)."""
+"""Build small PDF and DOCX fixtures. Uses system fonts: Tahoma and Microsoft YaHei on Windows,
+Garuda and WenQuanYi Micro Hei on Ubuntu (fonts-tlwg-garuda-ttf, fonts-wqy-microhei)."""
 
 import ctypes
+import sys
 from pathlib import Path
 
 import docx
@@ -8,9 +10,12 @@ import numpy as np
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
 
-FONTS = Path("C:/Windows/Fonts")
-LATIN_THAI = FONTS / "tahoma.ttf"
-CJK = FONTS / "msyh.ttc"
+if sys.platform == "win32":
+    LATIN_THAI = Path("C:/Windows/Fonts/tahoma.ttf")
+    CJK = Path("C:/Windows/Fonts/msyh.ttc")
+else:
+    LATIN_THAI = Path("/usr/share/fonts/truetype/tlwg/Garuda.ttf")
+    CJK = Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc")
 
 
 def make_pdf(
@@ -31,7 +36,9 @@ def make_pdf(
             y = 800
             for line in lines:
                 obj = pdfium_c.FPDFPageObj_CreateTextObj(pdf, handle, 12.0)
-                text = ctypes.create_unicode_buffer(line)
+                # FPDF_WIDESTRING is UTF-16; create_unicode_buffer is UTF-32 on Linux.
+                utf16 = (line + "\0").encode("utf-16-le")
+                text = (ctypes.c_ushort * (len(utf16) // 2)).from_buffer_copy(utf16)
                 pdfium_c.FPDFText_SetText(
                     obj, ctypes.cast(text, ctypes.POINTER(pdfium_c.FPDF_WCHAR))
                 )

@@ -624,7 +624,9 @@ def test_active_model_is_the_selected_one_when_it_is_installed(env):
     assert active_of(client)["id"] == "small"  # nothing selected: the first installed
     client.put("/api/settings", headers=AUTH, json={"local_model_id": "medium"})
     assert active_of(client) == {"mode": "local", "label": "Medium", "id": "medium"}
-    client.put("/api/settings", headers=AUTH, json={"local_model_id": "import:mine.GGUF"})
+    # Windows ignores case in file names; Linux does not.
+    mine = "import:mine.GGUF" if sys.platform == "win32" else "import:Mine.gguf"
+    client.put("/api/settings", headers=AUTH, json={"local_model_id": mine})
     assert active_of(client) == {"mode": "local", "label": "Mine", "id": "import:Mine.gguf"}
     client.put("/api/settings", headers=AUTH, json={"local_model_id": "import:gone.gguf"})
     assert active_of(client)["id"] == "small"  # the selection is not installed: the fallback
@@ -836,6 +838,7 @@ def test_import_refuses_device_and_extended_length_paths(env, prefix):
     assert list(client.models_dir.iterdir()) == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="UNC paths are Windows'")
 def test_import_accepts_a_unc_path_shape(env, monkeypatch):
     client, core, _ = env
     seen = []
