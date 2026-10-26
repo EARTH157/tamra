@@ -1,7 +1,7 @@
 [project]
 name = "tamra"
 version = "0.1.2"
-description = "Offline-first Windows app for asking questions about your documents, with verifiable citations."
+description = "Offline-first desktop app (Windows, Ubuntu) for asking questions about your documents, with verifiable citations."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"

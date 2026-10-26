@@ -9,3 +9,7 @@ and the text detection and recognition pre- and post-processing in src/tamra/ocr
 At the user's request, Tamra downloads the PP-OCRv5 mobile text detection and recognition
 models of PaddleOCR (https://github.com/PaddlePaddle/PaddleOCR), licensed under the Apache
 License, Version 2.0, in the ONNX form published by RapidAI.
+
+The Linux package (tamra_<version>_amd64.deb) also contains Qt and PySide6 (Qt for Python,
+https://www.qt.io/), used under the GNU Lesser General Public License version 3
+(LGPL-3.0-only). Qt WebEngine includes Chromium, under BSD-style licenses.

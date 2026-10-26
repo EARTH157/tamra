@@ -1,6 +1,7 @@
 # Ubuntu support: Tamra as a desktop app on Ubuntu 24.04 and later
 
-Status: approved in brainstorming (2026-10-26), pending plan.
+Status: implemented (plan docs/superpowers/plans/2026-10-26-ubuntu-support.md). Checked in WSL
+(Ubuntu 24.04); the real-desktop check in §6 is still to do.
 Date: 2026-10-26.
 
 ## Goal
@@ -223,12 +224,16 @@ lays out `build/deb/` and runs `dpkg-deb --build --root-owner-group` to produce
 | `/usr/share/applications/tamra.desktop` | `Name=Tamra`, `Exec=tamra`, `Icon=tamra`, `StartupWMClass=tamra`, `Categories=Office;`, `Terminal=false` |
 | `/usr/share/icons/hicolor/scalable/apps/tamra.svg`, `…/256x256/apps/tamra.png` | The icon |
 | `/etc/apparmor.d/tamra` | The `userns` profile (§2) |
-| `/usr/share/doc/tamra/copyright` | Apache-2.0, `NOTICE`, and the LGPLv3 notice for Qt/PySide6 |
+| `/usr/share/doc/tamra/copyright` | Apache-2.0, `NOTICE`, and the LGPLv3 notice for Qt/PySide6. The Qt wheels ship no license text, so it points to `/usr/share/common-licenses/LGPL-3` and `GPL-3`, which every Ubuntu system has |
 
 `DEBIAN/control` declares `Architecture: amd64`. `Depends` lists the system libraries that the
-bundle and llama-server load. The plan fixes this list by running `ldd` on every bundled ELF
-file on a clean `ubuntu:24.04`. It includes `libvulkan1`, `libnss3`, `libxkbcommon-x11-0`,
-`libxcb-cursor0`, `libegl1`, `libfontconfig1`, `libasound2t64` and `ca-certificates`.
+bundle and llama-server load. `scripts/make_deb.py` computes it at build time: the `NEEDED`
+entries of every ELF file in the bundle that the bundle does not carry, mapped to packages with
+`ldconfig -p` and `dpkg -S`, plus `ca-certificates` and `xdg-utils`. PyInstaller would copy the
+build machine's system libraries into the bundle; the spec leaves them out (all but Python's
+own), because an old bundled `libstdc++` breaks newer Mesa drivers on later Ubuntu releases.
+The PyInstaller launcher points `LD_LIBRARY_PATH` at the bundle, so `xdg-open` and `zenity` get
+the user's own value back (`LD_LIBRARY_PATH_ORIG`): a PDF viewer must not load Tamra's Qt.
 `Recommends` lists `gnome-keyring`, `zenity`, `mesa-vulkan-drivers`, `fonts-thai-tlwg` and
 `fonts-noto-cjk`.
 
@@ -249,8 +254,10 @@ its loaded files until the user restarts it. dpkg replaces files atomically.
 - **`ci.yml`, job `package`:** a matrix as well. The Windows leg is unchanged. The Ubuntu leg
   runs `scripts/build.sh --deb`, then `sudo apt-get install -y ./dist/tamra_*.deb`. It checks
   that `/opt/tamra/_internal/vendor/llama/llama-server` is executable, then runs
-  `tamra selfcheck --report` and `xvfb-run -a tamra selfcheck --window`. The runner has the
-  AppArmor userns restriction, so this also checks the profile. It uploads the `.deb`.
+  `tamra selfcheck --report` and `xvfb-run -a tamra selfcheck --window`, both under
+  `scripts/with_keyring.sh` (a throwaway D-Bus session with an unlocked gnome-keyring: the
+  runner has no desktop session). The runner has the AppArmor userns restriction, so this also
+  checks the profile. It uploads the `.deb`.
 - **`release.yml`:** a new job `deb` on `ubuntu-24.04`: build, install, both selfchecks,
   `apt-get remove`, check that `/opt/tamra` is gone, and write
   `tamra_<version>_amd64.deb.sha256`. The tag check is the same as on Windows. The `release`
@@ -302,7 +309,8 @@ its loaded files until the user restarts it. dpkg replaces files atomically.
 
 | Risk | What we do |
 |---|---|
-| The `.deb` is large (Qt WebEngine is ~200 MB unpacked) | Exclude unused Qt modules. The plan measures the size. A `.deb` up to ~150 MB is acceptable next to models of 1–5 GB. |
+| The `.deb` is large | Measured: 197 MB (605 MB installed), mostly Chromium (`libQt6WebEngineCore` 195 MB, ICU 40 MB) and llama.cpp (86 MB). The QML plugins, Qt's translations and all but four Chromium locale packs are left out. Large, but small next to models of 1–5 GB. |
+| Settings wait on a locked keyring | The Secret Service asks to unlock a locked keyring, and reading the key waits for it. On a desktop the login keyring is unlocked at login; CI and WSL run under `scripts/with_keyring.sh`, and tests use an in-memory keyring. |
 | The sandbox fails on a desktop with a different AppArmor setup | The profile is checked in CI on an AppArmor runner and by the manual check. A failure shows in `selfcheck --window`. |
 | A blank window in VMs or with unusual GPU drivers (Chromium's GPU process) | The README documents `QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu`. The answers do not depend on it, because llama-server uses the GPU separately. |
 | No Vulkan driver | llama-server falls back to the CPU, as on Windows. `mesa-vulkan-drivers` is recommended. |

@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tamra (ตำรา) is an open-source (Apache-2.0) Windows desktop app for asking questions about
+Tamra (ตำรา) is an open-source (Apache-2.0) desktop app for Windows and Ubuntu for asking
+questions about
 your own documents (Thai, English, and Chinese). It works offline and gives answers with
 verifiable citations.
 
@@ -24,12 +25,14 @@ uv run tamra --dev                        # core API only on :8765, token "dev"
 uv run tamra mcp                          # MCP server over stdio for AI apps (needs the app or --dev core running)
 npm --prefix ui run dev                   # UI with hot reload → http://localhost:5173/#token=dev
 npm --prefix ui test                      # UI unit tests (Vitest)
-uv run scripts/make_icon.py               # re-render packaging/tamra.ico after changing ui/src/logo.svg
+uv run scripts/make_icon.py               # re-render packaging/tamra.ico and tamra.png after changing ui/src/logo.svg
 npm --prefix ui run build                 # build UI into ui/dist (bundled by PyInstaller)
-uv run python scripts/fetch_assets.py     # download pinned llama.cpp + dev models (~1.1 GB, gitignored)
+uv run python scripts/fetch_assets.py     # download pinned llama.cpp (this OS's build) + dev models (~1.1 GB, gitignored)
 uv run python scripts/eval_retrieval.py   # retrieval eval: hit@k and the not-found threshold (needs .models)
-uv run python scripts/exe_smoke.py        # end-to-end check of dist/Tamra/Tamra.exe: import, local, API mode (needs .models)
+uv run python scripts/exe_smoke.py        # end-to-end check of dist/Tamra/Tamra.exe (Linux: dist/tamra/tamra) (needs .models)
 ./scripts/build.ps1                       # UI build + PyInstaller → dist/Tamra/Tamra.exe
+./scripts/build.sh --deb                  # Ubuntu: → dist/tamra/tamra and dist/tamra_<version>_amd64.deb
+scripts/with_keyring.sh <cmd>             # Ubuntu without a desktop session (CI, WSL): run <cmd> with a throwaway keyring
 # windowed exe: get output via --report and Start-Process -Wait
 Start-Process dist\Tamra\Tamra.exe -ArgumentList "selfcheck","--report","r.json" -Wait
 ```
@@ -37,8 +40,9 @@ Start-Process dist\Tamra\Tamra.exe -ArgumentList "selfcheck","--report","r.json"
 ## Architecture
 
 There is one Python package, `tamra` (`src/` layout, uv, Python 3.12). It serves FastAPI on
-`127.0.0.1` behind a per-launch token (`X-Tamra-Token`). A pywebview (WebView2) window
-loads the React/TypeScript UI built by Vite into `ui/dist`.
+`127.0.0.1` behind a per-launch token (`X-Tamra-Token`). A pywebview window (WebView2 on
+Windows, Qt WebEngine via PySide6 on Linux) loads the React/TypeScript UI built by Vite into
+`ui/dist`.
 
 The modules follow the RAG pipeline. Each owns one stage:
 - `ingest`: watch folders, parse files, and chunk them with locations.
@@ -52,7 +56,10 @@ The modules follow the RAG pipeline. Each owns one stage:
 - `ocr`: PP-OCRv5 on onnxruntime and numpy: a scanned page's text and character boxes.
 - `models`: the model catalog, download/import, and hardware tiers.
 - `settings`: typed, validated app settings, saved through the store.
-- `secrets`: API keys in Windows Credential Manager (`keyring`).
+- `secrets`: API keys in the OS credential store (`keyring`): Windows Credential Manager, or
+  the Secret Service (GNOME Keyring) on Linux.
+- `childproc`: starts child processes (llama-server) that end when Tamra ends, even on a crash.
+- `desktop`: one Tamra per data folder, opening files, the error dialog, the window's options.
 - `download`: resumable downloads that check the sha256.
 - `store`: the only module that touches SQL.
 - `core`: owns the store, the indexer and watcher, the answer service, and the local LLM's lifecycle.
@@ -68,18 +75,21 @@ Not all of these modules exist yet. Plans add them milestone by milestone.
   transaction.
 - **Embedding is always local and uses one fixed model.** Each collection records its
   `embedding_model_id`. On mismatch, require a rebuild. Never search a mismatched index.
-- **Local LLM = llama.cpp's prebuilt `llama-server.exe`** (Vulkan build). It runs as a
+- **Local LLM = llama.cpp's prebuilt `llama-server`** (`.exe` on Windows; Vulkan build). It runs as a
   child process and is called through the OpenAI-compatible client. Do not add Python
   llama.cpp bindings. Every LLM provider exposes
   `generate(messages, max_tokens, *, think=False) -> Iterator[Chunk]` (`tamra.llm.base`; a
   chunk is answer text, thinking, or the local model's token `usage`), plus `close()`, `label`,
   and `kind`.
 - **Licenses:** every dependency must be Apache-2.0-compatible. No AGPL or GPL. For
-  example, use `pypdfium2`, never PyMuPDF.
+  example, use `pypdfium2`, never PyMuPDF. PySide6/Qt (LGPL-3.0) is allowed for the Linux
+  window; never PyQt (GPL).
 - **Assets:** model weights and llama.cpp binaries are pinned with sha256. They are never
   committed (`.models/`, `vendor/`).
-- **Secrets:** API keys live only in Windows Credential Manager (`keyring`).
-- **Data:** user data lives under `%LOCALAPPDATA%\Tamra\` (override: `TAMRA_DATA_DIR`).
+- **Secrets:** API keys live only in the OS credential store (`keyring`). Tests use an
+  in-memory keyring (`tests/conftest.py`), never the machine's.
+- **Data:** user data lives under `%LOCALAPPDATA%\Tamra\` on Windows and
+  `$XDG_DATA_HOME/tamra` (`~/.local/share/tamra`, mode 0700) on Linux (override: `TAMRA_DATA_DIR`).
   User document folders are never modified.
 - **Language:** answer in the question's language. Code, comments, docs, and commit
   messages are in English.
