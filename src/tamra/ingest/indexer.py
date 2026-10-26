@@ -3,6 +3,7 @@
 import logging
 import os
 import stat
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -80,10 +81,11 @@ def scan_folder(folder: Path) -> tuple[dict[str, tuple[int, float]], list[str]]:
 
 
 def _under(rel_path: str, places: list[str]) -> bool:
-    rel = rel_path.casefold()  # Windows paths compare without case
-    return any(
-        p == "." or rel == p.casefold() or rel.startswith(p.casefold() + "/") for p in places
-    )
+    def fold(path: str) -> str:
+        return path.casefold() if sys.platform == "win32" else path  # Windows ignores case
+
+    rel = fold(rel_path)
+    return any(p == "." or rel == fold(p) or rel.startswith(fold(p) + "/") for p in places)
 
 
 def _is_link(path: Path) -> bool:

@@ -61,6 +61,7 @@ from tamra.viewer import (
 log = logging.getLogger(__name__)
 
 API_PROVIDERS = ("anthropic", "openai")
+_EXAMPLE_MODEL = "C:\\Models\\m.gguf" if sys.platform == "win32" else "/home/me/Models/m.gguf"
 
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 CONTENT_SECURITY_POLICY = (
@@ -931,7 +932,7 @@ def _add_model_routes(app: FastAPI, core: Core) -> None:
         path = Path(raw)
         if not path.is_absolute():
             raise HTTPException(
-                status_code=400, detail="Choose a full file path, for example C:\\Models\\m.gguf."
+                status_code=400, detail=f"Choose a full file path, for example {_EXAMPLE_MODEL}."
             )
         if not path.is_file():
             raise HTTPException(status_code=400, detail=f"File not found: {raw}")

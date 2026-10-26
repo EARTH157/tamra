@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _MODEL_LAYER = "application/vnd.ollama.image.model"
+# Ollama's Linux installer runs it as the "ollama" user, whose models live here.
+_OLLAMA_SERVICE = Path("/usr/share/ollama/.ollama/models")
 _SPLIT = re.compile(r"-(\d{5})-of-\d{5}\.gguf$", re.IGNORECASE)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _LMSTUDIO_DEPTH = 3  # models/<publisher>/<repo>/<file>.gguf, with one folder to spare
@@ -94,19 +97,23 @@ def _model_blob(root: Path, manifest: Path) -> Path | None:
 
 def _ollama(home: Path, env: Mapping[str, str]) -> list[ExternalModel]:
     configured = env.get("OLLAMA_MODELS")
-    root = Path(configured) if configured else home / ".ollama" / "models"
+    roots = [Path(configured)] if configured else [home / ".ollama" / "models"]
+    if not configured and sys.platform == "linux":
+        roots.append(_OLLAMA_SERVICE)
     names: dict[Path, str] = {}  # blob -> model:tag
-    for manifest in [*_files(root / "manifests"), *_files(root / "manifests-v2")]:
-        try:
-            blob = _model_blob(root, manifest)
-        except (OSError, ValueError, KeyError, TypeError, AttributeError, StopIteration) as e:
-            log.debug("skipping the Ollama manifest %s: %s", manifest, e)
-            continue
-        if blob is None:
-            continue
-        name = f"{manifest.parent.name}:{manifest.name}"
-        if names.get(blob, ":latest").endswith(":latest"):  # prefer a tag that says the size
-            names[blob] = name
+    for root in roots:
+        for manifest in [*_files(root / "manifests"), *_files(root / "manifests-v2")]:
+            try:
+                blob = _model_blob(root, manifest)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, StopIteration) as e:
+                log.debug("skipping the Ollama manifest %s: %s", manifest, e)
+                continue
+            if blob is None:
+                continue
+            name = f"{manifest.parent.name}:{manifest.name}"
+            # Prefer a tag that says the size.
+            if names.get(blob, ":latest").endswith(":latest"):
+                names[blob] = name
     return [
         ExternalModel("ollama", name, blob, blob.name.removeprefix("sha256-"))
         for blob, name in names.items()

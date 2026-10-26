@@ -3,6 +3,7 @@
 import hashlib
 import logging
 import os
+import sys
 import threading
 import time
 import unicodedata
@@ -105,6 +106,7 @@ def _nocase(name: str) -> str:
 
 
 MAX_PROJECT_NAME = 80
+_EXAMPLE_FOLDER = "C:\\Users\\me\\Documents" if sys.platform == "win32" else "/home/me/Documents"
 _HIDDEN = frozenset({"Cc", "Cf"})  # control and format characters, bidi overrides among them
 
 
@@ -881,9 +883,9 @@ class Core:
         # A device-namespace alias (\\?\C:\..., \\.\...) would slip past the overlap checks,
         # which compare plain paths; the folder picker never returns one.
         if folder.strip().startswith(("\\\\?\\", "\\\\.\\", "//?/", "//./")):
-            raise FolderMissing("Choose a full folder path, for example C:\\Users\\me\\Documents.")
+            raise FolderMissing(f"Choose a full folder path, for example {_EXAMPLE_FOLDER}.")
         if not path.is_absolute():
-            raise FolderMissing("Choose a full folder path, for example C:\\Users\\me\\Documents.")
+            raise FolderMissing(f"Choose a full folder path, for example {_EXAMPLE_FOLDER}.")
         if not path.is_dir():
             raise FolderMissing(f"Folder not found: {folder}")
         path = path.resolve()
