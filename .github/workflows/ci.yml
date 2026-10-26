@@ -8,10 +8,19 @@ permissions:
 
 jobs:
   test:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+      - name: Fonts and Qt libraries the tests use
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $(cat packaging/linux/build-packages.txt)
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked
       - run: uv run ruff check
@@ -55,3 +64,39 @@ jobs:
         with:
           name: Tamra-windows
           path: dist/Tamra
+
+  package-ubuntu:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build tools, the libraries the .deb depends on, and a keyring
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $(cat packaging/linux/build-packages.txt) gnome-keyring
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: uv sync --locked
+      - run: ./scripts/build.sh --deb
+      - name: Install the .deb
+        run: sudo apt-get install -y ./dist/tamra_*_amd64.deb
+      - name: Selfcheck the installed app
+        run: |
+          test -x /opt/tamra/_internal/vendor/llama/llama-server
+          # The runner restricts user namespaces through AppArmor, as Ubuntu Desktop does, so the
+          # window check also checks the profile the package installs.
+          status=0
+          scripts/with_keyring.sh tamra selfcheck --report selfcheck.json || status=1
+          scripts/with_keyring.sh xvfb-run -a tamra selfcheck --window --report window.json || status=1
+          cat selfcheck.json window.json
+          exit $status
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tamra-ubuntu
+          path: dist/tamra_*_amd64.deb
+          if-no-files-found: error
