@@ -1,16 +1,16 @@
-import logging
 import re
 import subprocess
 import time
 from pathlib import Path
-from typing import IO
+from typing import IO, TYPE_CHECKING
 
 import httpx
 
+from tamra.childproc import spawn
 from tamra.net import free_port
-from tamra.winjob import KillOnCloseJob
 
-log = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from tamra.winjob import KillOnCloseJob
 
 
 class LlamaServerError(Exception):
@@ -75,7 +75,7 @@ class LlamaServer:
         self._log_start = 0  # where this run's output begins in the (appended-to) log file
         self._proc: subprocess.Popen | None = None
         self._log: IO[bytes] | None = None
-        self._job: KillOnCloseJob | None = None
+        self._job: KillOnCloseJob | None = None  # Windows only (childproc.spawn)
 
     def args(self, gpu: bool) -> list[str]:
         args = [str(self.exe), "-m", str(self.model), "-c", str(self.ctx_size)]
@@ -112,16 +112,14 @@ class LlamaServer:
                 except OSError as e:
                     raise LlamaServerError(f"cannot write the log at {self.log_file}: {e}") from e
                 try:
-                    self._proc = subprocess.Popen(
+                    self._proc, self._job = spawn(
                         self.args(gpu),
                         stdout=self._log,
                         stderr=subprocess.STDOUT,
                         stdin=subprocess.DEVNULL,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
                     )
                 except OSError as e:
                     raise LlamaServerError(f"cannot launch {self.exe}: {e}") from e
-                self._job = _kill_on_close(self._proc)
                 if self._wait_healthy(budget):
                     self.gpu_used = gpu
                     return self
@@ -193,17 +191,3 @@ class LlamaServer:
 
     def __exit__(self, *exc) -> None:
         self.stop()
-
-
-def _kill_on_close(proc: subprocess.Popen) -> KillOnCloseJob | None:
-    """Tie proc's lifetime to Tamra's. If Windows refuses, keep running without the job."""
-    job = None
-    try:
-        job = KillOnCloseJob()
-        job.add(proc)
-        return job
-    except OSError as e:
-        if job is not None:
-            job.close()
-        log.warning("llama-server was not placed in a kill-on-close job: %s", e)
-        return None

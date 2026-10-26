@@ -220,7 +220,8 @@ def test_stub_server_gpu_fail_cpu_ok(tmp_path, spawned):
     srv.start(timeout=5)
     assert srv.gpu_used is False
     assert srv.alive() is True
-    assert srv._job is not None  # the child is in a kill-on-close job
+    # Windows: the child is in a kill-on-close job. Linux ties it with PR_SET_PDEATHSIG instead.
+    assert (srv._job is not None) is (sys.platform == "win32")
     srv.stop()
     assert srv.alive() is False
     assert srv._job is None

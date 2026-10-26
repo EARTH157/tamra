@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tamra.childproc import NO_WINDOW
 from tamra.models.catalog import Catalog
 from tamra.models.gguf import ModelShape
 
@@ -67,7 +68,7 @@ def detect(llama_exe: Path) -> Hardware:
             errors="replace",
             timeout=15,
             stdin=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=NO_WINDOW,
         )
         gpus = parse_devices(done.stdout)
     except (OSError, subprocess.SubprocessError):

@@ -1,8 +1,12 @@
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Test modules for Windows-only code that cannot even be imported elsewhere.
+collect_ignore = [] if sys.platform == "win32" else ["test_winjob.py"]
 
 
 def _require(path: Path) -> Path:

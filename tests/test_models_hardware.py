@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from tamra.childproc import NO_WINDOW
 from tamra.models import hardware
 from tamra.models.catalog import Catalog, load_catalog
 from tamra.models.gguf import ModelShape
@@ -143,7 +144,7 @@ def test_detect_parses_the_command_output(monkeypatch):
     assert result.ram_gb > 0
     assert calls["args"] == [str(Path("llama-server.exe")), "--list-devices"]
     assert calls["kwargs"]["timeout"] == 15
-    assert calls["kwargs"]["creationflags"] == subprocess.CREATE_NO_WINDOW
+    assert calls["kwargs"]["creationflags"] == NO_WINDOW
 
 
 @pytest.mark.parametrize("exc", [OSError("missing"), subprocess.TimeoutExpired("x", 15)])
