@@ -139,7 +139,8 @@ jobs:
           if [ "$TAG" != "v$VERSION" ]; then echo "Tag $TAG does not match tamra.__version__ $VERSION (expected v$VERSION)"; exit 1; fi
       - run: ./scripts/build.sh --deb
       - name: Install the .deb
-        run: sudo apt-get install -y ./dist/tamra_${{ steps.version.outputs.version }}_amd64.deb
+        # Without its Recommends (fonts, Mesa, zenity: ~100 MB the check does not need).
+        run: sudo apt-get install -y --no-install-recommends ./dist/tamra_${{ steps.version.outputs.version }}_amd64.deb
       - name: Selfcheck the installed app
         run: |
           test -x /opt/tamra/_internal/vendor/llama/llama-server
