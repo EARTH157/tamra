@@ -1,4 +1,5 @@
 import logging
+import sys
 import threading
 from pathlib import Path
 
@@ -9,6 +10,12 @@ from tamra import app
 from tamra.discovery import read_discovery
 from tamra.logs import shutdown_logging
 from tamra.net import free_port
+
+
+@pytest.fixture(autouse=True)
+def _no_platform_window_options(monkeypatch):
+    """The window tests check Tamra's own options; desktop.window_options has its own tests."""
+    monkeypatch.setattr(app, "window_options", lambda: {})
 
 
 class FakeWindow:
@@ -38,8 +45,17 @@ def test_the_window_shows_the_tamra_icon(monkeypatch):
     monkeypatch.setattr(webview, "start", lambda **k: started.update(k))
     app._show_window(8765, "t", app.FolderPicker())
     # Without it the title bar shows python.exe's icon when run from source.
-    assert started["icon"].endswith("tamra.ico")
+    assert started["icon"].endswith("tamra.ico" if sys.platform == "win32" else "tamra.png")
     assert Path(started["icon"]).is_file()
+
+
+def test_the_window_uses_the_platform_options(monkeypatch):
+    started = {}
+    monkeypatch.setattr(webview, "create_window", lambda *a, **k: FakeWindow(None))
+    monkeypatch.setattr(webview, "start", lambda **k: started.update(k))
+    monkeypatch.setattr(app, "window_options", lambda: {"gui": "qt"})
+    app._show_window(8765, "t", app.FolderPicker())
+    assert started["gui"] == "qt"
 
 
 def test_the_folder_picker_returns_the_chosen_folder():

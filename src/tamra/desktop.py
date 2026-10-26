@@ -1,5 +1,5 @@
 """What Tamra asks of the desktop: one Tamra per data folder, opening a file in its default app,
-and an error dialog. Windows and Linux do each differently."""
+an error dialog, and how to start the window. Windows and Linux do each differently."""
 
 import ctypes
 import hashlib
@@ -100,3 +100,16 @@ def alert(message: str) -> None:
             pass
     if sys.stderr is not None:
         print(message, file=sys.stderr)
+
+
+def window_options() -> dict:
+    """Extra webview.start() options for this platform. Linux: pywebview's Qt backend (Qt
+    WebEngine is Chromium, as WebView2 is on Windows), with the desktop file name GNOME uses to
+    give the window tamra.desktop's icon. setDesktopFileName is static: no QApplication yet."""
+    if sys.platform != "linux":
+        return {}
+    os.environ.setdefault("QT_API", "pyside6")
+    from qtpy.QtGui import QGuiApplication
+
+    QGuiApplication.setDesktopFileName("tamra")
+    return {"gui": "qt"}

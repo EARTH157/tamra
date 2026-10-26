@@ -13,6 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--embed-model-dir", type=Path)
     sc.add_argument("--llm-model", type=Path)
     sc.add_argument("--report", type=Path, help="also write the JSON report here")
+    sc.add_argument("--window", action="store_true", help="also open a window on the bundled UI")
     sub.add_parser("mcp", help="MCP server over stdio for AI apps (Tamra must be running)")
     args = parser.parse_args(argv)
 
@@ -22,10 +23,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.command == "selfcheck":
-        from tamra.paths import llama_server
+        from tamra.paths import llama_server, resource_dir
         from tamra.selfcheck import run_selfcheck
 
-        report = run_selfcheck(args.embed_model_dir, args.llm_model, llama_server())
+        report = run_selfcheck(
+            args.embed_model_dir,
+            args.llm_model,
+            llama_server(),
+            ui_dir=resource_dir() / "ui" / "dist" if args.window else None,
+        )
         # Write report file first (with full Unicode, before stdout encoding can fail)
         if args.report:
             args.report.parent.mkdir(parents=True, exist_ok=True)

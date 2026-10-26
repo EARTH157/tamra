@@ -2,6 +2,7 @@
 
 import logging
 import secrets
+import sys
 import threading
 import time
 from pathlib import Path
@@ -12,7 +13,7 @@ import uvicorn
 
 from tamra.core import Core
 from tamra.desktop import alert as _alert
-from tamra.desktop import open_path
+from tamra.desktop import open_path, window_options
 from tamra.desktop import release_instance as _release_instance
 from tamra.desktop import single_instance as _single_instance
 from tamra.discovery import remove_discovery, write_discovery
@@ -212,4 +213,5 @@ def _show_window(
     if file_picker is not None:
         file_picker.window = picker.window
     # pywebview otherwise uses sys.executable's icon, which is python.exe's when run from source.
-    webview.start(icon=str(resource_dir() / "packaging" / "tamra.ico"))
+    icon = "tamra.ico" if sys.platform == "win32" else "tamra.png"
+    webview.start(icon=str(resource_dir() / "packaging" / icon), **window_options())

@@ -222,3 +222,54 @@ def test_a_source_dev_run_defaults_the_token_and_honors_the_env(monkeypatch):
     monkeypatch.setenv("TAMRA_DEV_TOKEN", "abc")
     main(["--dev"])
     assert calls == [None, "abc"]  # None means the default token, "dev"
+
+
+class DrawnWindow:
+    def __init__(self):
+        self.destroyed = False
+
+    def evaluate_js(self, script):
+        return True
+
+    def destroy(self):
+        self.destroyed = True
+
+
+def test_the_window_check_opens_the_ui_and_closes_the_window(tmp_path, monkeypatch):
+    import webview
+
+    (tmp_path / "index.html").write_text("<div id=root></div>", encoding="utf-8")
+    window = DrawnWindow()
+    opened = {}
+
+    def create_window(title, url, **options):
+        opened["url"] = url
+        return window
+
+    def start(func, w, **options):
+        opened.update(options)
+        func(w)
+
+    monkeypatch.setattr(webview, "create_window", create_window)
+    monkeypatch.setattr(webview, "start", start)
+    monkeypatch.setattr("tamra.desktop.window_options", lambda: {})
+    report = run_selfcheck(None, None, tmp_path / "x.exe", tmp_path, ui_dir=tmp_path)
+    assert report["checks"]["window"] == {"ok": True, "detail": "drawn"}
+    assert opened["url"] == str(tmp_path / "index.html") and opened["http_server"] is True
+    assert window.destroyed
+
+
+def test_the_window_check_reports_a_missing_ui(tmp_path):
+    report = run_selfcheck(None, None, tmp_path / "x.exe", tmp_path, ui_dir=tmp_path / "none")
+    assert report["ok"] is False
+    assert "index.html" in report["checks"]["window"]["detail"]
+
+
+def test_the_cli_window_flag_checks_the_bundled_ui(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "tamra.selfcheck.run_selfcheck",
+        lambda *args, ui_dir=None: seen.update(ui_dir=ui_dir) or {"ok": True, "checks": {}},
+    )
+    assert main(["selfcheck", "--window"]) == 0
+    assert seen["ui_dir"].parts[-2:] == ("ui", "dist")

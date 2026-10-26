@@ -70,6 +70,21 @@ def test_alert_uses_zenity_without_markup(monkeypatch):
 
 
 @linux
+def test_the_linux_window_is_qt_and_matches_the_desktop_file(monkeypatch):
+    monkeypatch.delenv("QT_API", raising=False)
+    assert desktop.window_options() == {"gui": "qt"}
+    assert desktop.os.environ["QT_API"] == "pyside6"
+    from qtpy.QtGui import QGuiApplication
+
+    assert QGuiApplication.desktopFileName() == "tamra"  # GNOME shows tamra.desktop's icon
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="WebView2")
+def test_the_windows_window_needs_no_options():
+    assert desktop.window_options() == {}
+
+
+@linux
 def test_alert_without_zenity_writes_to_stderr(monkeypatch, capsys):
     monkeypatch.setattr(desktop.shutil, "which", lambda name: None)
     desktop.alert("Tamra is already running.")
