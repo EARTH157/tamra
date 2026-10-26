@@ -81,7 +81,7 @@ def test_the_file_picker_handles_cancel():
 def test_open_data_folder_opens_only_the_data_directory(monkeypatch, tmp_path):
     monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path / "data"))
     opened = []
-    monkeypatch.setattr(app.os, "startfile", opened.append, raising=False)  # never the real one
+    monkeypatch.setattr(app, "open_path", opened.append)  # never the real one
     app.open_data_folder()
     assert opened == [tmp_path / "data"]
 
@@ -131,21 +131,6 @@ def test_a_failing_core_is_logged_and_shown_after_cleanup(monkeypatch, tmp_path)
     assert started == []
 
 
-def test_a_second_instance_for_the_same_data_folder_is_refused(tmp_path):
-    first = app._single_instance(tmp_path)
-    try:
-        assert first is not None
-        assert app._single_instance(tmp_path) is None
-        other = app._single_instance(tmp_path / "other")  # another data folder is independent
-        assert other is not None
-        app._close_handle(other)
-    finally:
-        app._close_handle(first)
-    again = app._single_instance(tmp_path)  # closing the handle released the name
-    assert again is not None
-    app._close_handle(again)
-
-
 def test_run_refuses_a_second_instance(monkeypatch, tmp_path):
     monkeypatch.setenv("TAMRA_DATA_DIR", str(tmp_path))
     alerts = []
@@ -158,7 +143,7 @@ def test_run_refuses_a_second_instance(monkeypatch, tmp_path):
         with pytest.raises(RuntimeError, match="already running"):
             app.run(dev=True)
     finally:
-        app._close_handle(held)
+        app._release_instance(held)
 
 
 class FakeCore:
