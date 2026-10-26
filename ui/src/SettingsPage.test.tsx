@@ -209,6 +209,11 @@ describe("General tab", () => {
     expect(text()).not.toContain("%LOCALAPPDATA%");
   });
 
+  it("shows the Linux data folder until the core reports the real one", async () => {
+    await mountPage({ settings: { data_dir: "", platform: "linux" } });
+    expect(text()).toContain("~/.local/share/tamra");
+  });
+
   function switchNamed(label: string): HTMLButtonElement {
     return find<HTMLButtonElement>(`button[role="switch"][aria-label="${label}"]`);
   }
@@ -959,6 +964,12 @@ describe("AI model tab: Cloud API", () => {
     expect(text()).toContain("Stored in Windows Credential Manager, never in Tamra's files.");
   });
 
+  it("names GNOME Keyring as the key store on Linux", async () => {
+    await mountPage({ tab: "model", settings: { ...cloud, platform: "linux" } });
+    expect(text()).toContain("Stored in GNOME Keyring, never in Tamra's files.");
+    expect(text()).not.toContain("Windows Credential Manager");
+  });
+
   it("lets the base URL be edited for an OpenAI-compatible server", async () => {
     const { calls } = await mountPage({ tab: "model", settings: cloud });
     await click(radio("OpenAI-compatible"));
@@ -1248,7 +1259,7 @@ describe("Style tab", () => {
   it("saves the theme, the accent, the text size and the spacing", async () => {
     const { calls } = await mountPage({ tab: "style" });
     await click(radio("Dark"));
-    await click(radio("Match Windows"));
+    await click(radio("Match system"));
     await click(radio("Orange"));
     await click(radio("Small"));
     await click(radio("Compact"));
@@ -1277,6 +1288,6 @@ describe("Style tab", () => {
   it("is in Thai when the language is Thai", async () => {
     await mountPage({ tab: "style", settings: { language: "th" } });
     expect(find(".preview .message.user").textContent).toBe("พนักงานใหม่ลาพักร้อนได้กี่วัน");
-    expect(radio("ตาม Windows")).toBeDefined();
+    expect(radio("ตามระบบ")).toBeDefined();
   });
 });

@@ -762,6 +762,7 @@ def _settings_payload(core: Core) -> dict:
         "api_key_set": key is not None,
         "api_key_hint": key[-4:] if key is not None and len(key) > 8 else None,
         "mcp_command": _mcp_command(),  # read-only: for the "Copy setup" button
+        "platform": "windows" if sys.platform == "win32" else "linux",  # read-only: wording
     }
 
 

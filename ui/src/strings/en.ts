@@ -38,6 +38,7 @@ export const en = {
     "Tamra will index the new folder and answer from it. Your files are never changed.",
   "folder.pathLabel": "Folder path",
   "folder.pathPlaceholder": "Full folder path, like D:\\Work\\Documents",
+  "folder.pathPlaceholder.linux": "Full folder path, like /home/me/Documents",
   "folder.browse": "Browse…",
   "folder.use": "Use this folder",
 
@@ -381,6 +382,8 @@ export const en = {
     "Tamra uses the file where it is. A file on a USB stick or other removable drive is copied in, and so are search and OCR model files.",
   "settings.importPathLabel": "Model file path",
   "settings.importPathPlaceholder": "Full path to a .gguf file, like D:\\Models\\model.gguf",
+  "settings.importPathPlaceholder.linux":
+    "Full path to a .gguf file, like /home/me/Models/model.gguf",
   "settings.importGo": "Import",
   "settings.importing": "Importing…",
   "settings.importedCatalogued": "Imported {file}. It matches the model catalog.",
@@ -401,10 +404,13 @@ export const en = {
   "settings.apiKey": "API key",
   "settings.apiKeyPlaceholder": "Paste your API key",
   "settings.apiKeyNote": "Stored in Windows Credential Manager, never in Tamra's files.",
+  "settings.apiKeyNote.linux": "Stored in GNOME Keyring, never in Tamra's files.",
   "settings.removeKey": "Remove key",
   "settings.removeKeyTitle": "Remove the {provider} API key?",
   "settings.removeKeyText":
     "The key is deleted from Windows Credential Manager. Paste it again to use this provider.",
+  "settings.removeKeyText.linux":
+    "The key is deleted from GNOME Keyring. Paste it again to use this provider.",
   "settings.keyRemoved": "Key removed",
   "settings.modelRequired": "Model name is required.",
   "settings.baseUrlInvalid":
@@ -424,7 +430,7 @@ export const en = {
   "settings.theme": "Theme",
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
-  "settings.theme.system": "Match Windows",
+  "settings.theme.system": "Match system",
   "settings.colourText": "Colour and text",
   "settings.accent": "Accent colour",
   "settings.accentHint": "Used for buttons, links, and citation markers.",

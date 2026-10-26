@@ -1,6 +1,7 @@
 import { Folder } from "lucide-react";
 import { api } from "./api";
 import { useT } from "./i18n";
+import { useSettings } from "./settings";
 
 type Props = {
   value: string;
@@ -14,6 +15,7 @@ type Props = {
 /** A folder path you can type, with a Browse… button for the system's folder picker. */
 export default function FolderField({ value, onChange, onError, autoFocus }: Props) {
   const t = useT();
+  const { settings } = useSettings();
 
   async function browse() {
     onError(null);
@@ -31,7 +33,9 @@ export default function FolderField({ value, onChange, onError, autoFocus }: Pro
         <Folder size={16} />
         <input
           aria-label={t("folder.pathLabel")}
-          placeholder={t("folder.pathPlaceholder")}
+          placeholder={t(
+            settings.platform === "linux" ? "folder.pathPlaceholder.linux" : "folder.pathPlaceholder",
+          )}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           data-autofocus={autoFocus ? "" : undefined}

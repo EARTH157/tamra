@@ -177,7 +177,9 @@ export default function SettingsCloud() {
             />
           </label>
         </div>
-        <p className="field-note">{t("settings.apiKeyNote")}</p>
+        <p className="field-note">
+          {t(settings.platform === "linux" ? "settings.apiKeyNote.linux" : "settings.apiKeyNote")}
+        </p>
         <p className="field-note">{t("settings.testHint")}</p>
         <div className="cloud-actions">
           <button
@@ -222,7 +224,11 @@ export default function SettingsCloud() {
           title={t("settings.removeKeyTitle", {
             provider: anthropic ? t("settings.providerAnthropic") : t("settings.providerOpenai"),
           })}
-          text={t("settings.removeKeyText")}
+          text={t(
+            settings.platform === "linux"
+              ? "settings.removeKeyText.linux"
+              : "settings.removeKeyText",
+          )}
           confirmLabel={t("settings.removeKey")}
           danger
           onConfirm={removeKey}

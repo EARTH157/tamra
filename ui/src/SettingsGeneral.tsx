@@ -14,7 +14,8 @@ type Props = {
   onChatsDeleted: () => Promise<void> | void;
 };
 
-const DEFAULT_DATA_FOLDER = "%LOCALAPPDATA%\\Tamra"; // until the core reports the real path
+// Shown until the core reports the real path.
+const DEFAULT_DATA_FOLDER = { windows: "%LOCALAPPDATA%\\Tamra", linux: "~/.local/share/tamra" };
 
 /** The JSON an MCP app's config takes to start Tamra's MCP server (an `mcpServers` entry). */
 function mcpSetup(command: string[]): string {
@@ -136,7 +137,7 @@ export default function SettingsGeneral({ chatCount, busy, onChatsDeleted }: Pro
 
       <Section title={t("settings.data")}>
         <div className="card">
-          <Row title={t("settings.dataFolder")} hint={settings.data_dir || DEFAULT_DATA_FOLDER}>
+          <Row title={t("settings.dataFolder")} hint={settings.data_dir || DEFAULT_DATA_FOLDER[settings.platform]}>
             {canOpenData ? (
               <button type="button" className="btn" onClick={() => void openDataFolder()}>
                 {t("settings.openFolder")}

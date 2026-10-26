@@ -269,6 +269,8 @@ export type Settings = {
   data_dir: string;
   /** How an AI app starts Tamra's MCP server: the command, then its arguments (read-only). */
   mcp_command: string[];
+  /** The core's OS: names the key store and the path examples (read-only). */
+  platform: "windows" | "linux";
 };
 
 /** The answer of POST /api/settings/test-connection (always 200). */
@@ -286,5 +288,5 @@ export type ImportResult = {
 
 /** What PUT /api/settings accepts: any of the saved settings (never the key state or data_dir). */
 export type SettingsChanges = Partial<
-  Omit<Settings, "api_key_set" | "api_key_hint" | "data_dir" | "mcp_command">
+  Omit<Settings, "api_key_set" | "api_key_hint" | "data_dir" | "mcp_command" | "platform">
 >;

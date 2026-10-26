@@ -223,6 +223,7 @@ def test_get_settings_has_every_setting_and_the_key_state(env):
         "api_key_hint": None,
         "data_dir": str(tmp_path / "data"),
         "mcp_command": [sys.executable, "-m", "tamra", "mcp"],
+        "platform": "windows" if sys.platform == "win32" else "linux",
     }
 
 
@@ -585,9 +586,10 @@ def test_get_models_marks_integrated_gpus(env):
     ]
 
 
-def test_put_settings_refuses_the_read_only_data_dir(env):
+@pytest.mark.parametrize("field, value", [("data_dir", "C:/elsewhere"), ("platform", "linux")])
+def test_put_settings_refuses_the_read_only_fields(env, field, value):
     client, _, _ = env
-    response = client.put("/api/settings", headers=AUTH, json={"data_dir": "C:/elsewhere"})
+    response = client.put("/api/settings", headers=AUTH, json={field: value})
     assert response.status_code == 400
 
 
