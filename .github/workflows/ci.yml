@@ -89,8 +89,9 @@ jobs:
       - name: Selfcheck the installed app
         run: |
           test -x /opt/tamra/_internal/vendor/llama/llama-server
-          # The runner restricts user namespaces through AppArmor, as Ubuntu Desktop does, so the
-          # window check also checks the profile the package installs.
+          # Restrict user namespaces through AppArmor, as Ubuntu Desktop does, so the window check
+          # also checks the profile the package installs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
           status=0
           scripts/with_keyring.sh tamra selfcheck --report selfcheck.json || status=1
           scripts/with_keyring.sh xvfb-run -a tamra selfcheck --window --report window.json || status=1
