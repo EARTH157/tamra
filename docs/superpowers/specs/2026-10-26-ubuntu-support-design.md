@@ -56,11 +56,13 @@ There is no new abstraction layer. The Windows branches keep their current code.
   `.../llama-server` on Linux. It replaces the three hard-coded paths in `app.build_core`,
   `__main__` (selfcheck) and the tests' asset fixture.
 
-### 1.2 Child processes (`winjob.py` becomes `childproc.py`)
+### 1.2 Child processes (new `childproc.py`)
 
 `childproc.spawn(args, **popen_kwargs) -> (Popen, job)` starts a process that ends when Tamra
 ends, even when Tamra crashes or is killed. `job` is the Windows job to close when the process
-is stopped, and `None` on Linux.
+is stopped, and `None` on Linux. `winjob.py` stays as it is and is imported only on Windows:
+today it calls `ctypes.WinDLL` at import time, which makes every module that imports
+`llama_server` fail on Linux.
 
 - **Windows:** the current kill-on-close Job Object, unchanged. If Windows refuses the job,
   the process runs without it and a warning is logged, as now.
@@ -104,13 +106,18 @@ it still uses `GlobalMemoryStatusEx`.
 ### 1.7 Integrated GPUs (`models/hardware.py`)
 
 The tier advice skips integrated GPUs. Today it recognizes them by their Windows driver names
-("Radeon(TM) … Graphics", "Intel … Arc(TM) A770"). Mesa's Vulkan drivers use other names
-("AMD Radeon 780M (RADV PHOENIX)", "Intel(R) Arc(tm) A770 Graphics (DG2)"), so on Linux an AMD
-iGPU would count as a discrete GPU. llama.cpp prints each Vulkan device's memory type in
-`--list-devices` (`ggml_vulkan: 0 = … | uma: 1 | …`). `parse_devices` reads that flag into a
-new `Gpu.integrated: bool | None`. `_is_integrated` uses the flag when llama.cpp printed it,
-and the current name rules when it did not. This applies on both platforms: on Windows the
-flag agrees with the name rules for every GPU in the tests.
+("AMD Radeon(TM) 780M Graphics", "Intel(R) Arc(TM) A770 Graphics"). Mesa's Vulkan drivers use
+other names, such as "AMD Radeon 780M (RADV PHOENIX)" and "Intel(R) Arc(tm) A770 Graphics
+(DG2)". So on Linux an AMD iGPU would count as a discrete GPU, and an Arc card as integrated.
+`llama-server --list-devices` prints only the name and the memory, not whether the memory is
+shared (checked: no `uma` flag, even with `-v`). So the name rules learn Mesa's names:
+
+- A name with `(RADV ` is an AMD GPU on Mesa. It is integrated unless it says `RX` or `Pro`,
+  as for the Windows names.
+- The Intel Arc A/B rule ignores case, so `Arc(tm) A770` matches as `Arc(TM) A770` does.
+
+Windows driver names never contain `(RADV `, and they write `(TM)`. So every Windows result
+stays the same.
 
 ### 1.8 Removable drives (`drives.py`)
 
@@ -258,7 +265,7 @@ its loaded files until the user restarts it. dpkg replaces files atomically.
   - Tests of Linux-only code skip elsewhere. These are `PR_SET_PDEATHSIG` (llama-server dies
     when its parent is killed, including when the starting thread has ended), `flock`, the
     `0700`/`0600` modes, `xdg-open` (with a fake on `PATH`) and `sysconf`.
-  - Pure logic runs everywhere: XDG path choice from the environment, `uma:` parsing,
+  - Pure logic runs everywhere: XDG path choice from the environment, Mesa GPU names,
     `/media` checks on given paths, and per-platform asset selection.
 - **`scripts/exe_smoke.py`** works on both platforms. Its default executable is
   `dist/tamra/tamra` on Linux, and it lists llama-server processes with `pgrep -x llama-server`
@@ -284,7 +291,7 @@ its loaded files until the user restarts it. dpkg replaces files atomically.
   `sudo apt install ./tamra_<version>_amd64.deb`, where the data lives, how to uninstall and
   delete the data), and Ubuntu steps for running from source (the Qt runtime packages, and
   `QTWEBENGINE_DISABLE_SANDBOX=1`).
-- **CLAUDE.md / AGENTS.md:** the data-folder rule names both platforms. The local-LLM rule
+- **CLAUDE.md:** the data-folder rule names both platforms. The local-LLM rule
   says `llama-server` (`.exe` on Windows). The license rule says PySide6 (LGPLv3) is allowed
   and PyQt never. The command list gains `./scripts/build.sh --deb`.
 - **Main spec (`2026-10-02-tamra-design.md`):** §1's platform non-goal becomes "platforms
